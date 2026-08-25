@@ -63,7 +63,7 @@ private val COUIX_SWITCH_THUMB_R = 8.dp
 
 // ColorOS 风格滑条
 private val COUIX_SLIDER_TRACK_H = 24.dp
-private val COUIX_SLIDER_TRACK_H_IDLE = 10.dp
+private val COUIX_SLIDER_TRACK_H_IDLE = 8.dp
 private val COUIX_SLIDER_GAP = 4.dp
 private val COUIX_SLIDER_THUMB_R = 12.dp
 
@@ -200,6 +200,7 @@ fun CouixSwitchPreference(
     onCheckedChange: (Boolean) -> Unit,
     title: String,
     modifier: Modifier = Modifier,
+    subtitle: String? = null,
 ) {
     Box(
         modifier = modifier
@@ -207,13 +208,25 @@ fun CouixSwitchPreference(
             .clickable { onCheckedChange(!checked) }
             .padding(horizontal = COUIX_ROW_HPADDING, vertical = COUIX_ROW_VPADDING),
     ) {
-        BasicText(
-            text = title,
-            style = MiuixTheme.textStyles.body1.copy(color = MiuixTheme.colorScheme.onSurface),
+        Column(
             modifier = Modifier
                 .padding(end = 64.dp)
                 .align(Alignment.CenterStart),
-        )
+        ) {
+            BasicText(
+                text = title,
+                style = MiuixTheme.textStyles.body1.copy(color = MiuixTheme.colorScheme.onSurface),
+            )
+            if (subtitle != null) {
+                BasicText(
+                    text = subtitle,
+                    style = MiuixTheme.textStyles.body2.copy(
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    ),
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
         CouixSwitch(
             checked = checked,
             modifier = Modifier.align(Alignment.CenterEnd),
@@ -411,7 +424,7 @@ private fun CouixSwitchRow(
     // overrideValue 非空时优先显示覆盖值(主开关动画期间), 否则读 prefs;
     // version/overrideValue 变化时重新计算, 其余时刻用本地状态即时切换。
     var checked by remember(item.key, version, overrideValue) {
-        mutableStateOf(overrideValue ?: prefs.getBoolean(item.key, true))
+        mutableStateOf(overrideValue ?: prefs.getBoolean(item.key, false))
     }
     if (item.sliderKey == null) {
         CouixSwitchPreference(
@@ -422,6 +435,7 @@ private fun CouixSwitchRow(
                 onItemChanged()
             },
             title = item.label,
+            subtitle = item.subtitle,
         )
         return
     }
@@ -437,6 +451,7 @@ private fun CouixSwitchRow(
                 onItemChanged()
             },
             title = item.label,
+            subtitle = item.subtitle,
         )
         AnimatedVisibility(
             visible = checked,

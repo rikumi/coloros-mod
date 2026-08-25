@@ -132,6 +132,8 @@ public class XposedInit implements IXposedHookLoadPackage {
     // 配置表: 每项 = { 门控偏好键, 包名, 活动类名 }; 门控关闭则保留该项。
     private static final String KEY_HIDE_CONTACTS_ENABLED = "hide_contacts_enabled";
     private static final String KEY_HIDE_GBOARD_ENABLED = "hide_gboard_enabled";
+    // Feature 15 — 隐藏 GhostLock 图标(com.ghostlock.app): 已有 root 时无需再 root。
+    private static final String KEY_HIDE_GHOSTLOCK_ENABLED = "hide_ghostlock_enabled";
     // Feature 11b — 修改安全中心"隐藏应用"对电话本的处理逻辑(非独立模块开关):
     // 系统原生隐藏是整包禁用(会连拨号 DialtactsActivityAlias 一起失效), 故 hook 安全中心隐藏流程,
     // 让 com.android.contacts 走"只加入隐藏应用列表、不整包 PMS 禁用"的 path
@@ -149,13 +151,16 @@ public class XposedInit implements IXposedHookLoadPackage {
             // Gboard 启动入口
             {KEY_HIDE_GBOARD_ENABLED, "com.google.android.inputmethod.latin",
                     "com.google.android.libraries.inputmethod.launcher.LauncherActivity"},
+            // GhostLock 启动入口(已有 root 时无需再 root)
+            {KEY_HIDE_GHOSTLOCK_ENABLED, "com.ghostlock.app",
+                    "com.ghostlock.app.MainActivity"},
     };
 
     // 运行时根据门控偏好键, 计算当前需要隐藏的组件集合。
     private static java.util.Set<android.content.ComponentName> getHiddenLauncherComponents() {
         java.util.Set<android.content.ComponentName> set = new java.util.HashSet<>();
         for (String[] t : HIDDEN_LAUNCHER_TARGETS) {
-            if (readBool(t[0], true)) {
+            if (readBool(t[0], false)) {
                 set.add(new android.content.ComponentName(t[1], t[2]));
             }
         }
@@ -170,8 +175,11 @@ public class XposedInit implements IXposedHookLoadPackage {
     // 跨进程读取开关用的应用 Context(被 hook 进程自身)与 ContentProvider 通道所需的字段。
     private static volatile android.content.Context sAppContext;
     private static final String SETTINGS_AUTHORITY = "com.rikumi.colorosmod.settings";
-    // 开关值短时缓存(TTL), 既减少 ContentProvider 的 IPC 次数, 又保证 App 内改设置后近实时生效。
-    private static final long CACHE_TTL_MS = 500;
+    // 开关值缓存 TTL。长按图标/拖拽期间会以触摸事件频率反复 readBool(尤其 pinch-out 的
+    // dispatchTouchEvent), 500ms 的短 TTL 会在手势过程中反复过期、触发同步 ContentProvider IPC,
+    // 造成主线程卡顿。提高到 5s 后, 一次交互内的连续读取全部命中内存缓存(零 IPC); 对"改设置后
+    // 即时生效"的影响仅为最多 5s 延迟, 实际切回桌面验证通常已超过该时长, 无感。
+    private static final long CACHE_TTL_MS = 5000;
     private static final java.util.concurrent.ConcurrentHashMap<String, Object[]> sCache =
             new java.util.concurrent.ConcurrentHashMap<String, Object[]>(); // key -> {Long ts, Boolean val}
 
@@ -246,7 +254,7 @@ public class XposedInit implements IXposedHookLoadPackage {
         XC_MethodHook attachHook = new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
-                if (!readBool(KEY_SHRINK_POPUP_MENU, true)) {
+                if (!readBool(KEY_SHRINK_POPUP_MENU, false)) {
                     return;
                 }
                 android.view.View v = (android.view.View) param.thisObject;
@@ -282,7 +290,7 @@ public class XposedInit implements IXposedHookLoadPackage {
     }
 
     private static void scalePopupContainer(android.view.View popupContainer) {
-        if (!readBool(KEY_SHRINK_POPUP_MENU, true)) {
+        if (!readBool(KEY_SHRINK_POPUP_MENU, false)) {
             return;
         }
         int pct = readInt(KEY_POPUP_SCALE_PERCENT, POPUP_SHRINK_PERCENT_DEFAULT);
@@ -413,7 +421,7 @@ public class XposedInit implements IXposedHookLoadPackage {
                 protected void afterHookedMethod(MethodHookParam param) {
                     try {
                         // 运行时动态门控: 关闭则保持系统原标题("应用隐藏")。
-                        if (!readBool(KEY_HIDE_APPS_TITLE_FOLDER_ENABLED, true)) return;
+                        if (!readBool(KEY_HIDE_APPS_TITLE_FOLDER_ENABLED, false)) return;
                         Object folderInfo = param.getResult();
                         if (folderInfo == null) return;
                         Object ctx = XposedHelpers.getObjectField(param.thisObject, "context");
@@ -568,7 +576,7 @@ public class XposedInit implements IXposedHookLoadPackage {
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
                                 // 运行时动态门控: 关闭则不响应手势。
-                                if (!readBool(KEY_PINCH_OUT_OPEN_HIDE_APPS_ENABLED, true)) return;
+                                if (!readBool(KEY_PINCH_OUT_OPEN_HIDE_APPS_ENABLED, false)) return;
                                 Object dragLayer = param.thisObject;
                                 if (!(dragLayer instanceof android.view.View)) return;
                                     android.view.ScaleGestureDetector detector =
@@ -688,7 +696,7 @@ public class XposedInit implements IXposedHookLoadPackage {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
-                                if (!readBool(KEY_FOLDER_BG_TRANSPARENT_ENABLED, true)) return;
+                                if (!readBool(KEY_FOLDER_BG_TRANSPARENT_ENABLED, false)) return;
                                 Object launcher = XposedHelpers.getObjectField(param.thisObject, "mLauncher");
                                 if (launcher == null) return;
                                 if (!isLauncherFolderOpen(launcher, lpparam.classLoader)) return;
@@ -742,7 +750,7 @@ public class XposedInit implements IXposedHookLoadPackage {
 
     /** Feature 7 实现: 在 AppHideNewCheckActivity#d0() 前把字段 I(noNeedCheckPrivacyPwd) 置 true。 */
     private static void hookSafecenterNoverify(final XC_LoadPackage.LoadPackageParam lpparam) {
-        log("hide_apps_noverify enabled=" + readBool(KEY_HIDE_APPS_NOVERIFY_ENABLED, true));
+        log("hide_apps_noverify enabled=" + readBool(KEY_HIDE_APPS_NOVERIFY_ENABLED, false));
         try {
             XposedHelpers.findAndHookMethod(
                     "com.oplus.safecenter.privacy.view.space.AppHideNewCheckActivity",
@@ -752,7 +760,7 @@ public class XposedInit implements IXposedHookLoadPackage {
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
                                 // 运行时动态门控: 关闭则不跳过密码校验。
-                                if (!readBool(KEY_HIDE_APPS_NOVERIFY_ENABLED, true)) return;
+                                if (!readBool(KEY_HIDE_APPS_NOVERIFY_ENABLED, false)) return;
                                 Object obj = param.thisObject;
                                 // noNeedCheckPrivacyPwd = true -> 跳过密码/指纹, 直接进入已验证流程
                                 Class<?> c = obj.getClass();
@@ -802,7 +810,7 @@ public class XposedInit implements IXposedHookLoadPackage {
                 protected void beforeHookedMethod(MethodHookParam param) {
                     try {
                         // 运行时动态门控: 关闭则保持系统原标题("应用隐藏")。
-                        if (!readBool(KEY_HIDE_APPS_TITLE_FOLDER_ENABLED, true)) return;
+                        if (!readBool(KEY_HIDE_APPS_TITLE_FOLDER_ENABLED, false)) return;
                         Object obj = param.thisObject;
                         if (!(obj instanceof android.app.Activity)) return;
                         android.app.Activity act = (android.app.Activity) obj;
@@ -939,7 +947,7 @@ public class XposedInit implements IXposedHookLoadPackage {
                         protected void afterHookedMethod(MethodHookParam param) {
                             try {
                                 // 运行时动态门控: 关闭则不绕过校验。
-                                if (!readBool(KEY_HIDE_APPS_NOVERIFY_ENABLED, true)) return;
+                                if (!readBool(KEY_HIDE_APPS_NOVERIFY_ENABLED, false)) return;
                                 Object obj = param.thisObject;
                                 String name = obj.getClass().getName();
                                 // 仅对隐藏应用相关的校验界面生效, 避免误伤其它隐私确认流程
@@ -1011,7 +1019,7 @@ public class XposedInit implements IXposedHookLoadPackage {
                                 int id = res.getIdentifier("qs_carrier_text", "id", "com.android.systemui");
                                 int id2 = res.getIdentifier("carrier_group", "id", "com.android.systemui");
                                 // 运行时动态门控: 关闭则还原为显示。
-                                if (!readBool(KEY_QS_CARRIER_ENABLED, true)) {
+                                if (!readBool(KEY_QS_CARRIER_ENABLED, false)) {
                                     if (id != 0) {
                                         android.view.View c = header.findViewById(id);
                                         if (c != null) c.setVisibility(android.view.View.VISIBLE);
@@ -1065,7 +1073,7 @@ public class XposedInit implements IXposedHookLoadPackage {
                         protected void afterHookedMethod(MethodHookParam param) {
                             try {
                                 // 运行时动态门控: 关闭则不调整顶栏间距。
-                                if (!readBool(KEY_QS_TOPMARGIN_ENABLED, true)) return;
+                                if (!readBool(KEY_QS_TOPMARGIN_ENABLED, false)) return;
                                 android.view.View header = (android.view.View) param.thisObject;
                                 hideQsStatusCluster(header, header.getResources());
                             } catch (Throwable t) {
@@ -1090,7 +1098,7 @@ public class XposedInit implements IXposedHookLoadPackage {
                                 @Override
                                 protected void afterHookedMethod(MethodHookParam param) {
                                     // 运行时动态门控: 关闭则不叠加页脚顶部间距。
-                                    if (!readBool(KEY_QS_TOPMARGIN_ENABLED, true)) return;
+                                    if (!readBool(KEY_QS_TOPMARGIN_ENABLED, false)) return;
                                     addFooterTopPadding(param.thisObject, footerPx);
                                 }
                             });
@@ -1170,7 +1178,7 @@ public class XposedInit implements IXposedHookLoadPackage {
                         protected void afterHookedMethod(MethodHookParam param) {
                             try {
                                 // 运行时动态门控: 关闭则保持系统默认样式。
-                                if (!readBool(KEY_NOTIFICATION_SUBTITLE_ENABLED, true)) return;
+                                if (!readBool(KEY_NOTIFICATION_SUBTITLE_ENABLED, false)) return;
                                 // 滑条 = 字号缩减量(0=系统默认 24sp, 默认 8sp -> 16sp, 最大 16sp -> 8sp);
                                 // 偏移与额外内边距按缩减比例等比缩放, 缩减为 0 时整体即系统默认样式。
                                 int reduceSp = readInt(KEY_NOTIFICATION_SUBTITLE_SP, SUBTITLE_REDUCE_SP_DEFAULT);
@@ -1235,7 +1243,7 @@ public class XposedInit implements IXposedHookLoadPackage {
                                 int padPx = Math.round(
                                         readInt(KEY_NOTIFICATION_PADDING_DP, NOTIFICATION_PADDING_DP) * density);
                                 // 运行时动态门控: 关闭则还原到原始 padding(minimized=true 即还原原值)。
-                                if (!readBool(KEY_NOTIFICATION_PADDING_ENABLED, true)) {
+                                if (!readBool(KEY_NOTIFICATION_PADDING_ENABLED, false)) {
                                     applyNotificationChildPadding(
                                             XposedHelpers.getObjectField(row, "mPrivateLayout"), true, padPx);
                                     applyNotificationChildPadding(
@@ -1317,7 +1325,7 @@ public class XposedInit implements IXposedHookLoadPackage {
                             @Override
                             protected void afterHookedMethod(MethodHookParam param) {
                                 try {
-                                    if (!readBool(KEY_QS_SCRIM_TRANSLUCENT_ENABLED, true)) return;
+                                    if (!readBool(KEY_QS_SCRIM_TRANSLUCENT_ENABLED, false)) return;
                                     Object cfg = param.getResult();
                                     if (cfg == null) return;
                                     if (!cfg.getClass().getName().contains("BlurMixSingleWithShader")) return;
@@ -1377,7 +1385,7 @@ public class XposedInit implements IXposedHookLoadPackage {
                             @Override
                             protected void afterHookedMethod(MethodHookParam param) {
                                 try {
-                                    if (!readBool(KEY_QS_TILE_NAME_ELLIPSIS_ENABLED, true)) return;
+                                    if (!readBool(KEY_QS_TILE_NAME_ELLIPSIS_ENABLED, false)) return;
                                     for (String f : labelFields) {
                                         Object v = XposedHelpers.getObjectField(param.thisObject, f);
                                         forceSingleLineEllipsis(v);
@@ -1439,7 +1447,7 @@ public class XposedInit implements IXposedHookLoadPackage {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             // 运行时动态门控: 关闭则保持系统默认(隐藏应用不出现在多任务)。
-                            if (!readBool(KEY_RECENTS_SHOW_HIDDEN_ENABLED, true)) return;
+                            if (!readBool(KEY_RECENTS_SHOW_HIDDEN_ENABLED, false)) return;
                             // 仅当调用方来自 quickstep 多任务渲染/手势路径时, 绕过"隐藏应用"判定
                             if (callerInQuickstepPath()) {
                                 Object pkg = param.args[0];
@@ -1484,7 +1492,7 @@ public class XposedInit implements IXposedHookLoadPackage {
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
-                            if (!readBool(gateKey, true)) return;
+                            if (!readBool(gateKey, false)) return;
                             Object ret = param.getResult();
                             if (ret instanceof Integer) {
                                 int dp = readInt(dpKey, dpDef);
@@ -1506,7 +1514,7 @@ public class XposedInit implements IXposedHookLoadPackage {
     // 2) 通过 getContentResolver().query(content://<authority>/<key>) 向模块 App 的 Provider 取真实值。
     // 3) 失败(模块 App 尚未就绪等)时回退 XSharedPreferences; 再失败返回默认 def。
     private static boolean readBool(String key, boolean def) {
-        // 1) 新鲜缓存(有效期内)直接返回, 减少 IPC
+        // 1) 新鲜缓存(有效期内)直接返回, 避免每次交互都走 IPC 造成卡顿
         Object[] cached = sCache.get(key);
         if (cached != null && System.currentTimeMillis() - (Long) cached[0] < CACHE_TTL_MS) {
             return (Boolean) cached[1];
@@ -1526,33 +1534,24 @@ public class XposedInit implements IXposedHookLoadPackage {
                             int v = c.getInt(0);
                             boolean result = v == 1;
                             sCache.put(key, new Object[]{System.currentTimeMillis(), result});
-                            dbg("[DBG] readBool " + key + " = " + result + " (provider)");
                             return result;
                         }
                     } finally {
                         c.close();
                     }
-                    dbg("[DBG] readBool " + key + " (provider empty)");
-                } else {
-                    dbg("[DBG] readBool " + key + " (provider null)");
                 }
             }
-        } catch (Throwable t) {
-            dbg("[DBG] readBool provider fail: " + t);
+        } catch (Throwable ignored) {
         }
         // 3) Provider 取不到(模块 App 未运行等): 回退到上一次成功取到的值(粘性, 即使已过期),
         //    保证设置一旦被写入就会"记住", 不受 App 被杀/重启影响; 仅从未取到过才用默认或 XSP。
         if (cached != null) {
-            dbg("[DBG] readBool " + key + " = " + cached[1] + " (sticky cache)");
             return (Boolean) cached[1];
         }
         try {
             XSharedPreferences pref = new XSharedPreferences(MODULE_PACKAGE, PREF_NAME);
-            boolean v = pref.getBoolean(key, def);
-            dbg("[DBG] readBool " + key + " = " + v + " (XSP fallback)");
-            return v;
-        } catch (Throwable t) {
-            dbg("[DBG] readBool XSP fail: " + t);
+            return pref.getBoolean(key, def);
+        } catch (Throwable ignored) {
         }
         return def;
     }

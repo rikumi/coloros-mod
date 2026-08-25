@@ -1,6 +1,7 @@
 package com.rikumi.colorosmod
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -55,6 +56,7 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        checkEnvironment(this)
         setContent {
             val context = LocalContext.current
             MiuixTheme(
@@ -85,6 +87,7 @@ class MainActivity : ComponentActivity() {
 internal data class SwitchItem(
     val key: String,
     val label: String,
+    val subtitle: String? = null,
     val sliderKey: String? = null,
     val sliderMax: Int = 0,
     val sliderDefault: Int = 0,
@@ -95,9 +98,10 @@ private val DESKTOP = listOf(
     SwitchItem("icon_gap_enabled", "增加图标与名称间距", sliderKey = "icon_gap_dp", sliderMax = 8, sliderDefault = 4),
     SwitchItem("indicator_enabled", "减小页面与 Dock 间距", sliderKey = "indicator_dp", sliderMax = 32, sliderDefault = 16),
     SwitchItem("shrink_popup_menu", "缩小图标长按菜单", sliderKey = "popup_scale_percent", sliderMax = 20, sliderDefault = 10, sliderUnit = "%"),
-    SwitchItem("hide_contacts_enabled", "隐藏电话本图标"),
-    SwitchItem("hide_gboard_enabled", "隐藏 Gboard 图标"),
     SwitchItem("folder_bg_transparent_enabled", "文件夹展开背景透明"),
+    SwitchItem("hide_contacts_enabled", "彻底隐藏电话本图标"),
+    SwitchItem("hide_gboard_enabled", "彻底隐藏 Gboard 图标"),
+    SwitchItem("hide_ghostlock_enabled", "彻底隐藏 GhostLock 图标", subtitle = "显然已经有 root 的时候不需要再 root"),
 )
 private val QS = listOf(
     SwitchItem("qs_scrim_translucent_enabled", "自定义控制中心背景亮度", sliderKey = "qs_scrim_brightness", sliderMax = 20, sliderDefault = 10, sliderUnit = ""),
@@ -126,7 +130,7 @@ private const val MASTER_TOGGLE_ANIM_MS = 350L
 @Composable
 fun SettingsScreen() {
     val ctx = androidx.compose.ui.platform.LocalContext.current
-    val prefs = remember { ctx.getSharedPreferences("settings", Context.MODE_WORLD_READABLE) }
+    val prefs = remember { ctx.getSharedPreferences("settings", Context.MODE_PRIVATE) }
     val listState = rememberLazyListState()
     val density = LocalDensity.current
     var scrolledUpPx by remember { mutableStateOf(0f) }
@@ -153,7 +157,7 @@ fun SettingsScreen() {
     // masterOverride: 主开关切换后、落盘前的临时视觉覆盖(null = 无覆盖, 直接读 prefs)。
     var masterOverride by remember { mutableStateOf<Boolean?>(null) }
     val anyEnabled = remember(version, masterOverride) {
-        masterOverride ?: allItems.any { prefs.getBoolean(it.key, true) }
+        masterOverride ?: allItems.any { prefs.getBoolean(it.key, false) }
     }
 
     Scaffold(
@@ -177,7 +181,7 @@ fun SettingsScreen() {
                             .fillMaxWidth()
                             .padding(horizontal = TOP_BAR_DIVIDER_INSET * (1f - dividerProgress))
                             .height((1f / density.density).dp)
-                            .background(Color.White.copy(alpha = 0.16f * dividerProgress)),
+                            .background(Color.White.copy(alpha = 0.2f * dividerProgress)),
                     )
                 }
             }
@@ -194,7 +198,7 @@ fun SettingsScreen() {
             item {
                 CouixMasterToggle(
                     checked = anyEnabled,
-                    title = "启用模块",
+                    title = "一键启用",
                     subtitle = if (anyEnabled) "所有滑块设置最左/最右为系统值，中间为默认值" else "点击无脑启用全部，注意下方隐藏应用的设置",
                     onCheckedChange = { target ->
                         // 先更新 UI(所有开关立即显示 target, 播放切换动画), 暂不落盘。
@@ -228,13 +232,13 @@ fun SettingsScreen() {
 
 
 internal fun setBool(ctx: Context, key: String, value: Boolean) {
-    ctx.getSharedPreferences("settings", Context.MODE_WORLD_READABLE)
+    ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
         .edit().putBoolean(key, value).commit()
     makePrefsWorldReadable(ctx)
 }
 
 internal fun setInt(ctx: Context, key: String, value: Int) {
-    ctx.getSharedPreferences("settings", Context.MODE_WORLD_READABLE)
+    ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
         .edit().putInt(key, value).commit()
     makePrefsWorldReadable(ctx)
 }
@@ -313,4 +317,78 @@ private fun colorOSMonetAccent(context: Context): String? {
     } catch (t: Throwable) {
         null
     }
+}
+
+/**
+ * 以 root 执行一段 shell 命令, 返回其 stdout(无 root / su 不存在 / 命令出错时返回 null)。
+ * 全程静默: 任何异常都被吞掉, 绝不向上抛, 保证首次安装无权限时不崩溃。
+ */
+private fun runRoot(command: String): String? {
+    return runCatching {
+        val p = Runtime.getRuntime().exec("su")
+        DataOutputStream(p.outputStream).use { os ->
+            os.writeBytes(command)
+            os.writeBytes("\nexit\n")
+            os.flush()
+        }
+        val out = p.inputStream.bufferedReader().readText()
+        p.waitFor()
+        out
+    }.getOrNull()
+}
+
+/** 是否有可用的 root(su 可用且以 uid=0 运行)。 */
+private fun hasRootAccess(): Boolean {
+    return runRoot("id -u")?.trim() == "0"
+}
+
+/**
+ * 模块是否已在 LSPosed 中启用。
+ *
+ * LSPosed 1.8+ 把模块启用状态存在 SQLite 库 /data/adb/lspd/config/modules_config.db 的
+ * modules_state 表(enabled 字段), 且启用/禁用的变更常驻留在 -wal 文件里尚未 checkpoint。
+ * 因此不能只读主 .db(会读到旧的 enabled=1), 必须连同 -wal/-shm 一起拷出后用只读方式打开,
+ * 让 SQLite 自动合并 WAL 得到最新状态。
+ *
+ * 判定: modules_state 中存在本模块记录且 enabled=1 才算启用; 记录不存在(LSPosed 禁用时会
+ * 删除该记录)或 enabled=0 都视为未启用。任何异常 / 无 root / 路径不存在一律返回 false。
+ */
+private fun isModuleEnabledInLsposed(ctx: Context, pkg: String): Boolean {
+    val db = File(ctx.cacheDir, "lspd_modules_config.db")
+    // 先删旧拷贝再重新拷出(连同 wal/shm), 避免上次残留的旧数据库造成误判。
+    val cmd = "rm -f \"${db.path}\" \"${db.path}-wal\" \"${db.path}-shm\" 2>/dev/null; " +
+            "cp -f /data/adb/lspd/config/modules_config.db \"${db.path}\" 2>/dev/null; " +
+            "cp -f /data/adb/lspd/config/modules_config.db-wal \"${db.path}-wal\" 2>/dev/null; " +
+            "cp -f /data/adb/lspd/config/modules_config.db-shm \"${db.path}-shm\" 2>/dev/null; " +
+            "chmod 666 \"${db.path}\" \"${db.path}-wal\" \"${db.path}-shm\" 2>/dev/null"
+    if (runRoot(cmd) == null) return false
+    return runCatching {
+        SQLiteDatabase.openDatabase(db.path, null, SQLiteDatabase.OPEN_READONLY).use { d ->
+            d.rawQuery(
+                "SELECT enabled FROM modules_state WHERE module_pkg_name=? AND user_id=0",
+                arrayOf(pkg),
+            ).use { c -> c.moveToFirst() && c.getInt(0) == 1 }
+        }
+    }.getOrDefault(false)
+}
+
+/**
+ * 启动时后台自检环境:
+ * - 无 root        -> 兼容运行, 不弹提示(刷新按钮点击时已有"未授予 root 权限"提示)。
+ * - 有 root 但模块未在 LSPosed 启用 -> toast 提示去启用。
+ */
+private fun checkEnvironment(activity: MainActivity) {
+    Thread {
+        val hasRoot = hasRootAccess()
+        val enabled = if (hasRoot) isModuleEnabledInLsposed(activity, activity.packageName) else null
+        activity.runOnUiThread {
+            if (enabled == false) {
+                android.widget.Toast.makeText(
+                    activity,
+                    "请在 LSPosed 中启用模块",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }.start()
 }
