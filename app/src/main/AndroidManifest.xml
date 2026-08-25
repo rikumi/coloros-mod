@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.AppCompat.DayNight.NoActionBar"
+        tools:ignore="MissingApplicationIcon">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.ColorOSMod">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 跨进程暴露模块设置给被 hook 的进程读取(Binder 通道, 绕开 SELinux 对 app_data_file 的限制) -->
+        <provider
+            android:name=".SettingsProvider"
+            android:authorities="com.rikumi.colorosmod.settings"
+            android:exported="true" />
+
+        <!-- LSPosed / Xposed module declaration -->
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="93" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="@string/xposed_description" />
+        <meta-data
+            android:name="xposedscope"
+            android:resource="@array/xposedscope" />
+        <meta-data
+            android:name="xposedsharedprefs"
+            android:value="true" />
+    </application>
+</manifest>

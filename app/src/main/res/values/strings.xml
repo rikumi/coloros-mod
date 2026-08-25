@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ColorOS Mod</string>
+    <string name="xposed_description">调整 ColorOS：增大图标与名称间距、分页控件靠近页面与 Dock，缩小桌面图标长按菜单，隐藏控制中心运营商与顶部状态图标簇，缩小偏移通知面板副标题，为非静默通知增加上下内边距，让多任务（quickstep）显示被系统隐藏的应用，并让点击桌面隐藏应用图标 / 拨号盘输入隐藏号码后无需密码或指纹即可打开隐藏应用界面。另可让控制中心 WLAN/蓝牙 名称单行省略（过长时以省略号结尾）</string>
+</resources>

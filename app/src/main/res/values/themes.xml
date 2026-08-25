@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 模块主界面主题: 在 DayNight 基础上设置纯色启动画面 -->
+    <style name="Theme.ColorOSMod" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <!-- Android 12+ 启动画面: 纯色背景(随日夜模式: 日间白 / 夜间黑) -->
+        <item name="android:windowSplashScreenBackground">@color/splash_background</item>
+        <!-- 图标底色与背景同色, 避免图标四周出现异色圆 -->
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/splash_background</item>
+        <!-- 旧版(≤API30)用纯色窗口背景充当启动画面 -->
+        <item name="android:windowBackground">@color/splash_background</item>
+    </style>
+</resources>
