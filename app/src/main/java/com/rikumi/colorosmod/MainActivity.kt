@@ -2,6 +2,7 @@ package com.rikumi.colorosmod
 
 import android.content.Context
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -45,6 +46,7 @@ import top.yukonga.miuix.kmp.theme.darkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme
 import java.io.DataOutputStream
 import java.io.File
+import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -60,10 +62,10 @@ class MainActivity : ComponentActivity() {
                     ThemeController(
                         colorSchemeMode = ColorSchemeMode.System,
                         lightColors = lightColorScheme(
-                            primary = colorOSAccentColor(context, "system_accent1_500", 0xFF00B4D8)
+                            primary = colorOSAccentColor(context, 0xFF00B4D8)
                         ),
                         darkColors = darkColorScheme(
-                            primary = colorOSAccentColor(context, "system_accent1_200", 0xFF00B4D8)
+                            primary = colorOSAccentColor(context, 0xFF00B4D8)
                         ),
                     )
                 },
@@ -269,21 +271,46 @@ private fun restartScope(ctx: Context) {
 /**
  * 读取 ColorOS 主题色(强调色)。
  *
- * ColorOS 把用户选择的主题色(含"跟随壁纸"莫奈色与手动预设色)通过主题 overlay 合成到
- * Android 12+ 的系统动态色资源 android.R.color.system_accent1_* 上(launcher 的
- * DropZoneView / ThemedIconDrawable / IconThemedUtil 等官方代码均直接读这些资源)。
- * 因此直接读 system_accent1_500(浅色主色) / system_accent1_200(深色主色) 即为用户当前
- * 主题色, 无需解析 Settings.Secure 里的 theme_customization_overlay_packages JSON
- * (那里面只有 color_source / color_index 索引, 不是具体颜色值)。
+ * ColorOS 的主题色是 COUI 主题系统里的 couiColorPrimary, 与 Android 莫奈动态色
+ * (system_accent1_*) 是两套独立体系。SystemUI 在 OpUtils#getThemeAccentColor 里
+ * 通过 ContextThemeWrapper(Theme_SystemUI) + COUIThemeOverlay.applyThemeOverlays()
+ * resolve R.attr.couiColorPrimary 得到当前主题色, 并把它落盘到
+ * Settings.Secure["sysui_type_accent_color"](格式 "#RRGGBB", 如 "#ff8c909f")。
  *
- * @param name     系统颜色资源名(如 "system_accent1_500"), 用 getIdentifier 兼容 API < 31。
- * @param fallback 资源不存在或读取失败时的兜底颜色(0xAARRGGBB)。
+ * 因此直接读这个 key 即可拿到用户当前主题色(实测 #ff8c909f, 即略微偏蓝的灰色)。
+ * 兜底: 若 SystemUI 尚未写入, 退而读 theme_customization_overlay_packages JSON 里的
+ * accent_color / system_palette(值为无 "#" 前缀的 hex, 补前缀后 Color.parseColor)。
+ *
+ * @param fallback 所有来源都拿不到颜色时的兜底色(0xAARRGGBB)。
  */
-private fun colorOSAccentColor(context: Context, name: String, fallback: Long): Color {
+private fun colorOSAccentColor(context: Context, fallback: Long): Color {
     return try {
-        val id = context.resources.getIdentifier(name, "color", "android")
-        if (id == 0) Color(fallback) else Color(context.getColor(id))
+        // 首选: SystemUI 计算并缓存的 ColorOS 主题色。
+        val accent = Settings.Secure.getString(context.contentResolver, "sysui_type_accent_color")
+        val hex = when {
+            !accent.isNullOrBlank() -> accent
+            else -> colorOSMonetAccent(context)
+        }
+        if (hex.isNullOrBlank()) Color(fallback) else Color(android.graphics.Color.parseColor(hex))
     } catch (t: Throwable) {
         Color(fallback)
+    }
+}
+
+/**
+ * 兜底: 从 theme_customization_overlay_packages JSON 里取 monet 强调色(通常与上面的
+ * couiColorPrimary 一致)。返回可直接交给 Color.parseColor 的 "#RRGGBB"/"#AARRGGBB" 字符串。
+ */
+private fun colorOSMonetAccent(context: Context): String? {
+    return try {
+        val raw = Settings.Secure.getString(context.contentResolver, "theme_customization_overlay_packages")
+            ?: return null
+        val json = JSONObject(raw)
+        // 优先 accent_color, 其次 system_palette; 二者均是无 "#" 前缀的 hex。
+        val value = json.optString("android.theme.customization.accent_color")
+            .ifEmpty { json.optString("android.theme.customization.system_palette") }
+        if (value.isBlank()) null else "#" + value.trimStart('#')
+    } catch (t: Throwable) {
+        null
     }
 }
