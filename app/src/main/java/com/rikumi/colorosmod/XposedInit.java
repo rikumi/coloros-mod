@@ -123,6 +123,11 @@ public class XposedInit implements IXposedHookLoadPackage {
     // 由 updateLabelDescText(QSTile.State) 经 TextSwitcherExtKt.setContent 写入。
     // 默认该 TextView 可能换行/截断方式不合预期, 这里在其每次 setContent 之后强制单行 + 行尾省略号。
     private static final String KEY_QS_TILE_NAME_ELLIPSIS_ENABLED = "qs_tile_name_ellipsis_enabled";
+    // Feature 17 — 流体云出现时不隐藏电量百分比 (com.android.systemui):
+    // 系统在流体云胶囊出现时会把 BatteryStyleModel.capsuleShowing=true,
+    // 进而令 PercentOutIcon.isVisible=false, 隐藏状态栏电量百分比数字。
+    // hook BatteryViewBinder.bind$updatePercentOutView, 强制 isVisible=true。
+    private static final String KEY_FLUID_CLOUD_KEEP_PERCENT_ENABLED = "fluid_cloud_keep_percent_enabled";
     // Feature 11 — 从桌面隐藏指定的单个 LAUNCHER 活动 (com.android.launcher):
     // 某些应用一个包内有多个 LAUNCHER 入口(如电话本+拨号), 系统"隐藏应用"按包隐藏会误伤,
     // 故在 launcher 进程内拦截 LauncherApps.getActivityList / PackageManager.queryIntentActivities,
@@ -1113,6 +1118,8 @@ public class XposedInit implements IXposedHookLoadPackage {
         hookQsBackgroundDim(lpparam);
         // Feature 13 — 控制中心 WLAN/蓝牙 名称单行省略: 始终注入, 运行时按 KEY_QS_TILE_NAME_ELLIPSIS_ENABLED 门控。
         hookQsTileNameEllipsis(lpparam);
+        // Feature 17 — 流体云出现时不隐藏电量百分比: 始终注入, 运行时按 KEY_FLUID_CLOUD_KEEP_PERCENT_ENABLED 门控。
+        hookFluidCloudKeepPercent(lpparam);
     }
 
     /**
@@ -1548,6 +1555,48 @@ public class XposedInit implements IXposedHookLoadPackage {
         tv.setMaxLines(1);
         tv.setEllipsize(TextUtils.TruncateAt.END);
         tv.setHorizontallyScrolling(false); // 关闭横向滚动/跑马灯, 仅静态行尾省略
+    }
+
+    /**
+     * Feature 17 — 流体云出现时不隐藏电量百分比 (com.android.systemui):
+     * 系统在流体云胶囊出现时会把 BatteryStyleModel.capsuleShowing=true,
+     * 从而令 BatteryViewBinder.bind$updatePercentOutView 中的 PercentOutIcon.isVisible=false,
+     * 状态栏电量百分比数字被 setVisibility(GONE)。
+     * 此处 hook 该方法, 在 beforeHook 中将 PercentOutIcon.isVisible 强制置 true,
+     * 使电量百分比始终显示。
+     */
+    private static void hookFluidCloudKeepPercent(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> percentOutIconClass = XposedHelpers.findClass(
+                    "com.oplus.systemui.statusbar.pipeline.battery.ui.model.PercentOutIcon",
+                    lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(
+                    "com.oplus.systemui.statusbar.pipeline.battery.ui.binder.BatteryViewBinder",
+                    lpparam.classLoader,
+                    "bind$updatePercentOutView",
+                    TextView.class,
+                    XposedHelpers.findClass(
+                            "com.oplus.systemui.statusbar.pipeline.battery.ui.view.StatBatteryMeterView",
+                            lpparam.classLoader),
+                    percentOutIconClass,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!readBool(KEY_FLUID_CLOUD_KEEP_PERCENT_ENABLED, false)) return;
+                            try {
+                                Object percentOutIcon = param.args[2];
+                                if (percentOutIcon == null) return;
+                                // 强制 isVisible = true, 使电量百分比不被流体云隐藏。
+                                XposedHelpers.setBooleanField(percentOutIcon, "isVisible", true);
+                            } catch (Throwable t) {
+                                log("fluid_cloud_keep_percent hook error: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK BatteryViewBinder#bind$updatePercentOutView (fluid cloud keep percent)");
+        } catch (Throwable t) {
+            log("HOOK FAIL BatteryViewBinder#bind$updatePercentOutView: " + t);
+        }
     }
 
     /**
