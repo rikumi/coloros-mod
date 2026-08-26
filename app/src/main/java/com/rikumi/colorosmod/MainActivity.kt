@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -25,12 +26,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
@@ -105,6 +102,7 @@ internal data class SwitchItem(
     val sliderMax: Int = 0,
     val sliderDefault: Int = 0,
     val sliderUnit: String = "dp",
+    val defaultEnabled: Boolean = false,
 )
 
 internal data class SelectItem(
@@ -125,27 +123,32 @@ private val DESKTOP = listOf(
     SwitchItem("hide_ghostlock_enabled", "彻底隐藏 GhostLock 图标", subtitle = "显然已经有 root 的时候不需要再 root"),
 )
 private val QS = listOf(
-    SwitchItem("qs_scrim_translucent_enabled", "自定义控制中心背景亮度", sliderKey = "qs_scrim_brightness", sliderMax = 20, sliderDefault = 5, sliderUnit = ""),
+    SwitchItem("qs_scrim_translucent_enabled", "自定义控制/通知中心背景亮度", sliderKey = "qs_scrim_brightness", sliderMax = 20, sliderDefault = 5, sliderUnit = ""),
     SwitchItem("qs_carrier_enabled", "去除控制中心运营商显示"),
     SwitchItem("qs_topmargin_enabled", "隐藏控制中心顶部状态图标簇"),
-    SwitchItem("qs_tile_name_ellipsis_enabled", "分离控制中心 Wi-Fi / 蓝牙名称单行省略"),
-    SwitchItem("fluid_cloud_keep_percent_enabled", "流体云出现时不隐藏电量百分比"),
+    SwitchItem("qs_tile_name_ellipsis_enabled", "分离版 Wi-Fi / 蓝牙名称单行省略"),
 )
 private val NOTIF = listOf(
     SwitchItem("notification_subtitle_enabled", "缩小通知静默区域副标题", sliderKey = "notification_subtitle_sp", sliderMax = 16, sliderDefault = 8, sliderUnit = "sp"),
     SwitchItem("notification_padding_enabled", "增加通知上下内边距", sliderKey = "notification_padding_dp", sliderMax = 8, sliderDefault = 4),
+    SwitchItem("fluid_cloud_keep_percent_enabled", "流体云出现时不隐藏电量百分比"),
 )
 private val HIDDEN = listOf(
     SwitchItem("recents_show_hidden_enabled", "多任务显示隐藏应用"),
     SwitchItem("hide_apps_noverify_enabled", "打开隐藏应用文件夹免验证"),
     SwitchItem("pinch_out_open_hide_apps_enabled", "桌面双指张开打开隐藏应用"),
     SwitchItem("hide_apps_title_folder_enabled", "应用隐藏标题显示文件夹名"),
-    SwitchItem("recents_hide_freeform_enabled", "多任务不显示小窗应用", subtitle = "小窗(自由窗口)不出现在多任务切换卡片中，应用仍前台运行"),
 )
 
 // 小窗相关设置: 改动需重启 system_server(框架) 才生效(本模块该作用域为 android/system_server)。
 private val FLOATWINDOW = listOf(
-    SwitchItem("float_window_edge_hang_enabled", "悬浮小窗贴边挂机", subtitle = "悬浮小窗移到侧边时不切后台，保持前台挂机（需重启 system_server 生效）"),
+    SwitchItem("recents_hide_freeform_enabled", "多任务不显示小窗应用", subtitle = "小窗(自由窗口)不出现在多任务切换卡片中，应用仍前台运行"),
+    SwitchItem("float_window_edge_hang_enabled", "悬浮小窗贴边挂机"),
+)
+
+private val NAV = listOf(
+    SwitchItem("gesture_bar_height_enabled", "调整底部手势区高度", "缓解屏幕底部圆角区域吃掉应用内容", "gesture_bar_height_dp", 32, 16),
+    SwitchItem("gesture_bar_long_press_disable_enabled", "禁止长按手势条放大", "理论可弥补 OxygenOS 没有助手设置项的问题", defaultEnabled = true),
 )
 
 // 标题栏底部分割线: 界面上滑时出现, 初始两端各内缩 16dp, 随滚动量在该距离内逐渐延长至通栏。
@@ -161,25 +164,21 @@ fun SettingsScreen() {
     val prefs = remember { ctx.getSharedPreferences("settings", Context.MODE_PRIVATE) }
     val listState = rememberLazyListState()
     val density = LocalDensity.current
-    var scrolledUpPx by remember { mutableStateOf(0f) }
-    val scrollConnection = remember {
-        object : NestedScrollConnection {
-            override fun onPostScroll(
-                consumed: Offset,
-                available: Offset,
-                source: NestedScrollSource,
-            ): Offset {
-                // 内容上滑时 consumed.y 为负, 取反累计即上滑距离; 滚回顶部时钳制到 0。
-                scrolledUpPx = (scrolledUpPx - consumed.y).coerceAtLeast(0f)
-                return Offset.Zero
+    val dividerProgress by remember(listState, density) {
+        derivedStateOf {
+            // 首项仍在屏幕内时按真实滚动偏移延长；首项离开后保持通栏。
+            if (listState.firstVisibleItemIndex > 0) {
+                1f
+            } else {
+                val scrollPx = listState.firstVisibleItemScrollOffset.toFloat()
+                (scrollPx / with(density) { TOP_BAR_DIVIDER_EXTEND_SCROLL.toPx() })
+                    .coerceIn(0f, 1f)
             }
         }
     }
-    val dividerProgress =
-        (scrolledUpPx / with(density) { TOP_BAR_DIVIDER_EXTEND_SCROLL.toPx() }).coerceIn(0f, 1f)
 
     // 全部功能项(用于"启用模块"主开关), version 变化时强制重读 prefs 同步所有开关状态。
-    val allItems = remember { DESKTOP + QS + NOTIF + HIDDEN + FLOATWINDOW }
+    val allItems = remember { DESKTOP + QS + NOTIF + HIDDEN + FLOATWINDOW + NAV }
     val scope = rememberCoroutineScope()
     var version by remember { mutableStateOf(0) }
     // masterOverride: 主开关切换后、落盘前的临时视觉覆盖(null = 无覆盖, 直接读 prefs)。
@@ -194,12 +193,18 @@ fun SettingsScreen() {
                 CouixLargeTitle(
                     title = "ColorOS Mod",
                     actions = {
-                        IconButton(onClick = { restartScope(ctx) }) {
-                            Icon(
-                                painter = rememberVectorPainter(MiuixIcons.Refresh),
-                                contentDescription = "重启作用域",
-                            )
-                        }
+                        CouixActionMenu(
+                            icon = {
+                                Icon(
+                                    painter = rememberVectorPainter(MiuixIcons.Refresh),
+                                    contentDescription = "重启",
+                                )
+                            },
+                            items = listOf(
+                                ActionMenuItem("重启作用域", { restartScope(ctx) }),
+                                ActionMenuItem("软重启系统", { softRebootSystem(ctx) }),
+                            ),
+                        )
                     },
                 )
                 if (dividerProgress > 0f) {
@@ -219,8 +224,7 @@ fun SettingsScreen() {
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .nestedScroll(scrollConnection),
+                .padding(padding),
         ) {
             item { CouixSmallTitle(text = "By Rikumi / Couix 基于 Miuix 魔改") }
             item {
@@ -255,6 +259,8 @@ fun SettingsScreen() {
             item { CouixGroup(items = HIDDEN, prefs = prefs, ctx = ctx, version = version, overrideValue = masterOverride, onItemChanged = { version++ }) }
             item { CouixSmallTitle(text = "小窗（需重启系统）") }
             item { CouixGroup(items = FLOATWINDOW, prefs = prefs, ctx = ctx, version = version, overrideValue = masterOverride, onItemChanged = { version++ }) }
+            item { CouixSmallTitle(text = "导航与手势") }
+            item { CouixGroup(items = NAV, prefs = prefs, ctx = ctx, version = version, overrideValue = masterOverride, onItemChanged = { version++ }) }
             item { Box(Modifier.height(24.dp)) }
         }
     }
@@ -293,6 +299,26 @@ private fun restartScope(ctx: Context) {
         Runtime.getRuntime().exec("su").also { p ->
             val os = DataOutputStream(p.outputStream)
             os.writeBytes("for pid in \$(pidof com.android.systemui) \$(pidof com.android.launcher); do kill \$pid 2>/dev/null; done\n")
+            os.writeBytes("exit\n")
+            os.flush()
+            p.waitFor()
+        }
+    }.onFailure {
+        android.widget.Toast.makeText(ctx, "未授予 root 权限", android.widget.Toast.LENGTH_SHORT).show()
+    }
+}
+
+/**
+ * 软重启系统（对齐 KernelSU 实现）：通过 init 的 ctl.restart 属性重启 zygote 服务。
+ * 这会让 Android 用户空间（system_server 与全部应用）重新拉起，但 Linux 内核不重启，
+ * 因此 KernelSU（内核模块）及其挂载/注入的模块（含 LSPosed Zygisk）在重启后依然生效。
+ * 与完整 reboot 不同，本操作不会丢失越狱环境。
+ */
+private fun softRebootSystem(ctx: Context) {
+    runCatching {
+        Runtime.getRuntime().exec("su").also { p ->
+            val os = DataOutputStream(p.outputStream)
+            os.writeBytes("setprop ctl.restart zygote\n")
             os.writeBytes("exit\n")
             os.flush()
             p.waitFor()

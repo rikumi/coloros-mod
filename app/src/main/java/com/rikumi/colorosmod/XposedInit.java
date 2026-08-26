@@ -141,20 +141,31 @@ public class XposedInit implements IXposedHookLoadPackage {
     // 用 WindowContainerTransaction(WCT) 承载, WCT 经 SystemUI 的 android.window.TaskOrganizer#applyTransaction(WCT)
     // 这个"总出口"发往 system_server 才真正生效。
     // 实现(见 hookFloatWindowEdgeHang): 在 SystemUI 进程内 hook TaskOrganizer#applyTransaction(before), 当该 WCT 是
-    // "贴边挂机": 悬浮小窗拖到屏幕边缘松手时, 系统原本会把它最小化到边缘迷你条(切到后台),
-    // 本功能让它在边缘保持为前台浮窗、不切后台。
+    // "贴边挂机": 悬浮小窗拖到屏幕边缘松手时, 系统原生会把窗口缩成边缘竖条/图标把手、并把任务切到后台(可点击把手呼出)。
+    // 本功能在系统原生 to-float 的基础上, 于 to-float 完成(任务已切后台)之后主动把该任务 moveToFront 拉回前台,
+    // 使游戏/应用恢复前台持续运行(挂机 = 前台运行, 不暂停), 而不是最小化到后台。实现见 hookFloatWindowEdgeHangSystemServer。
     // 调用链(simpleperf 抓取确认, 在 system_server 即 package "android" 内, 不在 SystemUI):
     //   FlexibleFloatHandleAnimationSpec.defaultCallAnimationEnd
     //     -> FlexiblePointerHandler$2.onAnimationEnd
     //       -> FlexibleTaskController.exitFlexibleTaskWindowInnerLocked(AbsFlexibleTaskExitStrategy)
-    //         -> exitFlexibleTaskWindowInner -> ExitFlexibleTaskToFloatStrategy.handleEvent
-    //           -> exitFlexibleTask -> TaskExtImpl.moveTaskToBackForPanorama -> Task.moveTaskToBack -> nativeApplyTransaction
-    // 注意: 拖到"非边缘"松手(保持浮窗)走另一条链 finishMovingTask -> Task.resize, 不经过上面的 exitFlexibleTask*,
-    // 故 hook exitFlexibleTaskWindowInnerLocked 精准只拦"贴边最小化", 不影响正常拖拽重定位。
-    // 做法: 在 system_server 进程内 hook exitFlexibleTaskWindowInnerLocked(before), 开关开启时直接 setResult(null) 拦截提交,
-    // 任务不去后台、浮窗保持可见(短暂动画收缩后由 WMS 重新按原 bounds 布局恢复为前台浮窗)。运行时门控。
-    // 需要把模块作用域加入 "android"(system_server); 旧版 SystemUI 内 hook WCT/getChangeStateByPoint 的路径均已废弃(手机上不命中)。
+    //         -> exitFlexibleTaskWindowInner -> ExitFlexibleTaskToFloatStrategy.handleEvent()
+    //             ① floatHandleController.addFloatHandle(...) —— 把任务加入浮窗列表
+    //             ② 跑最小化动画把窗口缩成边缘竖条/图标形态(同时把真实窗口 hide)
+    //             ③ 动画结束 -> exitFlexibleTask(task, needExitTask, 16, ...)
+    //                  -> TaskExtImpl.moveTaskToBackForPanorama -> Task.moveTaskToBack -> nativeApplyTransaction(切后台)
+    // 竖条/图标形态由 handleEvent 内部的 ②③ 独立建立, 与"松手前是否按住等成形"无关 —— 任意时机松手都能可靠成形。
+    // ▲ 重要教训: ② 会把真实窗口 hide(隐藏), 而 moveTaskToBack 才让任务失焦。若只取消提交或只跳过后台化,
+    //   会出现"真实窗口已隐藏、任务却仍前台 focused" -> "Application does not have a focused window"
+    //   -> 音量条不出 + Input dispatching timed out -> ANR/crash(本功能两个早期版本都踩过)。
+    //   因此不能在 to-float 提交中途拦截; 正确做法是在 to-float 完全结束(任务已切后台)之后, 再 moveToFront 把任务拉回前台 ——
+    //   此时窗口由系统 bringToFront 重新显示(不再 hidden), 任务前台且可见, 无 ANR。仅对"贴边成浮窗"一路(isInFloatingList)生效,
+    //   普通最小化不介入。
+    // 需要把模块作用域加入 "android"(system_server) 才能让本模块在该进程注入(否则 hook 不生效); 旧版 SystemUI 内 hook 路径已废弃。
     private static final String KEY_FLOAT_WINDOW_EDGE_HANG_ENABLED = "float_window_edge_hang_enabled";
+    private static final String KEY_GESTURE_BAR_HEIGHT_ENABLED = "gesture_bar_height_enabled";
+    private static final String KEY_GESTURE_BAR_HEIGHT_DP = "gesture_bar_height_dp";
+    private static final String KEY_GESTURE_BAR_LONG_PRESS_DISABLE_ENABLED =
+            "gesture_bar_long_press_disable_enabled";
     // Feature 11 — 从桌面隐藏指定的单个 LAUNCHER 活动 (com.android.launcher):
     // 某些应用一个包内有多个 LAUNCHER 入口(如电话本+拨号), 系统"隐藏应用"按包隐藏会误伤,
     // 故在 launcher 进程内拦截 LauncherApps.getActivityList / PackageManager.queryIntentActivities,
@@ -1200,6 +1211,164 @@ public class XposedInit implements IXposedHookLoadPackage {
         // Feature 17 — 流体云出现时不隐藏电量百分比: 始终注入, 运行时按 KEY_FLUID_CLOUD_KEEP_PERCENT_ENABLED 门控。
         hookFluidCloudKeepPercent(lpparam);
         // Feature 18 — 悬浮小窗贴边挂机: 真正的提交逻辑在 system_server(android 作用域), 见 hookFloatWindowEdgeHangSystemServer。
+        hookGestureBarHeight(lpparam);
+        hookGestureBarLongPressDisable(lpparam);
+    }
+
+    private static final java.util.WeakHashMap<Object, Boolean> sBarExtraApplied =
+            new java.util.WeakHashMap<>();
+
+    private static void hookGestureBarLongPressDisable(
+            final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> controllerClass = XposedHelpers.findClass(
+                    "com.oplus.systemui.navigationbar.gesture.sidegesture.animator.OplusHandleAnimatorController",
+                    lpparam.classLoader);
+            Class<?> animTypeClass = XposedHelpers.findClass(
+                    "com.oplus.systemui.navigationbar.gesture.sidegesture.animator.OplusHandleAnimType",
+                    lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(controllerClass, "doHandleAnimator",
+                    animTypeClass, float.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (readBool(KEY_GESTURE_BAR_LONG_PRESS_DISABLE_ENABLED, true)
+                                    && "StartLongPressAnim".equals(String.valueOf(param.args[0]))) {
+                                param.setResult(null);
+                            }
+                        }
+                    });
+
+            Class<?> oldAnimTypeClass = XposedHelpers.findClass(
+                    "com.oplus.systemui.navigationbar.gesture.sidegesture.animator.OplusHandleOldAnimType",
+                    lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(controllerClass, "doHandleOldAnimator",
+                    oldAnimTypeClass,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (readBool(KEY_GESTURE_BAR_LONG_PRESS_DISABLE_ENABLED, true)
+                                    && "StartOldLongPressAnim".equals(String.valueOf(param.args[0]))) {
+                                param.setResult(null);
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            log("gesture_bar long press hook failed: " + t);
+        }
+    }
+
+    private static void hookGestureBarHeight(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> navBarClass = XposedHelpers.findClass(
+                    "com.android.systemui.navigationbar.views.NavigationBar", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(navBarClass, "getBarLayoutParams", int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (readInt(KEY_GESTURE_BAR_HEIGHT_ENABLED, 1) != 1) return;
+                                int dp = Math.max(0, Math.min(20,
+                                        readInt(KEY_GESTURE_BAR_HEIGHT_DP, 10)));
+                                int extraPx = Math.round(dp * readDensity());
+                                android.view.WindowManager.LayoutParams lp =
+                                        (android.view.WindowManager.LayoutParams) param.getResult();
+                                if (lp == null || extraPx <= 0) return;
+                                applyBarExtra(lp, extraPx);
+                            } catch (Throwable t) {
+                                log("gesture_bar layout hook err: " + t);
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            log("gesture_bar hook (layout) failed: " + t);
+        }
+        try {
+            Class<?> handleClass = XposedHelpers.findClass(
+                    "com.oplus.systemui.navigationbar.gesture.sidegesture.OplusNavigationHandle",
+                    lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(handleClass, "onDraw", android.graphics.Canvas.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                int dp = 10;
+                                if (dp <= 0) return;
+                                int half = Math.round(dp * readDensity() * 0.5f);
+                                android.graphics.Canvas c = (android.graphics.Canvas) param.args[0];
+                                c.save();
+                                c.translate(0, -half);
+                                param.setObjectExtra("gb_handle", Boolean.TRUE);
+                            } catch (Throwable t) {
+                                log("gesture_bar handle before err: " + t);
+                            }
+                        }
+
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (Boolean.TRUE.equals(param.getObjectExtra("gb_handle"))) {
+                                    ((android.graphics.Canvas) param.args[0]).restore();
+                                }
+                            } catch (Throwable t) {
+                                log("gesture_bar handle after err: " + t);
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            log("gesture_bar hook (handle) failed: " + t);
+        }
+    }
+
+    private static void applyBarExtra(android.view.WindowManager.LayoutParams lp, int extraPx) {
+        lp.height += extraPx;
+        bumpInsetsIfPresent(lp, extraPx);
+        try {
+            java.lang.reflect.Field f = lp.getClass().getField("paramsForRotation");
+            Object arr = f.get(lp);
+            if (arr instanceof Object[]) {
+                for (Object o : (Object[]) arr) {
+                    if (o instanceof android.view.WindowManager.LayoutParams) {
+                        android.view.WindowManager.LayoutParams p = (android.view.WindowManager.LayoutParams) o;
+                        p.height += extraPx;
+                        bumpInsetsIfPresent(p, extraPx);
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void bumpInsetsIfPresent(android.view.WindowManager.LayoutParams lp, int extraPx) {
+        try {
+            Object raw = XposedHelpers.getObjectField(lp, "providedInsets");
+            if (!(raw instanceof Object[])) return;
+            for (Object provider : (Object[]) raw) {
+                if (provider == null) continue;
+                try {
+                    Object current;
+                    try {
+                        current = XposedHelpers.callMethod(provider, "getInsetsSize");
+                    } catch (Throwable ignored) {
+                        current = XposedHelpers.getObjectField(provider, "mInsetsSize");
+                    }
+                    if (current == null) continue;
+                    int left = XposedHelpers.getIntField(current, "left");
+                    int top = XposedHelpers.getIntField(current, "top");
+                    int right = XposedHelpers.getIntField(current, "right");
+                    int bottom = XposedHelpers.getIntField(current, "bottom");
+                    if (bottom <= 0) continue;
+                    Object updated = android.graphics.Insets.of(left, top, right, bottom + extraPx);
+                    try {
+                        XposedHelpers.callMethod(provider, "setInsetsSize", updated);
+                    } catch (Throwable ignored) {
+                    }
+                    XposedHelpers.setObjectField(provider, "mInsetsSize", updated);
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     /**
@@ -1849,14 +2018,17 @@ public class XposedInit implements IXposedHookLoadPackage {
     // 把结果改成 8(保持自由窗口), 使自由窗口拖到边缘不再最小化、保持前台自由浮动(贴边挂机)。
     // 该动画控制器由 SystemUI 进程的拖拽手势触发, 仅 hook SystemUI, 无需重启整机; 运行时门控。
     /**
-     * Feature 18 — 悬浮小窗贴边挂机(真正生效版, 在 system_server 即 package "android" 内)。
-     * 调用链见上方常量注释: 贴边松手 -> FlexibleFloatHandleAnimationSpec.defaultCallAnimationEnd
-     *   -> FlexiblePointerHandler$2.onAnimationEnd
-     *     -> FlexibleTaskController.exitFlexibleTaskWindowInnerLocked(AbsFlexibleTaskExitStrategy)
-     *       -> exitFlexibleTask -> TaskExtImpl.moveTaskToBackForPanorama -> Task.moveTaskToBack (切后台 -> 边缘迷你条)
+     * Feature 18 — 悬浮小窗贴边挂机。
+     * 调用链(直板手机路径, 已用 simpleperf 火焰图确认): 贴边松手 ->
+     *   FlexibleFloatHandleAnimationSpec.defaultCallAnimationEnd
+     *     -> FlexiblePointerHandler$2.onAnimationEnd
+     *       -> FlexibleTaskController.exitFlexibleTaskWindowInnerLocked(AbsFlexibleTaskExitStrategy)
+     *         -> exitFlexibleTask -> TaskExtImpl.moveTaskToBackForPanorama -> Task.moveTaskToBack (切后台 -> 边缘迷你条)
      * 正常"拖到非边缘松手保持浮窗"走 finishMovingTask -> Task.resize, 不经过 exitFlexibleTask*, 故本 hook 不影响它。
      * 做法: beforeHook 中开关开启时直接 setResult(null) 拦截该提交, 任务不去后台、浮窗保持前台可见。
-     * 注意: 拦截后最小化动画已把 surface 收缩到边缘, WMS 后续按任务原 bounds 重新布局会恢复为前台浮窗。
+     * 注意(已知问题): 拦截后最小化动画已把 surface 收缩到边缘, 系统仍会 hide 真实窗口,
+     * 导致任务前台却无可见焦点窗口 -> 音量条不出现 / Input dispatching timed out (ANR)。
+     * 此版本按用户要求回退, 需在此基础上另寻不隐藏窗口的更深层改动才能真正稳定。
      * 用 ContentProvider 通道(readBool)实时读取开关, 改设置即时生效, 无需重启/重载进程。
      */
     private static void hookFloatWindowEdgeHangSystemServer(final XC_LoadPackage.LoadPackageParam lpparam) {

@@ -5,10 +5,17 @@ import android.content.SharedPreferences
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -18,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
@@ -34,9 +42,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.window.Dialog
+import top.yukonga.miuix.kmp.theme.miuixShape
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -46,7 +65,7 @@ import kotlin.math.roundToInt
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardColors
 import top.yukonga.miuix.kmp.basic.CardDefaults
-import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
+import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.TextStyles
 import top.yukonga.miuix.kmp.theme.defaultTextStyles
@@ -80,6 +99,10 @@ private val COUIX_DIVIDER_INSET = 16.dp
 // 列表项内部水平/垂直内边距。
 private val COUIX_ROW_HPADDING = 16.dp
 private val COUIX_ROW_VPADDING = 13.dp
+
+// 下拉菜单宽度。
+private val COUIX_DROPDOWN_WIDTH = 160.dp
+private val COUIX_DROPDOWN_TRANSFORM_ORIGIN = TransformOrigin(0.85f, 0f)
 
 /** 列表项标题采用粗体文字。 */
 fun couixTextStyles(): TextStyles {
@@ -309,6 +332,94 @@ internal fun CouixSelectGroup(
     }
 }
 
+/**
+ * 下拉弹层里的单项：左侧文字（选中态用主题色），右侧细线勾图标；
+ * 项与项之间由调用方用 [CouixDropdownDivider] 插入分割线。
+ */
+@Composable
+private fun CouixDropdownItem(
+    text: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val primary = MiuixTheme.colorScheme.primary
+    val onSurface = MiuixTheme.colorScheme.onSurface
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicText(
+            text = text,
+            style = MiuixTheme.textStyles.body1.copy(
+                color = if (selected) primary else onSurface,
+            ),
+            modifier = Modifier.weight(1f),
+        )
+        if (selected) {
+            CouixCheckMark(color = primary, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+/**
+ * 细线风格勾选图标（对齐 ColorOS 原生下拉）：用两段圆头描边线段绘制，
+ * 描边色由调用方传入（选中态主题色），非填充式。
+ */
+@Composable
+private fun CouixCheckMark(
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val sw = minOf(w, h) * 0.11f
+        val p1 = Offset(w * 0.20f, h * 0.52f)
+        val p2 = Offset(w * 0.42f, h * 0.73f)
+        val p3 = Offset(w * 0.80f, h * 0.27f)
+        drawLine(color, p1, p2, strokeWidth = sw, cap = StrokeCap.Round)
+        drawLine(color, p2, p3, strokeWidth = sw, cap = StrokeCap.Round)
+    }
+}
+
+/** 下拉弹层内的 1px 细分割线（ColorOS 原生下拉风格）。 */
+@Composable
+private fun CouixDropdownDivider() {
+    val density = LocalDensity.current
+    val dividerH = (1f / density.density).dp
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp)
+            .height(dividerH)
+            .background(MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.12f)),
+    )
+}
+
+/**
+ * 折叠行右侧的下拉指示箭头（细线风格，与勾图标一致）：用两段圆头描边线段绘制成下指 chevron。
+ */
+@Composable
+private fun CouixDropdownArrow(
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val sw = maxOf(w, h) * 0.09f
+        val p1 = Offset(w * 0.18f, h * 0.36f)
+        val p2 = Offset(w * 0.5f, h * 0.68f)
+        val p3 = Offset(w * 0.82f, h * 0.36f)
+        drawLine(color, p1, p2, strokeWidth = sw, cap = StrokeCap.Round)
+        drawLine(color, p2, p3, strokeWidth = sw, cap = StrokeCap.Round)
+    }
+}
+
 @Composable
 private fun CouixSelectRow(
     item: SelectItem,
@@ -319,16 +430,81 @@ private fun CouixSelectRow(
     var selected by remember(item.key, version) {
         mutableStateOf(prefs.getInt(item.key, item.defaultValue).coerceIn(0, item.options.lastIndex))
     }
-    OverlayDropdownPreference(
-        title = item.label,
-        items = item.options,
-        selectedIndex = selected,
-        modifier = Modifier.fillMaxWidth(),
-        onSelectedIndexChange = { index ->
-            selected = index
-            setInt(ctx, item.key, index)
-        },
-    )
+    var expanded by remember { mutableStateOf(false) }
+    val options = item.options
+    val onSurface = MiuixTheme.colorScheme.onSurface
+    val summary = MiuixTheme.colorScheme.onSurfaceVariantSummary
+
+    var anchorHeightPx by remember { mutableStateOf(0) }
+    val dropdownShape = miuixShape(COUIX_CARD_CORNER)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .onGloballyPositioned { anchorHeightPx = it.size.height },
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(horizontal = COUIX_ROW_HPADDING, vertical = COUIX_ROW_VPADDING),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BasicText(
+                text = item.label,
+                style = MiuixTheme.textStyles.body1.copy(color = onSurface),
+                modifier = Modifier.weight(1f),
+            )
+            BasicText(
+                text = options.getOrElse(selected) { "" },
+                style = MiuixTheme.textStyles.body2.copy(color = summary),
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            CouixDropdownArrow(color = summary, modifier = Modifier.size(18.dp))
+        }
+
+        Popup(
+            alignment = Alignment.TopEnd,
+            offset = IntOffset(0, anchorHeightPx),
+            onDismissRequest = { expanded = false },
+            properties = PopupProperties(focusable = expanded),
+        ) {
+            Box(modifier = Modifier.width(COUIX_DROPDOWN_WIDTH)) {
+                AnimatedVisibility(
+                    visible = expanded,
+                    enter = scaleIn(
+                    initialScale = 0.8f,
+                    transformOrigin = COUIX_DROPDOWN_TRANSFORM_ORIGIN,
+                ) + fadeIn(),
+                exit = scaleOut(
+                    targetScale = 0.8f,
+                    transformOrigin = COUIX_DROPDOWN_TRANSFORM_ORIGIN,
+                ) + fadeOut(),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .width(COUIX_DROPDOWN_WIDTH)
+                        .background(MiuixTheme.colorScheme.surfaceContainer, dropdownShape)
+                        .clip(dropdownShape),
+                ) {
+                    options.forEachIndexed { index, opt ->
+                        if (index > 0) CouixDropdownDivider()
+                        CouixDropdownItem(
+                            text = opt,
+                            selected = index == selected,
+                        ) {
+                            expanded = false
+                            if (index != selected) {
+                                selected = index
+                                setInt(ctx, item.key, index)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 }
 
 /**
@@ -463,6 +639,161 @@ fun CouixSlider(
     }
 }
 
+/**
+ * 右上角动作按钮: 点击弹出下拉菜单。
+ * 使用 Compose Popup 承载自定义下拉项，保持与设置 group 一致的自然圆角与主题样式。
+ * 每个菜单项可附带 confirmTitle/confirmText, 点击后先弹确认框再执行, 用于软重启这类较重操作。
+ */
+data class ActionMenuItem(
+    val label: String,
+    val onClick: () -> Unit,
+    val confirmTitle: String? = null,
+    val confirmText: String? = null,
+)
+
+@Composable
+fun CouixActionMenu(
+    icon: @Composable () -> Unit,
+    items: List<ActionMenuItem>,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var pendingConfirm by remember { mutableStateOf<ActionMenuItem?>(null) }
+
+    var anchorHeightPx by remember { mutableStateOf(0) }
+    val dropdownShape = miuixShape(COUIX_CARD_CORNER)
+
+    Box(
+        modifier = modifier.onGloballyPositioned { anchorHeightPx = it.size.height },
+    ) {
+        IconButton(onClick = { expanded = !expanded }) { icon() }
+
+        Popup(
+            alignment = Alignment.TopEnd,
+            offset = IntOffset(0, anchorHeightPx),
+            onDismissRequest = { expanded = false },
+            properties = PopupProperties(focusable = expanded),
+        ) {
+            Box(modifier = Modifier.width(COUIX_DROPDOWN_WIDTH)) {
+                AnimatedVisibility(
+                    visible = expanded,
+                    enter = scaleIn(
+                    initialScale = 0.8f,
+                    transformOrigin = COUIX_DROPDOWN_TRANSFORM_ORIGIN,
+                ) + fadeIn(),
+                exit = scaleOut(
+                    targetScale = 0.8f,
+                    transformOrigin = COUIX_DROPDOWN_TRANSFORM_ORIGIN,
+                ) + fadeOut(),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .width(COUIX_DROPDOWN_WIDTH)
+                        .background(MiuixTheme.colorScheme.surfaceContainer, dropdownShape)
+                        .clip(dropdownShape),
+                ) {
+                    items.forEachIndexed { index, item ->
+                        if (index > 0) CouixDropdownDivider()
+                        CouixDropdownItem(
+                            text = item.label,
+                            selected = false,
+                        ) {
+                            expanded = false
+                            if (item.confirmTitle != null) pendingConfirm = item else item.onClick()
+                        }
+                    }
+                }
+            }
+            }
+        }
+    }
+
+    if (pendingConfirm != null) {
+        CouixConfirmDialog(
+            title = pendingConfirm!!.confirmTitle ?: "",
+            text = pendingConfirm!!.confirmText ?: "",
+            onConfirm = {
+                val action = pendingConfirm!!.onClick
+                pendingConfirm = null
+                action()
+            },
+            onDismiss = { pendingConfirm = null },
+        )
+    }
+}
+
+/**
+ * 极简单确认弹窗(自绘, 用 androidx.compose.ui.window.Dialog 提供遮罩与居中)。
+ * 仅用于"软重启"等较重、需二次确认的动作。
+ */
+@Composable
+fun CouixConfirmDialog(
+    title: String,
+    text: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+    confirmLabel: String = "确定",
+    dismissLabel: String = "取消",
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            cornerRadius = COUIX_CARD_CORNER,
+            colors = CardDefaults.defaultColors(),
+            modifier = Modifier
+                .fillMaxWidth(0.84f)
+                .padding(horizontal = 8.dp),
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                BasicText(
+                    text = title,
+                    style = MiuixTheme.textStyles.body1.copy(
+                        color = MiuixTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                    ),
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                BasicText(
+                    text = text,
+                    style = MiuixTheme.textStyles.body2.copy(
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    ),
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clickable { onDismiss() }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    ) {
+                        BasicText(
+                            text = dismissLabel,
+                            style = MiuixTheme.textStyles.body2.copy(
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            ),
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clickable { onConfirm() }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    ) {
+                        BasicText(
+                            text = confirmLabel,
+                            style = MiuixTheme.textStyles.body2.copy(
+                                color = MiuixTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun CouixSwitchRow(
     item: SwitchItem,
@@ -475,7 +806,7 @@ private fun CouixSwitchRow(
     // overrideValue 非空时优先显示覆盖值(主开关动画期间), 否则读 prefs;
     // version/overrideValue 变化时重新计算, 其余时刻用本地状态即时切换。
     var checked by remember(item.key, version, overrideValue) {
-        mutableStateOf(overrideValue ?: prefs.getBoolean(item.key, false))
+        mutableStateOf(overrideValue ?: prefs.getBoolean(item.key, item.defaultEnabled))
     }
     if (item.sliderKey == null) {
         CouixSwitchPreference(
