@@ -1589,7 +1589,7 @@ public class XposedInit implements IXposedHookLoadPackage {
             }
             int barCenterXInHost = (sourceLocation[0] - hostLocation[0]) + source.getWidth() / 2;
             setX(barCenterXInHost - width / 2);
-            setY(Math.max(0, host.getHeight() - gestureZoneHeight - Math.max(0, (extraPx - 1) / 2)));
+            setY(Math.max(0, host.getHeight() - gestureZoneHeight - Math.max(0, extraPx / 2 - Math.round(1 * density))));
             invalidate();
         }
 
