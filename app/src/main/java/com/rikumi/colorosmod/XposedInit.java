@@ -91,6 +91,7 @@ public class XposedInit implements IXposedHookLoadPackage {
     private static final String KEY_NOTIFICATION_SUBTITLE_ENABLED = "notification_subtitle_enabled";
     private static final String KEY_NOTIFICATION_PADDING_ENABLED = "notification_padding_enabled";
     private static final String KEY_RECENTS_SHOW_HIDDEN_ENABLED = "recents_show_hidden_enabled";
+    private static final String KEY_RECENTS_HIDE_FREEFORM_ENABLED = "recents_hide_freeform_enabled";
     private static final String KEY_HIDE_APPS_NOVERIFY_ENABLED = "hide_apps_noverify_enabled";
     private static final String KEY_HIDE_APPS_TITLE_FOLDER_ENABLED = "hide_apps_title_folder_enabled";
     // 通用设置 — 设置首页图标样式: 0=系统默认, 1=不规则图标, 2=圆形图标。
@@ -134,6 +135,26 @@ public class XposedInit implements IXposedHookLoadPackage {
     // 进而令 PercentOutIcon.isVisible=false, 隐藏状态栏电量百分比数字。
     // hook BatteryViewBinder.bind$updatePercentOutView, 强制 isVisible=true。
     private static final String KEY_FLUID_CLOUD_KEEP_PERCENT_ENABLED = "fluid_cloud_keep_percent_enabled";
+    // Feature 18 — 悬浮小窗贴边挂机(com.android.systemui): 允许悬浮小窗(自由窗口 FlexibleWindow)拖动到屏幕侧边时,
+    // 不触发"应用切到后台/贴边最小化", 让小窗停在手指松开处(可拖出屏幕)、保持前台。
+    // 根因: 拖动到侧边时系统把该自由窗口任务 moveTaskToBack(最小化到边缘小条、应用切后台)。该 decision 由框架层
+    // 用 WindowContainerTransaction(WCT) 承载, WCT 经 SystemUI 的 android.window.TaskOrganizer#applyTransaction(WCT)
+    // 这个"总出口"发往 system_server 才真正生效。
+    // 实现(见 hookFloatWindowEdgeHang): 在 SystemUI 进程内 hook TaskOrganizer#applyTransaction(before), 当该 WCT 是
+    // "贴边挂机": 悬浮小窗拖到屏幕边缘松手时, 系统原本会把它最小化到边缘迷你条(切到后台),
+    // 本功能让它在边缘保持为前台浮窗、不切后台。
+    // 调用链(simpleperf 抓取确认, 在 system_server 即 package "android" 内, 不在 SystemUI):
+    //   FlexibleFloatHandleAnimationSpec.defaultCallAnimationEnd
+    //     -> FlexiblePointerHandler$2.onAnimationEnd
+    //       -> FlexibleTaskController.exitFlexibleTaskWindowInnerLocked(AbsFlexibleTaskExitStrategy)
+    //         -> exitFlexibleTaskWindowInner -> ExitFlexibleTaskToFloatStrategy.handleEvent
+    //           -> exitFlexibleTask -> TaskExtImpl.moveTaskToBackForPanorama -> Task.moveTaskToBack -> nativeApplyTransaction
+    // 注意: 拖到"非边缘"松手(保持浮窗)走另一条链 finishMovingTask -> Task.resize, 不经过上面的 exitFlexibleTask*,
+    // 故 hook exitFlexibleTaskWindowInnerLocked 精准只拦"贴边最小化", 不影响正常拖拽重定位。
+    // 做法: 在 system_server 进程内 hook exitFlexibleTaskWindowInnerLocked(before), 开关开启时直接 setResult(null) 拦截提交,
+    // 任务不去后台、浮窗保持可见(短暂动画收缩后由 WMS 重新按原 bounds 布局恢复为前台浮窗)。运行时门控。
+    // 需要把模块作用域加入 "android"(system_server); 旧版 SystemUI 内 hook WCT/getChangeStateByPoint 的路径均已废弃(手机上不命中)。
+    private static final String KEY_FLOAT_WINDOW_EDGE_HANG_ENABLED = "float_window_edge_hang_enabled";
     // Feature 11 — 从桌面隐藏指定的单个 LAUNCHER 活动 (com.android.launcher):
     // 某些应用一个包内有多个 LAUNCHER 入口(如电话本+拨号), 系统"隐藏应用"按包隐藏会误伤,
     // 故在 launcher 进程内拦截 LauncherApps.getActivityList / PackageManager.queryIntentActivities,
@@ -233,6 +254,9 @@ public class XposedInit implements IXposedHookLoadPackage {
             hookSafecenter(lpparam);
         } else if ("com.android.settings".equals(lpparam.packageName)) {
             hookSettings(lpparam);
+        } else if ("android".equals(lpparam.packageName)) {
+            // system_server: 承载"贴边最小化"的真正提交逻辑(com.android.server.wm.FlexibleTaskController)
+            hookFloatWindowEdgeHangSystemServer(lpparam);
         }
     }
 
@@ -395,6 +419,8 @@ public class XposedInit implements IXposedHookLoadPackage {
 
         // Feature 4 — 多任务显示隐藏应用: 始终注入, 运行时按 KEY_RECENTS_SHOW_HIDDEN_ENABLED 门控。
         hookRecentsShowHidden(lpparam);
+        // Feature 19 — 多任务不显示小窗应用: 始终注入, 运行时按 KEY_RECENTS_HIDE_FREEFORM_ENABLED 门控。
+        hookRecentsHideFreeform(lpparam);
 
         // Feature 8 — 隐藏应用文件夹标题显示用户自定义文件夹名 (com.android.launcher):
         // 桌面隐藏应用入口打开后, 启动器渲染一个 "虚拟文件夹" 来承载隐藏的应用。
@@ -1173,6 +1199,7 @@ public class XposedInit implements IXposedHookLoadPackage {
         hookQsTileNameEllipsis(lpparam);
         // Feature 17 — 流体云出现时不隐藏电量百分比: 始终注入, 运行时按 KEY_FLUID_CLOUD_KEEP_PERCENT_ENABLED 门控。
         hookFluidCloudKeepPercent(lpparam);
+        // Feature 18 — 悬浮小窗贴边挂机: 真正的提交逻辑在 system_server(android 作用域), 见 hookFloatWindowEdgeHangSystemServer。
     }
 
     /**
@@ -1809,6 +1836,54 @@ public class XposedInit implements IXposedHookLoadPackage {
         }
     }
 
+    // Feature 18 — 悬浮小窗贴边挂机(com.android.systemui)
+    // 机制(已用 android-app-mods 反编译确认, 直板手机路径): 自由窗口(小窗)拖到屏幕边缘 ->
+    // 系统把该任务最小化成"贴边小条"。该决策由拖拽动画控制器
+    // com.android.wm.shell.fullscreen.OplusDragTaskFullAnimation#getChangeStateByPoint(x,y) 完成:
+    //   - 落点在 mFlexibleTaskRect 内 -> 返回 8(保持自由浮动窗口, 停原位)
+    //   - 落点在矩形外(拖到边缘/角落) -> 返回 5(最小化成贴边小条)   <-- 这就是"贴边最小化"
+    //   - 全屏应用拖到顶部(mIsFullTaskDrag) -> 也返回 5, 但那是另一手势, 不动
+    // 之前两版分别误 hook 了 tablet 专用的 showMinimizedWindow(直板不执行) 与分屏用的
+    // ShellTaskOrganizerExt#adjustChangeForFlexibleMinimizeIfNeed(分屏最小化, 自由窗拖边走不到这里), 故"没有效果"。
+    // 实现: hook getChangeStateByPoint(after), 当结果==5 且非全屏拖拽(mIsFullTaskDrag 为 false)时,
+    // 把结果改成 8(保持自由窗口), 使自由窗口拖到边缘不再最小化、保持前台自由浮动(贴边挂机)。
+    // 该动画控制器由 SystemUI 进程的拖拽手势触发, 仅 hook SystemUI, 无需重启整机; 运行时门控。
+    /**
+     * Feature 18 — 悬浮小窗贴边挂机(真正生效版, 在 system_server 即 package "android" 内)。
+     * 调用链见上方常量注释: 贴边松手 -> FlexibleFloatHandleAnimationSpec.defaultCallAnimationEnd
+     *   -> FlexiblePointerHandler$2.onAnimationEnd
+     *     -> FlexibleTaskController.exitFlexibleTaskWindowInnerLocked(AbsFlexibleTaskExitStrategy)
+     *       -> exitFlexibleTask -> TaskExtImpl.moveTaskToBackForPanorama -> Task.moveTaskToBack (切后台 -> 边缘迷你条)
+     * 正常"拖到非边缘松手保持浮窗"走 finishMovingTask -> Task.resize, 不经过 exitFlexibleTask*, 故本 hook 不影响它。
+     * 做法: beforeHook 中开关开启时直接 setResult(null) 拦截该提交, 任务不去后台、浮窗保持前台可见。
+     * 注意: 拦截后最小化动画已把 surface 收缩到边缘, WMS 后续按任务原 bounds 重新布局会恢复为前台浮窗。
+     * 用 ContentProvider 通道(readBool)实时读取开关, 改设置即时生效, 无需重启/重载进程。
+     */
+    private static void hookFloatWindowEdgeHangSystemServer(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            final Class<?> ftc = XposedHelpers.findClass(
+                    "com.android.server.wm.FlexibleTaskController", lpparam.classLoader);
+            final Class<?> strategyCls = XposedHelpers.findClass(
+                    "com.android.server.wm.AbsFlexibleTaskExitStrategy", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(ftc, "exitFlexibleTaskWindowInnerLocked", strategyCls,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_FLOAT_WINDOW_EDGE_HANG_ENABLED, false)) return;
+                            } catch (Throwable ignored) {
+                                return;
+                            }
+                            // 拦截"贴边最小化"提交: 任务保持前台浮窗, 不切后台。
+                            param.setResult(null);
+                        }
+                    });
+            log(">>> matched android (system_server): float_window_edge_hang");
+        } catch (Throwable t) {
+            log("!!! float_window_edge_hang system_server hook failed: " + t);
+        }
+    }
+
     /**
      * 多任务(quickstep)显示被系统隐藏的应用。
      * 系统"隐藏应用"经由 OplusPrivacyManager.isHiddenPkg(pkg, userId) 判定; 最近任务列表在
@@ -1844,6 +1919,65 @@ public class XposedInit implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             log("HOOK FAIL OplusPrivacyManager#isHiddenPkg :: " + Log.getStackTraceString(t));
         }
+    }
+
+    // Feature 19 — 多任务不显示小窗应用(com.android.launcher):
+    // 最近任务列表(多任务切换)里隐藏处于自由窗口/小窗(FlexibleWindow)状态的任务卡片。
+    // 机制: launcher 多任务列表加载时由 com.oplus.quickstep.data.OplusRecentTasksFilter#filterTaskInfo
+    // 逐任务过滤(返回 true 即剔除该卡片)。hook 该方法 before: 开关开启且任务为小窗(isFlexibleFloatingWindow)时,
+    // 直接 setResult(true) 剔除, 使小窗应用不出现在多任务卡片中(应用本身仍在前台运行, 不受影响)。
+    // 运行时门控, 关闭开关立即恢复系统默认。仅在 launcher 作用域注入。
+    private static void hookRecentsHideFreeform(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            final String flag = KEY_RECENTS_HIDE_FREEFORM_ENABLED;
+            XposedHelpers.findAndHookMethod(
+                    "com.oplus.quickstep.data.OplusRecentTasksFilter",
+                    lpparam.classLoader, "filterTaskInfo",
+                    int.class, int.class,
+                    "com.android.wm.shell.shared.GroupedTaskInfo",
+                    "java.util.ArrayList",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(flag, false)) return;
+                                Object gti = param.args[2];
+                                if (gti == null) return;
+                                Object taskInfo = XposedHelpers.callMethod(gti, "getTaskInfo1");
+                                if (taskInfo == null) return;
+                                if (isFlexibleFloatingWindow(lpparam.classLoader, taskInfo)) {
+                                    param.setResult(true); // 剔除该小窗任务卡片
+                                }
+                            } catch (Throwable ignored) { }
+                        }
+                    });
+            log("HOOK OK OplusRecentTasksFilter#filterTaskInfo (recents hide freeform)");
+        } catch (Throwable t) {
+            log("HOOK FAIL OplusRecentTasksFilter#filterTaskInfo :: " + Log.getStackTraceString(t));
+        }
+    }
+
+    // 复刻系统 TaskUtils.isFlexibleFloatingWindow(TaskInfo): 判断任务是否处于小窗/自由窗口状态。
+    private static boolean isFlexibleFloatingWindow(ClassLoader cl, Object taskInfo) {
+        try {
+            Class<?> taskUtils = XposedHelpers.findClass(
+                    "com.android.systemui.shared.recents.utilities.TaskUtils", cl);
+            Object r = XposedHelpers.callStaticMethod(taskUtils, "isFlexibleFloatingWindow",
+                    new Class[]{android.app.TaskInfo.class}, taskInfo);
+            if (r instanceof Boolean) return (Boolean) r;
+        } catch (Throwable ignored) { }
+        // 兜底: 直接按窗口模式判定(WINDOWING_MODE_FREEFORM=5)
+        try {
+            Object wm = XposedHelpers.callMethod(taskInfo, "getWindowingMode");
+            if (wm instanceof Integer) return (Integer) wm == 5;
+        } catch (Throwable ignored) { }
+        try {
+            Object cfg = XposedHelpers.callMethod(taskInfo, "getConfiguration");
+            Object wc = XposedHelpers.callMethod(cfg, "getWindowConfiguration");
+            Object wm = XposedHelpers.callMethod(wc, "getWindowingMode");
+            return wm instanceof Integer && (Integer) wm == 5;
+        } catch (Throwable ignored) { }
+        return false;
     }
 
     // 判断本次 isHiddenPkg 的调用方是否位于 quickstep 多任务渲染/手势路径

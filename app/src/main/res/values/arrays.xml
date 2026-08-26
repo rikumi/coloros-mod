@@ -5,5 +5,6 @@
         <item>com.android.systemui</item>
         <item>com.oplus.safecenter</item>
         <item>com.android.settings</item>
+        <item>android</item>
     </array>
 </resources>

@@ -76,7 +76,7 @@ JAVA_HOME=$(ls -d /opt/homebrew/Cellar/openjdk@21/*/libexec/openjdk.jdk/Contents
 # 1. 安装（-r 覆盖安装）
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 
-# 2. 重载目标进程让新 build 进内存（不要 force-stop、不要重启整机）
+# 2. 重载目标进程让新 build 进内存
 adb shell su -c 'pkill -f com.android.systemui'
 adb shell su -c 'pkill -f com.android.launcher'
 ```
@@ -86,15 +86,6 @@ adb shell su -c 'pkill -f com.android.launcher'
 - 打开 `ColorOS Mod` 应用即可调整开关与滑条。**改动即时生效**（运行时门控），
   一般无需重启进程；若某功能需重启视图才能重建，可点击界面右上角「重启作用域」按钮，
   或在 LSPosed 中把模块关掉再打开。
-
-### 重要注意事项
-
-- **禁止重启整机**：设备处于越狱（jailbreak）环境，重启会丢失越狱状态，需重新越狱才能恢复。
-  让模块生效请使用上面的 `pkill`（只重启单个进程），**切勿 `adb reboot`**。
-- **不要用 `am force-stop`**：它对 `com.android.systemui` 等进程往往无法真正重启，
-  会导致新代码不进内存；请用 `pkill` / `killall`。
-- **不要依赖 logcat 判断模块状态**：模块日志在 ColorOS 上会被过滤、经常为空，不能凭
-  「没看到日志」断定未注入。功能是否生效以设备上的真实界面表现为准。
 
 ---
 

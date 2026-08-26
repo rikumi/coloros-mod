@@ -73,8 +73,9 @@ enabled: true
   `OplusQSFooterImpl#updateResources$15`（页脚日期/设置按钮）。
 - **隐藏应用免验证打开**（安全中心 / `com.oplus.safecenter`）：见 §8。
 - **Feature 10：控制中心背景压暗（qs_scrim_translucent_enabled）**：hook `OplusQSContainerImpl#onFinishInflate` + `#onVisibilityChanged`，把 `mBackground`（`quick_settings_background`）染成半透明黑（见 §12）。
+- **Feature 18：悬浮小窗贴边挂机（float_window_edge_hang_enabled）**：作用域扩展到 **`android`（system_server）**。hook `com.android.server.wm.FlexibleTaskController#exitFlexibleTaskWindowInnerLocked`（before, `setResult(null)`），贴边松手时不最小化、保持前台浮窗（见 §14）。
 
-本笔记聚焦第 3 项（QS 状态栏图标「双重下沉 / 太偏下」）及 Feature 10 的排查。
+本笔记聚焦第 3 项（QS 状态栏图标「双重下沉 / 太偏下」）、Feature 10 及 Feature 18 的排查。
 
 ---
 
@@ -154,9 +155,10 @@ raiseStatusRow clusterH=.. iconsTop=.. iconsH=.. batteryTop=.. desiredTopPx=..
 - 之前已有一次 Agent 擅自 `adb reboot` 的事故，造成用户必须重新越狱，**绝不再犯**。
 
 **重载模块 / 让新 build 生效的正确做法（都不重启设备）：**
-- 重启单个进程（不会掉越狱/root，安全）：
-  - SystemUI：`adb shell am force-stop com.android.systemui`
-  - Launcher：`adb shell am force-stop com.android.launcher`
+- 重启单个进程（不会掉越狱/root，安全）；**必须用 `pkill` / `killall`，严禁 `am force-stop`**（见硬性规则第 7 条，`force-stop` 对 systemui 等常不起效）：
+  - SystemUI：`adb shell su -c 'pkill -f com.android.systemui'`
+  - Launcher：`adb shell su -c 'pkill -f com.android.launcher'`
+  - **system_server（框架软重启，比上面更重）**：`adb shell su -c 'pkill -f system_server'` —— 会让所有 app 重启一下，但**不丢越狱/root、不是设备重启**，比 `adb reboot` 安全；本模块 hook `android`(system_server) 作用域的功能（如 Feature 18）改完后需它加载（见 §14）。
 - 或在 LSPosed 里把本模块**关掉再打开**（让目标进程下次启动时重注）。
 - 这些操作即可让新代码进内存，完全不需要重启整机。
 
@@ -218,6 +220,9 @@ adb pull /sdcard/ui_qs.xml /tmp/ui_qs.xml
 | 应用隐藏标题改文件夹名 hook | **真正生效：launcher `hookLauncher` 内 hook `DeepProtectedAppsManager#createVirtualFolder`（afterHook 改 `folderInfo.title`）**；安全中心 `hookSafecenterTitleFolder()`（setTitle）仅覆盖列表界面，用户通常看不到（见 §9/§10）|
 | 桌面双指张开打开隐藏应用 hook | `hookLauncher` 内 hook `com.android.launcher3.dragndrop.DragLayer#dispatchTouchEvent`，被动 `ScaleGestureDetector` 检测 `accum>1.5` → `openHideAppsFolder()` → `DeepProtectedAppsManager.getInstance(ctx).showHideApps(ctx,false)`（见 §10）|
 | Feature 10 背景变暗 | `hookQsScrimTranslucent()` hook `ScrimView#setDrawable`，把 `WallpaperBlurDrawable` 替换为 `TranslucentBlackDrawable`（见 §12）|
+| 贴边挂机 hook | `hookFloatWindowEdgeHangSystemServer()`（**android/system_server 作用域**）hook `com.android.server.wm.FlexibleTaskController#exitFlexibleTaskWindowInnerLocked`（before, `setResult(null)`）；真实提交点用 simpleperf 火焰图定位（见 §14）|
+| 框架 jar 反编译/签名核对 | `adb pull /system/framework/oplus-services.jar` + `$SDK/build-tools/30.0.3/dexdump`（`FlexibleTaskController` 在 `classes3.dex`，签名 `(Lcom/android/server/wm/AbsFlexibleTaskExitStrategy;)V`）|
+| 重启 system_server（软重启框架） | `adb shell su -c 'pkill -f system_server'` —— 让 android 作用域的新 hook 进内存（非设备重启、不丢越狱；见 §14/§6.1）|
 
 ---
 
@@ -434,3 +439,81 @@ android-app-mods/
 - `src-java/` 是**只读参考**，不要在这里直接改；若真要改系统 app 走 `patches/` + `forward.sh`（本模块绝大多数场景只写 Xposed hook，不碰系统 app 本体）。
 - jadx 合成的短名（`d0`/`I`/`e0`/`a`/`b`）**很可能就是真实混淆名**，写 hook 时直接用它，并用 `$SDK/build-tools/30.0.3/dexdump` 对 `base.apk` 二次核对类名/方法名/字段签名，避免 JADX 误命名。
 - 反编译不会重启设备，与 §6.1 红线不冲突。
+
+---
+
+## 14. 用 simpleperf 火焰图定位「真实提交点」的方法论（范例：悬浮小窗贴边挂机 Feature 18）
+
+### 痛点：猜了 3 个 hook 点都"完全没效果"
+Feature 18 需求：悬浮小窗拖到屏幕边缘松手时保持前台浮窗（贴边挂机），不要最小化到边缘迷你条。
+最初按"SystemUI 里拖拽最小化"的直觉，先后 hook 了 SystemUI(`com.android.wm.shell`) 内 3 个点，全部无效：
+1. `OplusPanoramaWorkBranchAnimController#showMinimizedWindow` —— 平板专用（`isTabletPanoramaWorkEnable()` 门控），手机不跑。
+2. `ShellTaskOrganizerExt#adjustChangeForFlexibleMinimizeIfNeed` —— 分屏路径，自由窗拖拽不触及。
+3. `OplusDragTaskFullAnimation#getChangeStateByPoint` —— 仍不命中。
+**猜 3 次都错 → 停止猜测，改用 profiler 抓真实调用链。**
+
+### simpleperf 是安全的（只读、不重启、不碰文件系统）
+- `simpleperf` 是 CPU 采样 profiler，只读取进程调用栈，**不修改设备、不重启、不影响越狱**，符合红线。
+- 本机路径 `/system/bin/simpleperf`；`record` 在目标进程采样，`report` 离线分析。
+
+### 关键命令（本设备实测）
+```sh
+# 录目标进程，手势/释放发生在 --duration 窗口内
+PID=$(adb shell pidof com.android.systemui | tr -d '\r')
+adb shell su -c "simpleperf record -g -f 999 -p $PID -o /data/local/tmp/perf.data --duration 4"
+adb pull /data/local/tmp/perf.data
+adb shell su -c 'simpleperf report -i /data/local/tmp/perf.data -g' > report.txt
+
+# 双进程同时录（定位"提交到底在哪一侧"）：-p 接受逗号分隔的多个 pid
+SS=$(adb shell pidof system_server | tr -d '\r')
+adb shell su -c "simpleperf record -g -f 999 -p $PID,$SS -o /data/local/tmp/perf2.data --duration 8"
+adb pull /data/local/tmp/perf2.data
+adb shell su -c 'simpleperf report -i /data/local/tmp/perf2.data -g' > report2.txt
+```
+
+### 本设备的两个命令参数坑（必看）
+- **不支持 `--java`**：`simpleperf record` 报 `Unknown option --java`。系统 app（systemui/system_server）多为 AOT 编译，Java 方法在火焰图里以 native/mangled 符号呈现，`-g`（dwarf 调用图）即可；**不要加 `--java`**。
+- **不支持 `--stdio`**（那是 Linux perf 的参数；Android 版 simpleperf 默认输出 stdout），直接 `> report.txt` 收尾即可。
+
+### 采样技巧（决定能否抓到提交点）
+- **必须录到"松手那一帧"**：前两次 systemui 采样只抓到拖拽中的 `onTaskInfoChanged`（位置更新）和 `FlexibleController.notifySystemEvent`（收尾通知），没见到提交 —— 因为录制窗口没覆盖松手最小化那一刻。
+- 正确做法：开始录 → 立刻拖到边缘 → **松手**让它最小化 → 等采样结束。让"提交动作"落在 `--duration` 内。
+- 录 systemui 时，整条 `com.oplus.flexibletask` 链路只有 `notifySystemEvent → hideAllTipsView`（事后通知），**没有任何 `applyTransaction`/`startTransition`/`moveTaskToBack`** → 证明提交不在 systemui。
+- 于是转录 `system_server`，火焰图立刻给出完整链。
+
+### 抓到的真实调用链（system_server 内，即 package `android`）
+```
+FlexibleFloatHandleAnimationSpec.defaultCallAnimationEnd
+  → FlexiblePointerHandler$2.onAnimationEnd
+    → FlexibleTaskController.exitFlexibleTaskWindowInnerLocked(AbsFlexibleTaskExitStrategy)
+      → exitFlexibleTaskWindowInner → ExitFlexibleTaskToFloatStrategy.handleEvent
+        → exitFlexibleTask ×2
+          → TaskExtImpl.moveTaskToBackForPanorama
+            → Task.moveTaskToBack → moveTaskToBackInner → nativeApplyTransaction
+```
+- **贴边最小化**走这条 → `moveTaskToBack` 把任务切后台（变边缘迷你条）。
+- **拖到非边缘松手保持浮窗**走另一条 `finishMovingTask → Task.resize`，**不经过 `exitFlexibleTask*`** → 所以 hook `exitFlexibleTaskWindowInnerLocked` 精准只拦"贴边最小化"，不影响正常拖拽重定位。
+
+### 用 dexdump 核对签名（不凭空猜）
+```sh
+# 拉框架 jar（只读提取，不碰设备运行态）
+mkdir -p /tmp/ss && adb pull /system/framework/oplus-services.jar /tmp/ss/
+cd /tmp/ss && unzip -o -q oplus-services.jar 'classes*.dex' -d dex
+DEX=/Users/rikumi/Library/Android/sdk/build-tools/30.0.3/dexdump
+$DEx dex/classes3.dex 2>/dev/null | grep -nE "name +: 'exitFlexibleTaskWindowInnerLocked'" -A1
+```
+确认：`FlexibleTaskController.exitFlexibleTaskWindowInnerLocked(Lcom/android/server/wm/AbsFlexibleTaskExitStrategy;)V`（PUBLIC）。hook 内 `beforeHookedMethod` 用 `setResult(null)` 拦截提交。
+
+### 部署要点（Feature 18 专属）
+- 该逻辑在 `com.android.server.wm`（装在 `oplus-services.jar`），**不在 SystemUI.apk**，因此必须把模块作用域加入 **`android`（system_server）**（见 §1 / `arrays.xml` 的 `xposedscope`）。
+- 改完 `install -r` 后，需**重启 system_server** 让新 hook 进内存：`adb shell su -c 'pkill -f system_server'`。
+  这是**框架软重启**（所有 app 会跟着重启一下），**不是设备重启**、不丢越狱/root，比 `adb reboot` 安全得多；但比重启单个 `systemui` 更"重"，需用户确认后再执行。
+- ⚠️ **作用域必须真的勾选**：本功能首轮"没生效"的真正原因是用户没在 LSPosed 勾选 `android` 作用域，hook 从未注入（不是代码问题，见 §6.3 不要在未确认作用域前怀疑注入）。
+
+### 可复用的方法论（以后遇到"feature 没效果 / 不知道 hook 哪个方法"时）
+1. 已猜过 ≥2 个 hook 点仍不生效 → **停止猜**，用 simpleperf 抓真实调用链。
+2. 先录直觉进程（如 systemui）；若火焰图里只有"通知/收尾"而无"提交（`applyTransaction`/`startTransition`/`moveTaskToBack`/`reparent`）"，说明提交在别的进程 → 转录 `system_server`（或 binder 对侧进程，-p 逗号分隔可一次录双进程）。
+3. 录的时候**务必覆盖触发动作的发生时刻**（松手/点击那一帧），否则只看到拖拽中的噪声。
+4. 抓到真实方法后，用 `dexdump` 对**设备当前框架 jar** 核对方法签名（混淆名以 dexdump 为准，不凭 jadx 记忆）。
+5. 注意"提交点"可能在 `android`（system_server）作用域，需相应加作用域，并用 `pkill system_server`（软重启框架）加载。
+6. 与 §4 互补：反编译（`android-app-mods`）能看清已知类的逻辑，但当"提交到底发生在哪个进程/哪个方法"未知时（尤其 ColorOS 把逻辑藏进 `com.oplus.*` / `com.android.server.wm` 等框架包），simpleperf 是定位的利器。

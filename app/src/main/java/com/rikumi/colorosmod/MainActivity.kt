@@ -140,6 +140,12 @@ private val HIDDEN = listOf(
     SwitchItem("hide_apps_noverify_enabled", "打开隐藏应用文件夹免验证"),
     SwitchItem("pinch_out_open_hide_apps_enabled", "桌面双指张开打开隐藏应用"),
     SwitchItem("hide_apps_title_folder_enabled", "应用隐藏标题显示文件夹名"),
+    SwitchItem("recents_hide_freeform_enabled", "多任务不显示小窗应用", subtitle = "小窗(自由窗口)不出现在多任务切换卡片中，应用仍前台运行"),
+)
+
+// 小窗相关设置: 改动需重启 system_server(框架) 才生效(本模块该作用域为 android/system_server)。
+private val FLOATWINDOW = listOf(
+    SwitchItem("float_window_edge_hang_enabled", "悬浮小窗贴边挂机", subtitle = "悬浮小窗移到侧边时不切后台，保持前台挂机（需重启 system_server 生效）"),
 )
 
 // 标题栏底部分割线: 界面上滑时出现, 初始两端各内缩 16dp, 随滚动量在该距离内逐渐延长至通栏。
@@ -173,7 +179,7 @@ fun SettingsScreen() {
         (scrolledUpPx / with(density) { TOP_BAR_DIVIDER_EXTEND_SCROLL.toPx() }).coerceIn(0f, 1f)
 
     // 全部功能项(用于"启用模块"主开关), version 变化时强制重读 prefs 同步所有开关状态。
-    val allItems = remember { DESKTOP + QS + NOTIF + HIDDEN }
+    val allItems = remember { DESKTOP + QS + NOTIF + HIDDEN + FLOATWINDOW }
     val scope = rememberCoroutineScope()
     var version by remember { mutableStateOf(0) }
     // masterOverride: 主开关切换后、落盘前的临时视觉覆盖(null = 无覆盖, 直接读 prefs)。
@@ -247,6 +253,8 @@ fun SettingsScreen() {
             item { CouixGroup(items = NOTIF, prefs = prefs, ctx = ctx, version = version, overrideValue = masterOverride, onItemChanged = { version++ }) }
             item { CouixSmallTitle(text = "隐藏应用") }
             item { CouixGroup(items = HIDDEN, prefs = prefs, ctx = ctx, version = version, overrideValue = masterOverride, onItemChanged = { version++ }) }
+            item { CouixSmallTitle(text = "小窗（需重启系统）") }
+            item { CouixGroup(items = FLOATWINDOW, prefs = prefs, ctx = ctx, version = version, overrideValue = masterOverride, onItemChanged = { version++ }) }
             item { Box(Modifier.height(24.dp)) }
         }
     }
