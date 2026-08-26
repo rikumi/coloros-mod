@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +53,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.navigationevent.NavigationEventDispatcher
+import androidx.navigationevent.NavigationEventDispatcherOwner
+import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,21 +63,30 @@ class MainActivity : ComponentActivity() {
         checkEnvironment(this)
         setContent {
             val context = LocalContext.current
-            MiuixTheme(
-                controller = remember {
-                    ThemeController(
-                        colorSchemeMode = ColorSchemeMode.System,
-                        lightColors = lightColorScheme(
-                            primary = colorOSAccentColor(context, 0xFF00B4D8)
-                        ),
-                        darkColors = darkColorScheme(
-                            primary = colorOSAccentColor(context, 0xFF00B4D8)
-                        ),
-                    )
-                },
-                textStyles = couixTextStyles(),
+            val navigationEventOwner = remember {
+                object : NavigationEventDispatcherOwner {
+                    override val navigationEventDispatcher = NavigationEventDispatcher()
+                }
+            }
+            CompositionLocalProvider(
+                LocalNavigationEventDispatcherOwner provides navigationEventOwner,
             ) {
-                SettingsScreen()
+                MiuixTheme(
+                    controller = remember {
+                        ThemeController(
+                            colorSchemeMode = ColorSchemeMode.System,
+                            lightColors = lightColorScheme(
+                                primary = colorOSAccentColor(context, 0xFF00B4D8)
+                            ),
+                            darkColors = darkColorScheme(
+                                primary = colorOSAccentColor(context, 0xFF00B4D8)
+                            ),
+                        )
+                    },
+                    textStyles = couixTextStyles(),
+                ) {
+                    SettingsScreen()
+                }
             }
         }
     }
@@ -94,12 +107,19 @@ internal data class SwitchItem(
     val sliderUnit: String = "dp",
 )
 
+internal data class SelectItem(
+    val key: String,
+    val label: String,
+    val options: List<String>,
+    val defaultValue: Int = 0,
+)
+
 private val DESKTOP = listOf(
     SwitchItem("icon_gap_enabled", "增加图标与名称间距", sliderKey = "icon_gap_dp", sliderMax = 8, sliderDefault = 4),
-    SwitchItem("indicator_enabled", "减小页面与 Dock 间距", sliderKey = "indicator_dp", sliderMax = 48, sliderDefault = 24, sliderUnit = "dp"),
+    SwitchItem("indicator_enabled", "减小页面与 Dock 间距", sliderKey = "indicator_dp", sliderMax = 32, sliderDefault = 16, sliderUnit = "dp"),
     SwitchItem("shrink_popup_menu", "缩小图标长按菜单", sliderKey = "popup_scale_percent", sliderMax = 20, sliderDefault = 10, sliderUnit = "%"),
     SwitchItem("folder_bg_transparent_enabled", "文件夹展开背景透明"),
-    SwitchItem("edit_mode_bg_transparent_enabled", "取消编辑模式背景遮罩", subtitle = "编辑桌面和页面预览时保持壁纸清晰"),
+    SwitchItem("edit_mode_bg_transparent_enabled", "取消编辑模式背景遮罩"),
     SwitchItem("hide_contacts_enabled", "彻底隐藏电话本图标"),
     SwitchItem("hide_gboard_enabled", "彻底隐藏 Gboard 图标"),
     SwitchItem("hide_ghostlock_enabled", "彻底隐藏 GhostLock 图标", subtitle = "显然已经有 root 的时候不需要再 root"),
@@ -108,12 +128,12 @@ private val QS = listOf(
     SwitchItem("qs_scrim_translucent_enabled", "自定义控制中心背景亮度", sliderKey = "qs_scrim_brightness", sliderMax = 20, sliderDefault = 5, sliderUnit = ""),
     SwitchItem("qs_carrier_enabled", "去除控制中心运营商显示"),
     SwitchItem("qs_topmargin_enabled", "隐藏控制中心顶部状态图标簇"),
-    SwitchItem("qs_tile_name_ellipsis_enabled", "Wi-Fi / 蓝牙名称单行省略"),
+    SwitchItem("qs_tile_name_ellipsis_enabled", "分离控制中心 Wi-Fi / 蓝牙名称单行省略"),
     SwitchItem("fluid_cloud_keep_percent_enabled", "流体云出现时不隐藏电量百分比"),
 )
 private val NOTIF = listOf(
     SwitchItem("notification_subtitle_enabled", "缩小通知静默区域副标题", sliderKey = "notification_subtitle_sp", sliderMax = 16, sliderDefault = 8, sliderUnit = "sp"),
-    SwitchItem("notification_padding_enabled", "非静默通知增加上下内边距", sliderKey = "notification_padding_dp", sliderMax = 8, sliderDefault = 4),
+    SwitchItem("notification_padding_enabled", "增加通知上下内边距", sliderKey = "notification_padding_dp", sliderMax = 8, sliderDefault = 4),
 )
 private val HIDDEN = listOf(
     SwitchItem("recents_show_hidden_enabled", "多任务显示隐藏应用"),

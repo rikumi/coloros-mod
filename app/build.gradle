@@ -47,6 +47,7 @@ dependencies {
     // miuix UI (Compose Multiplatform) — settings UI
     implementation 'top.yukonga.miuix.kmp:miuix-ui:0.9.0'
     implementation 'top.yukonga.miuix.kmp:miuix-preference:0.9.0'
+    implementation 'org.jetbrains.androidx.navigationevent:navigationevent-compose:1.0.1'
     // miuix extended icons (Refresh etc.)
     implementation 'top.yukonga.miuix.kmp:miuix-icons:0.9.0'
 }

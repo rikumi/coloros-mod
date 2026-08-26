@@ -46,6 +46,7 @@ import kotlin.math.roundToInt
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardColors
 import top.yukonga.miuix.kmp.basic.CardDefaults
+import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.TextStyles
 import top.yukonga.miuix.kmp.theme.defaultTextStyles
@@ -278,6 +279,56 @@ internal fun CouixGroup(
             CouixSwitchRow(item = item, prefs = prefs, ctx = ctx, version = version, overrideValue = overrideValue, onItemChanged = onItemChanged)
         }
     }
+}
+
+@Composable
+internal fun CouixSelectGroup(
+    items: List<SelectItem>,
+    prefs: SharedPreferences,
+    ctx: Context,
+    version: Int = 0,
+    modifier: Modifier = Modifier,
+) {
+    val baseCard = CardDefaults.defaultColors()
+    val weakContainer = baseCard.color.copy(alpha = 0.8f)
+    val cardColors: CardColors = baseCard.copy(color = weakContainer)
+    Card(
+        modifier = modifier.padding(
+            start = COUIX_GROUP_HMARGIN,
+            top = 2.dp,
+            end = COUIX_GROUP_HMARGIN,
+            bottom = 12.dp,
+        ),
+        cornerRadius = COUIX_CARD_CORNER,
+        colors = cardColors,
+    ) {
+        items.forEachIndexed { index, item ->
+            if (index > 0) CouixItemDivider()
+            CouixSelectRow(item = item, prefs = prefs, ctx = ctx, version = version)
+        }
+    }
+}
+
+@Composable
+private fun CouixSelectRow(
+    item: SelectItem,
+    prefs: SharedPreferences,
+    ctx: Context,
+    version: Int,
+) {
+    var selected by remember(item.key, version) {
+        mutableStateOf(prefs.getInt(item.key, item.defaultValue).coerceIn(0, item.options.lastIndex))
+    }
+    OverlayDropdownPreference(
+        title = item.label,
+        items = item.options,
+        selectedIndex = selected,
+        modifier = Modifier.fillMaxWidth(),
+        onSelectedIndexChange = { index ->
+            selected = index
+            setInt(ctx, item.key, index)
+        },
+    )
 }
 
 /**

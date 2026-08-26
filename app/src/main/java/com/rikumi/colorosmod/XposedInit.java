@@ -59,8 +59,9 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  *   从而让隐藏应用照常出现在最近任务列表与手势概览; 应用锁(locksetting/applock)等其它隐藏态判断不受影响。
  *
  * Feature 5 — notification vertical padding (SystemUI / com.android.systemui):
- *   非静默(未被最小化, mIsMinimized==false)通知：给其通知子视图(contracted/expanded/headsUp)的
- *   上下内边距各加 NOTIFICATION_PADDING_DP(8dp)。直接改子视图 padding 才能被
+ *   非静默(未被最小化, mIsMinimized==false)普通通知：给其通知子视图(contracted/expanded/headsUp)的
+ *   上下内边距各加 NOTIFICATION_PADDING_DP(4dp)；合并通知则给整个 NotificationChildrenContainer
+ *   增加上下外侧留白，并同步下移合并通知标题中的时间与展开箭头，避免只有合并通知最后一行被撑开。
  *   NotificationContentView#getViewHeight 计入高度(它取子视图自身 getHeight, 不含 NotificationContentView
  *   自身 padding), 使整张卡片随之增高、内部上下留白增加。静默(最小化)通知不处理。
  *
@@ -92,6 +93,11 @@ public class XposedInit implements IXposedHookLoadPackage {
     private static final String KEY_RECENTS_SHOW_HIDDEN_ENABLED = "recents_show_hidden_enabled";
     private static final String KEY_HIDE_APPS_NOVERIFY_ENABLED = "hide_apps_noverify_enabled";
     private static final String KEY_HIDE_APPS_TITLE_FOLDER_ENABLED = "hide_apps_title_folder_enabled";
+    // 通用设置 — 设置首页图标样式: 0=系统默认, 1=不规则图标, 2=圆形图标。
+    private static final String KEY_SETTINGS_HOME_ICON_STYLE = "settings_home_icon_style";
+    private static final int SETTINGS_HOME_ICON_STYLE_DEFAULT = 0;
+    private static final int SETTINGS_HOME_ICON_STYLE_IRREGULAR = 1;
+    private static final int SETTINGS_HOME_ICON_STYLE_CIRCLE = 2;
     // Feature 12 — 缩小桌面图标长按菜单(com.android.launcher):
     // 长按菜单(深度快捷方式 / 系统快捷方式)的尺寸由一组 @dimen 资源决定,
     // 这里在资源层按比例整体缩放图标、文字、宽高与内边距/外边距, 使菜单整体变小。
@@ -189,7 +195,6 @@ public class XposedInit implements IXposedHookLoadPackage {
     private static final int ICON_GAP_DP = 4;
     private static final int INDICATOR_REDUCE_DP = 32; // requested page-to-Dock gap reduction in dp
     private static final int INDICATOR_REDUCE_MAX_DP = 128;
-    private static final int INDICATOR_REDUCE_MULTIPLIER = 2;
     private static final int QS_FOOTER_MARGIN_DP = 8; // smaller top gap for footer (date/settings) so it sinks a little
     // 状态图标簇在展开第一帧直接隐藏，避免出现原生移动动画。
     private static final float SUBTITLE_ORIG_SP = 24f; // system default subtitle text size
@@ -208,17 +213,56 @@ public class XposedInit implements IXposedHookLoadPackage {
         Log.e(TAG, msg);
     }
 
-    // 真实错误日志: 写入 logcat(error 级别), 并尽力追加到文件。
+    // 真实错误日志: Log.e 立即输出, 文件写入异步执行, 避免阻塞 Launcher/SystemUI 主线程。
     // 注意: 仅写到 /data/local/tmp (不受 MediaProvider FUSE 管辖); 切勿写 /sdcard,
     // 否则被 hook 进程无权限访问会触发 MediaProvider 拒绝并刷屏。
+    private static final java.util.concurrent.ArrayBlockingQueue<String> sFileLogQueue =
+            new java.util.concurrent.ArrayBlockingQueue<>(256);
+    private static volatile Thread sFileLogThread;
+
     private static void log(String msg) {
         Log.e(TAG, msg);
-        try {
-            java.io.FileWriter fw = new java.io.FileWriter("/data/local/tmp/colorosmod.log", true);
-            fw.write(System.currentTimeMillis() + " " + msg + "\n");
-            fw.close();
-        } catch (Throwable ignored) {
-            // 当前进程无权限写 /data/local/tmp 时静默跳过, 不刷屏
+        String line = System.currentTimeMillis() + " " + msg + "\n";
+        if (!sFileLogQueue.offer(line)) {
+            return;
+        }
+        ensureFileLogThread();
+    }
+
+    private static void ensureFileLogThread() {
+        if (sFileLogThread != null) {
+            return;
+        }
+        synchronized (sFileLogQueue) {
+            if (sFileLogThread != null) {
+                return;
+            }
+            Thread worker = new Thread(() -> {
+                while (true) {
+                    try {
+                        String first = sFileLogQueue.take();
+                        StringBuilder batch = new StringBuilder(first);
+                        String next;
+                        while ((next = sFileLogQueue.poll()) != null) {
+                            batch.append(next);
+                        }
+                        try (java.io.FileWriter fw = new java.io.FileWriter(
+                                "/data/local/tmp/colorosmod.log", true)) {
+                            fw.write(batch.toString());
+                        } catch (Throwable ignored) {
+                            // 当前进程无权限写文件时静默跳过, 不影响目标进程。
+                        }
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    } catch (Throwable ignored) {
+                        // 日志线程自身异常不能影响目标进程。
+                    }
+                }
+            }, "ColorOSMod-LogWriter");
+            worker.setDaemon(true);
+            sFileLogThread = worker;
+            worker.start();
         }
     }
 
@@ -1046,6 +1090,79 @@ public class XposedInit implements IXposedHookLoadPackage {
     }
 
     /**
+     * 设置首页图标样式：只切换 Settings 原有的 force-rounded 分支，不创建或改造 Drawable。
+     * TopLevelSettings#shouldForceRoundedIcon 的返回值会传入 DashboardFeatureProviderImpl，
+     * false 使用系统原生不规则图标路径，true 使用系统原生 AdaptiveIcon 圆形主题色背景路径。
+     */
+    private static void hookSettingsHomeIconStyle(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.settings.homepage.TopLevelSettings",
+                    lpparam.classLoader,
+                    "shouldForceRoundedIcon",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            int style = readInt(KEY_SETTINGS_HOME_ICON_STYLE,
+                                    SETTINGS_HOME_ICON_STYLE_DEFAULT);
+                            if (style == SETTINGS_HOME_ICON_STYLE_IRREGULAR) {
+                                param.setResult(false);
+                            } else if (style == SETTINGS_HOME_ICON_STYLE_CIRCLE) {
+                                param.setResult(true);
+                            }
+                        }
+                    });
+            Class<?> tileClass = XposedHelpers.findClass(
+                    "com.android.settingslib.drawer.Tile", lpparam.classLoader);
+            Class<?> preferenceClass = XposedHelpers.findClass(
+                    "androidx.preference.Preference", lpparam.classLoader);
+            // 直接修改系统 bindIcon 的 force-rounded 入参，保留 Settings 自己的两套绘制实现。
+            XposedHelpers.findAndHookMethod(
+                    "com.android.settings.dashboard.DashboardFeatureProviderImpl",
+                    lpparam.classLoader,
+                    "lambda$bindIcon$11",
+                    preferenceClass,
+                    tileClass,
+                    boolean.class,
+                    String.class,
+                    android.graphics.drawable.Icon.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            int style = readInt(KEY_SETTINGS_HOME_ICON_STYLE,
+                                    SETTINGS_HOME_ICON_STYLE_DEFAULT);
+                            if (style == SETTINGS_HOME_ICON_STYLE_DEFAULT) return;
+                            Object tile = param.args[1];
+                            if (tile != null && "com.android.settings.category.ia.homepage".equals(
+                                    String.valueOf(XposedHelpers.callMethod(tile, "getCategory")))) {
+                                param.args[2] = style == SETTINGS_HOME_ICON_STYLE_CIRCLE;
+                            }
+                        }
+                    });
+            // 当前设备启用了 homepageRevamp；该分支会绕过 forceRoundedIcon，直接生成 expressive 圆图标。
+            // 关闭该系统分支后，继续执行同一个 bindIcon 中原有的 z2/AdaptiveIcon 分支：
+            // z2=false 为不规则图标，z2=true 为圆形图标，均不自行绘制。
+            XposedHelpers.findAndHookMethod(
+                    "com.android.settings.flags.Flags",
+                    lpparam.classLoader,
+                    "homepageRevamp",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (readInt(KEY_SETTINGS_HOME_ICON_STYLE,
+                                    SETTINGS_HOME_ICON_STYLE_DEFAULT)
+                                    != SETTINGS_HOME_ICON_STYLE_DEFAULT) {
+                                param.setResult(false);
+                            }
+                        }
+                    });
+            log("HOOK OK settings native homepage icon style");
+        } catch (Throwable t) {
+            log("HOOK FAIL settings native homepage icon style: " + t);
+        }
+    }
+
+    /**
      * Feature 7 (fallback / 更直接的入口) — 在设置(密码/指纹校验)界面直接以"已验证"返回:
      * 点击桌面隐藏应用图标 / 拨号盘输入隐藏号码后, 安全中心会让本进程(com.android.settings)启动
      * {@code com.oplus.settings.privacy.ConfirmNumberPrivacy}(或其指纹变体 ConfirmBiometricInfo) 作为校验闸门。
@@ -1056,6 +1173,7 @@ public class XposedInit implements IXposedHookLoadPackage {
      */
     private static void hookSettings(final XC_LoadPackage.LoadPackageParam lpparam) {
         log(">>> matched com.android.settings");
+        hookSettingsHomeIconStyle(lpparam);
         // 始终注入, 运行时按 KEY_HIDE_APPS_NOVERIFY_ENABLED 门控(见 afterHook)。
         try {
             XposedHelpers.findAndHookMethod(
@@ -1350,10 +1468,11 @@ public class XposedInit implements IXposedHookLoadPackage {
     // 记录通知子视图原始上下 padding 的 tag, 用于幂等叠加 / 还原
     private static final int TAG_NOTIF_PAD_TOP = 0x4E0F0001;
     private static final int TAG_NOTIF_PAD_BOTTOM = 0x4E0F0002;
+    private static final int TAG_NOTIF_GROUP_HEADER_TRANSLATION = 0x4E0F0003;
 
     /**
-     * 非静默(未被最小化, mIsMinimized==false)通知：给其通知子视图(contracted/expanded/headsUp)的
-     * 上下内边距各加 padPx。直接改子视图 padding 才能被 NotificationContentView#getViewHeight 计入高度
+     * 非静默(未被最小化, mIsMinimized==false)通知：给其通知子视图(contracted/expanded/headsUp/singleLine)的
+     * 上下内边距各加 padPx。合并通知折叠时使用 singleLine 子视图，必须一并处理。直接改子视图 padding 才能被 NotificationContentView#getViewHeight 计入高度
      * (它取子视图自身 getHeight, 不含 NotificationContentView 自身 padding), 从而整张卡片随之增高、
      * 内部上下留白增加。静默(最小化)通知则还原到原始 padding(不改动)。
      * 在 onNotificationUpdated(after) 中施加; 若同一子视图重复更新, 以首次记录的原始 padding 为基准叠加,
@@ -1390,9 +1509,188 @@ public class XposedInit implements IXposedHookLoadPackage {
                             }
                         }
                     });
+
+            // 合并通知由 NotificationChildrenContainer 统一布局；给每个子通知加 padding 会只撑开某一行。
+            // 这里增加容器总高度，并在布局完成后把整个容器内容整体下移 padPx，形成上下外侧留白。
+            final String groupContainerClass =
+                    "com.android.systemui.statusbar.notification.stack.NotificationChildrenContainer";
+            try {
+                XposedHelpers.findAndHookMethod(
+                        groupContainerClass, lpparam.classLoader, "getIntrinsicHeight",
+                        new XC_MethodHook() {
+                            @Override
+                            protected void afterHookedMethod(MethodHookParam param) {
+                                if (!shouldAddNotificationGroupPadding(param.thisObject)) return;
+                                Object result = param.getResult();
+                                if (result instanceof Integer) {
+                                    param.setResult((Integer) result + getNotificationPaddingPx(density) * 2);
+                                }
+                            }
+                        });
+                log("HOOK OK NotificationChildrenContainer#getIntrinsicHeight (merged notification)");
+
+                XposedHelpers.findAndHookMethod(
+                        groupContainerClass, lpparam.classLoader, "onMeasure", int.class, int.class,
+                        new XC_MethodHook() {
+                            @Override
+                            protected void afterHookedMethod(MethodHookParam param) {
+                                if (!shouldAddNotificationGroupPadding(param.thisObject)) return;
+                                int extra = getNotificationPaddingPx(density) * 2;
+                                android.view.View container = (android.view.View) param.thisObject;
+                                XposedHelpers.callMethod(container, "setMeasuredDimension",
+                                        container.getMeasuredWidth(), container.getMeasuredHeight() + extra);
+                                XposedHelpers.setIntField(container, "mRealHeight",
+                                        XposedHelpers.getIntField(container, "mRealHeight") + extra);
+                            }
+                        });
+                log("HOOK OK NotificationChildrenContainer#onMeasure (merged notification)");
+
+                XposedHelpers.findAndHookMethod(
+                        groupContainerClass, lpparam.classLoader, "onLayout",
+                        boolean.class, int.class, int.class, int.class, int.class,
+                        new XC_MethodHook() {
+                            @Override
+                            protected void afterHookedMethod(MethodHookParam param) {
+                                if (!shouldAddNotificationGroupPadding(param.thisObject)) return;
+                                int padPx = getNotificationPaddingPx(density);
+                                android.view.ViewGroup container = (android.view.ViewGroup) param.thisObject;
+                                for (int i = 0; i < container.getChildCount(); i++) {
+                                    container.getChildAt(i).offsetTopAndBottom(padPx);
+                                }
+                            }
+                        });
+                log("HOOK OK NotificationChildrenContainer#onLayout (merged notification)");
+
+                // applyState 会在 onLayout 之后重新应用 mHeaderViewState，覆盖直接改 top 的偏移。
+                // 在状态应用完成后设置 translationY，确保右上角时间和展开箭头真正下移。
+                XposedHelpers.findAndHookMethod(
+                        groupContainerClass, lpparam.classLoader, "applyState",
+                        new XC_MethodHook() {
+                            @Override
+                            protected void afterHookedMethod(MethodHookParam param) {
+                                try {
+                                    android.view.ViewGroup container =
+                                            (android.view.ViewGroup) param.thisObject;
+                                    boolean enabled = shouldAddNotificationGroupPadding(container);
+                                    int padPx = getNotificationPaddingPx(density);
+                                    applyGroupHeaderOffset(container, "mGroupHeader", enabled, padPx);
+                                    applyGroupHeaderOffset(container, "mMinimizedGroupHeader", enabled, padPx);
+                                } catch (Throwable t) {
+                                    log("notification_padding group header apply fail: " + t);
+                                }
+                            }
+                        });
+                log("HOOK OK NotificationChildrenContainer#applyState (group header)");
+
+                // ColorOS 实际显示的是 OplusNotificationGroupTemplateWrapper.mView，
+                // 它由 layoutOplusHeader() 在原生 onLayout 之后单独布局，mGroupHeader 不是屏幕上这套标题。
+                try {
+                    XposedHelpers.findAndHookMethod(
+                            "com.oplus.systemui.statusbar.notification.stack.NotificationChildrenContainerExtImp",
+                            lpparam.classLoader,
+                            "layoutOplusHeader",
+                            groupContainerClass,
+                            new XC_MethodHook() {
+                                @Override
+                                protected void afterHookedMethod(MethodHookParam param) {
+                                    try {
+                                        android.view.ViewGroup container =
+                                                (android.view.ViewGroup) param.args[0];
+                                        Object groupExt = XposedHelpers.getObjectField(
+                                                param.thisObject, "oplusNotificationGroupExtImpl");
+                                        Object wrapper = XposedHelpers.getObjectField(
+                                                groupExt, "oplusHeaderWrapper");
+                                        Object headerView = XposedHelpers.getObjectField(wrapper, "mView");
+                                        applyViewTranslation(
+                                                headerView,
+                                                shouldAddNotificationGroupPadding(container),
+                                                getNotificationPaddingPx(density));
+                                    } catch (Throwable t) {
+                                        log("notification_padding Oplus group header apply fail: " + t);
+                                    }
+                                }
+                            });
+                    log("HOOK OK OplusNotificationGroupTemplateWrapper.mView (group time/arrow)");
+                } catch (Throwable t) {
+                    log("HOOK FAIL Oplus group header :: " + Log.getStackTraceString(t));
+                }
+
+                // 直接 hook ColorOS 实际负责 layout 的实现类，避免 ext bridge/字段链路被绕过。
+                try {
+                    XposedHelpers.findAndHookMethod(
+                            "com.oplus.systemui.notification.row.oplusgroup.OplusNotificationGroupExtImpl",
+                            lpparam.classLoader,
+                            "layoutOplusHeader",
+                            groupContainerClass,
+                            new XC_MethodHook() {
+                                @Override
+                                protected void afterHookedMethod(MethodHookParam param) {
+                                    try {
+                                        android.view.ViewGroup container =
+                                                (android.view.ViewGroup) param.args[0];
+                                        Object wrapper = XposedHelpers.getObjectField(
+                                                param.thisObject, "oplusHeaderWrapper");
+                                        Object headerView = XposedHelpers.getObjectField(wrapper, "mView");
+                                        applyViewTranslation(
+                                                headerView,
+                                                shouldAddNotificationGroupPadding(container),
+                                                getNotificationPaddingPx(density));
+                                    } catch (Throwable t) {
+                                        log("notification_padding direct Oplus header apply fail: " + t);
+                                    }
+                                }
+                            });
+                    log("HOOK OK OplusNotificationGroupExtImpl#layoutOplusHeader");
+                } catch (Throwable t) {
+                    log("HOOK FAIL OplusNotificationGroupExtImpl#layoutOplusHeader :: "
+                            + Log.getStackTraceString(t));
+                }
+            } catch (Throwable t) {
+                log("HOOK FAIL NotificationChildrenContainer padding :: " + Log.getStackTraceString(t));
+            }
+
             log("HOOK OK com.android.systemui.statusbar.notification.row.ExpandableNotificationRow#onNotificationUpdated");
         } catch (Throwable t) {
             log("HOOK FAIL ExpandableNotificationRow#onNotificationUpdated :: " + Log.getStackTraceString(t));
+        }
+    }
+
+    private static void applyGroupHeaderOffset(android.view.ViewGroup container,
+                                                String fieldName, boolean enabled, int padPx) {
+        try {
+            Object header = XposedHelpers.getObjectField(container, fieldName);
+            applyViewTranslation(header, enabled, padPx);
+        } catch (Throwable t) {
+            log("notification_padding group header offset fail: " + fieldName + " :: " + t);
+        }
+    }
+
+    private static void applyViewTranslation(Object object, boolean enabled, int padPx) {
+        if (!(object instanceof android.view.View)) return;
+        android.view.View view = (android.view.View) object;
+        Object tag = view.getTag(TAG_NOTIF_GROUP_HEADER_TRANSLATION);
+        float original = tag instanceof Float ? (Float) tag : view.getTranslationY();
+        if (!(tag instanceof Float)) {
+            view.setTag(TAG_NOTIF_GROUP_HEADER_TRANSLATION, original);
+        }
+        float target = enabled ? original + padPx : original;
+        if (view.getTranslationY() != target) {
+            view.setTranslationY(target);
+        }
+    }
+
+    private static int getNotificationPaddingPx(float density) {
+        return Math.round(readInt(KEY_NOTIFICATION_PADDING_DP, NOTIFICATION_PADDING_DP) * density);
+    }
+
+    private static boolean shouldAddNotificationGroupPadding(Object container) {
+        try {
+            if (!readBool(KEY_NOTIFICATION_PADDING_ENABLED, false)) return false;
+            Object row = XposedHelpers.getObjectField(container, "mContainingNotification");
+            return row != null && !XposedHelpers.getBooleanField(row, "mIsMinimized");
+        } catch (Throwable t) {
+            log("notification_padding group enabled check fail: " + t);
+            return false;
         }
     }
 
@@ -1667,9 +1965,8 @@ public class XposedInit implements IXposedHookLoadPackage {
                             Object result = param.getResult();
                             if (!(result instanceof Integer)) return;
                             int configuredDp = Math.max(0, Math.min(
-                                    64, readInt(KEY_INDICATOR_DP, INDICATOR_REDUCE_DP)));
-                            int requestedDp = Math.min(INDICATOR_REDUCE_MAX_DP,
-                                    configuredDp * INDICATOR_REDUCE_MULTIPLIER);
+                                    32, readInt(KEY_INDICATOR_DP, INDICATOR_REDUCE_DP)));
+                            int requestedDp = Math.min(INDICATOR_REDUCE_MAX_DP, configuredDp);
                             if (requestedDp == 0) return;
                             try {
                                 Object workspace = XposedHelpers.getObjectField(
