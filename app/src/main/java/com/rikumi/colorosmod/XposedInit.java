@@ -214,56 +214,9 @@ public class XposedInit implements IXposedHookLoadPackage {
     }
 
     // 真实错误日志: Log.e 立即输出, 文件写入异步执行, 避免阻塞 Launcher/SystemUI 主线程。
-    // 注意: 仅写到 /data/local/tmp (不受 MediaProvider FUSE 管辖); 切勿写 /sdcard,
-    // 否则被 hook 进程无权限访问会触发 MediaProvider 拒绝并刷屏。
-    private static final java.util.concurrent.ArrayBlockingQueue<String> sFileLogQueue =
-            new java.util.concurrent.ArrayBlockingQueue<>(256);
-    private static volatile Thread sFileLogThread;
-
+    // 仅输出到 logcat, 不写文件, 避免 IO 卡顿。
     private static void log(String msg) {
         Log.e(TAG, msg);
-        String line = System.currentTimeMillis() + " " + msg + "\n";
-        if (!sFileLogQueue.offer(line)) {
-            return;
-        }
-        ensureFileLogThread();
-    }
-
-    private static void ensureFileLogThread() {
-        if (sFileLogThread != null) {
-            return;
-        }
-        synchronized (sFileLogQueue) {
-            if (sFileLogThread != null) {
-                return;
-            }
-            Thread worker = new Thread(() -> {
-                while (true) {
-                    try {
-                        String first = sFileLogQueue.take();
-                        StringBuilder batch = new StringBuilder(first);
-                        String next;
-                        while ((next = sFileLogQueue.poll()) != null) {
-                            batch.append(next);
-                        }
-                        try (java.io.FileWriter fw = new java.io.FileWriter(
-                                "/data/local/tmp/colorosmod.log", true)) {
-                            fw.write(batch.toString());
-                        } catch (Throwable ignored) {
-                            // 当前进程无权限写文件时静默跳过, 不影响目标进程。
-                        }
-                    } catch (InterruptedException ignored) {
-                        Thread.currentThread().interrupt();
-                        return;
-                    } catch (Throwable ignored) {
-                        // 日志线程自身异常不能影响目标进程。
-                    }
-                }
-            }, "ColorOSMod-LogWriter");
-            worker.setDaemon(true);
-            sFileLogThread = worker;
-            worker.start();
-        }
     }
 
     @Override
