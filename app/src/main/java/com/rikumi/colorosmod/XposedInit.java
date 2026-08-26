@@ -253,38 +253,28 @@ public class XposedInit implements IXposedHookLoadPackage {
     // 而 popup 的打开动画只缩放外层容器, 不会触碰它, 所以变换恒定生效、不被布局重写覆盖。
     // 轴心设在箭头一侧, 缩放后箭头仍精确指向图标。
     private static void hookPopupMenuDimens(final XC_LoadPackage.LoadPackageParam lpparam) {
-        XC_MethodHook attachHook = new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                if (!readBool(KEY_SHRINK_POPUP_MENU, false)) {
-                    return;
-                }
-                android.view.View v = (android.view.View) param.thisObject;
-                if (sPopupContainerClass == null) {
-                    try {
-                        sPopupContainerClass = XposedHelpers.findClass(
-                                "com.android.launcher3.popup.OplusPopupContainerWithArrow",
-                                v.getContext().getClassLoader());
-                    } catch (Throwable t) {
-                        sPopupContainerClass = Void.class; // 哨兵: 未找到
-                        return;
-                    }
-                }
-                if (sPopupContainerClass == Void.class || !sPopupContainerClass.isInstance(v)) {
-                    return;
-                }
-                // 缩放是绝对赋值(幂等), 同一容器重复弹出不会叠加; 仅当滑条值变化时才需要重新应用。
-                int pct = readInt(KEY_POPUP_SCALE_PERCENT, POPUP_SHRINK_PERCENT_DEFAULT);
-                Object applied = XposedHelpers.getAdditionalInstanceField(v, "colorosmod_popup_pct");
-                if (applied instanceof Integer && (Integer) applied == pct) {
-                    return;
-                }
-                XposedHelpers.setAdditionalInstanceField(v, "colorosmod_popup_pct", pct);
-                v.post(() -> scalePopupContainer(v));
-            }
-        };
         try {
-            XposedHelpers.findAndHookMethod(android.view.View.class, "onAttachedToWindow", attachHook);
+            final Class<?> popupClass = XposedHelpers.findClass(
+                    "com.android.launcher3.popup.OplusPopupContainerWithArrow",
+                    lpparam.classLoader);
+            sPopupContainerClass = popupClass;
+            XposedHelpers.findAndHookMethod(popupClass, "onAttachedToWindow",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (!readBool(KEY_SHRINK_POPUP_MENU, false)) {
+                                return;
+                            }
+                            android.view.View v = (android.view.View) param.thisObject;
+                            int pct = readInt(KEY_POPUP_SCALE_PERCENT, POPUP_SHRINK_PERCENT_DEFAULT);
+                            Object applied = XposedHelpers.getAdditionalInstanceField(v, "colorosmod_popup_pct");
+                            if (applied instanceof Integer && (Integer) applied == pct) {
+                                return;
+                            }
+                            XposedHelpers.setAdditionalInstanceField(v, "colorosmod_popup_pct", pct);
+                            v.post(() -> scalePopupContainer(v));
+                        }
+                    });
             log("hooked popup menu container scaling");
         } catch (Throwable t) {
             log("hook popup menu container failed: " + t);
