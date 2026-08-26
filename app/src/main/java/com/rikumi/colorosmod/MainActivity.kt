@@ -96,7 +96,7 @@ internal data class SwitchItem(
 
 private val DESKTOP = listOf(
     SwitchItem("icon_gap_enabled", "增加图标与名称间距", sliderKey = "icon_gap_dp", sliderMax = 8, sliderDefault = 4),
-    SwitchItem("indicator_enabled", "减小页面与 Dock 间距", sliderKey = "indicator_dp", sliderMax = 32, sliderDefault = 16, sliderUnit = "dp"),
+    SwitchItem("indicator_enabled", "减小页面与 Dock 间距", sliderKey = "indicator_dp", sliderMax = 48, sliderDefault = 24, sliderUnit = "dp"),
     SwitchItem("shrink_popup_menu", "缩小图标长按菜单", sliderKey = "popup_scale_percent", sliderMax = 20, sliderDefault = 10, sliderUnit = "%"),
     SwitchItem("folder_bg_transparent_enabled", "文件夹展开背景透明"),
     SwitchItem("edit_mode_bg_transparent_enabled", "取消编辑模式背景遮罩", subtitle = "编辑桌面和页面预览时保持壁纸清晰"),
@@ -105,7 +105,7 @@ private val DESKTOP = listOf(
     SwitchItem("hide_ghostlock_enabled", "彻底隐藏 GhostLock 图标", subtitle = "显然已经有 root 的时候不需要再 root"),
 )
 private val QS = listOf(
-    SwitchItem("qs_scrim_translucent_enabled", "自定义控制中心背景亮度", sliderKey = "qs_scrim_brightness", sliderMax = 20, sliderDefault = 10, sliderUnit = ""),
+    SwitchItem("qs_scrim_translucent_enabled", "自定义控制中心背景亮度", sliderKey = "qs_scrim_brightness", sliderMax = 20, sliderDefault = 5, sliderUnit = ""),
     SwitchItem("qs_carrier_enabled", "去除控制中心运营商显示"),
     SwitchItem("qs_topmargin_enabled", "隐藏控制中心顶部状态图标簇"),
     SwitchItem("qs_tile_name_ellipsis_enabled", "Wi-Fi / 蓝牙名称单行省略"),

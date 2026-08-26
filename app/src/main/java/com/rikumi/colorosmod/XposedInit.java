@@ -32,17 +32,12 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  *
  * Feature 2 — page indicator gaps (no height change):
  *   The desktop page indicator (dots) is drawn centered inside a fixed-height region
- *   ({@code PageIndicatorParam.getWorkspacePageIndicatorHeight()}) whose vertical position is
- *   fixed by its bottomMargin (see OplusPageIndicator.setWindowInsets). The page above and the
- *   Dock below are both sized from the hotseat bar height
- *   ({@code HotseatParam.getHotseatBarSizePx()}): the Dock's top edge is at screenBottom - barSize,
- *   and the workspace content bottom is computed from barSize in
- *   WorkspaceParam.updatePaddingTopAndBottom.
- *   To pull the dots 16dp closer to BOTH the page and the Dock WITHOUT changing the indicator's
- *   own height, we shrink the hotseat bar by 16dp: the Dock top moves up 16dp (dots->Dock closer)
- *   and the workspace content bottom moves down 16dp (page->dots closer), while the indicator's
- *   height and bottomMargin stay untouched. We subtract a fixed pixel offset (16dp) from
- *   getHotseatBarSizePx.
+ *   ({@code PageIndicatorParam.getWorkspacePageIndicatorHeight()}). The launcher computes
+ *   Workspace top padding in {@code WorkspaceParam.updatePaddingTopAndBottom}: a hotseat height
+ *   reduction is multiplied by {@code workspaceTopPercentage}, so the visible page-to-Dock gap
+ *   shrinks by only {@code delta * (1 - workspaceTopPercentage)}. The hook therefore divides
+ *   the requested dp reduction by that ratio before changing
+ *   {@code HotseatParam.getHotseatBarSizePx()}, compensating the launcher’s extra processing.
  *
  * Feature 3 — control center (SystemUI / com.android.systemui):
  *   用户使用经典(合并)下拉面板，由 {@code com.oplus.systemui.qs.OplusQuickStatusBarHeader} 驱动。
@@ -187,11 +182,11 @@ public class XposedInit implements IXposedHookLoadPackage {
             new java.util.concurrent.ConcurrentHashMap<String, Object[]>(); // key -> {Long ts, Boolean val}
 
     private static final int ICON_GAP_DP = 4;
-    private static final int INDICATOR_REDUCE_DP = 16; // pull page indicator 16dp closer to page AND to Dock
-    private static final int INDICATOR_REDUCE_MAX_DP = 32;
+    private static final int INDICATOR_REDUCE_DP = 32; // requested page-to-Dock gap reduction in dp
+    private static final int INDICATOR_REDUCE_MAX_DP = 128;
+    private static final int INDICATOR_REDUCE_MULTIPLIER = 2;
     private static final int QS_FOOTER_MARGIN_DP = 8; // smaller top gap for footer (date/settings) so it sinks a little
-    // 状态图标簇只在展开初段渐隐，避免透明前被系统原生移动动画带走。
-    private static final float QS_STATUS_HIDE_FADE_FRACTION = 0.12f;
+    // 状态图标簇在展开第一帧直接隐藏，避免出现原生移动动画。
     private static final float SUBTITLE_ORIG_SP = 24f; // system default subtitle text size
     private static final int SUBTITLE_REDUCE_SP_DEFAULT = 8; // default reduction (24sp -> 16sp); slider 0..2x
     private static final float SUBTITLE_OFFSET_DP = 8f; // move subtitle up & right by 8dp each (at default reduction)
@@ -402,11 +397,10 @@ public class XposedInit implements IXposedHookLoadPackage {
         hookPxRuntime(lpparam, "com.android.launcher.layoutparam.AllAppsParam",
                 "getAllAppsIconDrawablePaddingPx", density, KEY_ICON_GAP_ENABLED, KEY_ICON_GAP_DP, ICON_GAP_DP, 8, 1);
 
-        // Feature 2 — 指示点间距: 始终注入, 运行时按 KEY_INDICATOR_ENABLED 门控,
-        // 缩减量由 KEY_INDICATOR_DP(0-32dp, 默认 16dp) 在运行时读取。
-        hookPxRuntime(lpparam, "com.android.launcher.layoutparam.HotseatParam",
-                "getHotseatBarSizePx", density, KEY_INDICATOR_ENABLED, KEY_INDICATOR_DP,
-                INDICATOR_REDUCE_DP, INDICATOR_REDUCE_MAX_DP, -1);
+        // Feature 2 — 页面与 Dock 间距: 始终注入, 运行时按 KEY_INDICATOR_ENABLED 门控。
+        // 系统会把 hotseat 高度变化按 workspaceTopPercentage 分摊到页面位置，
+        // 因此不能直接减 requestedDp；hook 中会反推实际需要的 hotseat 高度变化。
+        hookIndicatorHotseatSize(lpparam, density);
 
         // Feature 4 — 多任务显示隐藏应用: 始终注入, 运行时按 KEY_RECENTS_SHOW_HIDDEN_ENABLED 门控。
         hookRecentsShowHidden(lpparam);
@@ -1196,6 +1190,16 @@ public class XposedInit implements IXposedHookLoadPackage {
                                 log("qs_status fade apply fail: " + t);
                             }
                         }
+
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                float fraction = ((Float) param.args[0]).floatValue();
+                                applyQsStatusClusterFade(param.thisObject, fraction);
+                            } catch (Throwable t) {
+                                log("qs_status fade after apply fail: " + t);
+                            }
+                        }
                     });
             log("HOOK OK OplusQSFakeStatusController$qsPanelExpandFractionListener#onFractionChanged");
         } catch (Throwable t) {
@@ -1231,20 +1235,37 @@ public class XposedInit implements IXposedHookLoadPackage {
     }
 
     /**
-     * 在系统真正执行图标簇位移动画前设置透明度，避免用户看到移动过程。
-     * 监听器实例的 this$0 是 OplusQSFakeStatusController，quickStatus 就是 quick_qs_status_icons。
+     * 展开回调中原生会同时移动两个不同的节点：
+     * mStatusIconsView 是状态栏节点，quickStatus 是 QS 顶栏节点；二者不是同一个 View。
+     * 因此在 fraction 第一次大于 0 时直接 INVISIBLE，在原生 translation 执行前彻底阻止移动动画可见。
      */
     private static void applyQsStatusClusterFade(Object fractionListener, float expansionFraction) {
         Object controller = XposedHelpers.getObjectField(fractionListener, "this$0");
-        android.view.View cluster = (android.view.View) XposedHelpers.getObjectField(controller, "quickStatus");
-        if (cluster == null) return;
-        if (!readBool(KEY_QS_TOPMARGIN_ENABLED, false)) {
-            cluster.setAlpha(1f);
-            return;
+        boolean enabled = readBool(KEY_QS_TOPMARGIN_ENABLED, false);
+        boolean hide = enabled && expansionFraction > 0f;
+
+        setQsStatusVisibility(controller, "quickStatus", hide);
+        setQsStatusVisibility(controller, "fakeStatusIconContainer", hide);
+        try {
+            Object headerController = XposedHelpers.getObjectField(controller, "statusBarHeader");
+            Object icons = XposedHelpers.callMethod(headerController, "getMStatusIconsView");
+            if (icons instanceof android.view.View) {
+                ((android.view.View) icons).setVisibility(
+                        hide ? android.view.View.INVISIBLE : android.view.View.VISIBLE);
+            }
+        } catch (Throwable ignored) {
         }
-        float progress = Math.max(0f, Math.min(1f,
-                expansionFraction / QS_STATUS_HIDE_FADE_FRACTION));
-        cluster.setAlpha(1f - progress);
+    }
+
+    private static void setQsStatusVisibility(Object controller, String fieldName, boolean hide) {
+        try {
+            Object value = XposedHelpers.getObjectField(controller, fieldName);
+            if (value instanceof android.view.View) {
+                ((android.view.View) value).setVisibility(
+                        hide ? android.view.View.INVISIBLE : android.view.View.VISIBLE);
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     private static void addFooterTopPadding(Object footer, int footerPx) {        try {
@@ -1578,6 +1599,51 @@ public class XposedInit implements IXposedHookLoadPackage {
             }
         }
         return false;
+    }
+
+    /**
+     * 系统布局会把 hotseat 高度变化按 workspaceTopPercentage 分摊到 Workspace 顶部 padding：
+     * hotseat 缩短 x 像素时，页面实际向 Dock 移动的距离只有 x * (1 - percentage)。
+     * 这里反推 hotseat 缩短量，使设置中的 dp 值对应真实页面到 Dock 的间距变化。
+     */
+    private static void hookIndicatorHotseatSize(final XC_LoadPackage.LoadPackageParam lpparam,
+                                                  final float density) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher.layoutparam.HotseatParam", lpparam.classLoader,
+                    "getHotseatBarSizePx", new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (!readBool(KEY_INDICATOR_ENABLED, false)) return;
+                            Object result = param.getResult();
+                            if (!(result instanceof Integer)) return;
+                            int configuredDp = Math.max(0, Math.min(
+                                    64, readInt(KEY_INDICATOR_DP, INDICATOR_REDUCE_DP)));
+                            int requestedDp = Math.min(INDICATOR_REDUCE_MAX_DP,
+                                    configuredDp * INDICATOR_REDUCE_MULTIPLIER);
+                            if (requestedDp == 0) return;
+                            try {
+                                Object workspace = XposedHelpers.getObjectField(
+                                        param.thisObject, "mWorkspace");
+                                float topPercentage = ((Number) XposedHelpers.callMethod(
+                                        workspace, "getWorkspaceTopPercentage")).floatValue();
+                                topPercentage = Math.max(0f, Math.min(0.95f, topPercentage));
+                                float pageMoveRatio = 1f - topPercentage;
+                                int requestedPx = Math.round(requestedDp * density);
+                                int hotseatDeltaPx = Math.round(requestedPx / pageMoveRatio);
+                                int originalPx = (Integer) result;
+                                param.setResult(Math.max(1, originalPx - hotseatDeltaPx));
+                            } catch (Throwable t) {
+                                // 布局字段不可用时退回直接 dp->px，避免影响桌面正常布局。
+                                param.setResult((Integer) result
+                                        - Math.round(requestedDp * density));
+                            }
+                        }
+                    });
+            log("HOOK OK HotseatParam#getHotseatBarSizePx (workspace compensation)");
+        } catch (Throwable t) {
+            log("HOOK FAIL HotseatParam#getHotseatBarSizePx (workspace compensation): " + t);
+        }
     }
 
     /**
