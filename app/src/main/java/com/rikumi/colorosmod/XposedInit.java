@@ -216,7 +216,6 @@ public class XposedInit implements IXposedHookLoadPackage {
     // 真实错误日志: Log.e 立即输出, 文件写入异步执行, 避免阻塞 Launcher/SystemUI 主线程。
     // 仅输出到 logcat, 不写文件, 避免 IO 卡顿。
     private static void log(String msg) {
-        Log.e(TAG, msg);
     }
 
     @Override
