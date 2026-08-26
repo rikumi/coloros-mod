@@ -162,8 +162,19 @@ public class XposedInit implements IXposedHookLoadPackage {
     //   普通最小化不介入。
     // 需要把模块作用域加入 "android"(system_server) 才能让本模块在该进程注入(否则 hook 不生效); 旧版 SystemUI 内 hook 路径已废弃。
     private static final String KEY_FLOAT_WINDOW_EDGE_HANG_ENABLED = "float_window_edge_hang_enabled";
+    // Feature 22 — 横屏应用小窗保持比例(com.android.server.wm.FlexibleTaskController, android/system_server):
+    // 横屏应用进入小窗(含竖屏下查看横屏应用小窗)时, 让小窗的 宽:高 = 屏幕 高:宽(如 19.5:9),
+    // 即小窗高度/宽度 = 屏幕宽度/屏幕高度。系统在 fillFlexibleTaskInfo 中对横屏应用硬编码
+    // ratio=0.5625f(高/宽=9:16), 与设备真实屏幕比例不符, 故在 system_server 内接管该 ratio 与 launchBounds。
+    private static final String KEY_FLOAT_WINDOW_LANDSCAPE_KEEP_RATIO_ENABLED =
+            "float_window_landscape_keep_ratio_enabled";
     private static final String KEY_GESTURE_BAR_HEIGHT_ENABLED = "gesture_bar_height_enabled";
     private static final String KEY_GESTURE_BAR_HEIGHT_DP = "gesture_bar_height_dp";
+    private static final String KEY_GESTURE_BAR_WIDTH_ENABLED = "gesture_bar_width_enabled";
+    private static final String KEY_GESTURE_BAR_WIDTH_DP = "gesture_bar_width_dp";
+    private static final String KEY_MBACK_ENABLED = "mback_enabled";
+    // 判定为向左/右/上划动的阈值（dp），超过则放弃 MBack 接管。
+    private static final int MBACK_SWIPE_DP = 20;
     private static final String KEY_GESTURE_BAR_LONG_PRESS_DISABLE_ENABLED =
             "gesture_bar_long_press_disable_enabled";
     // Feature 11 — 从桌面隐藏指定的单个 LAUNCHER 活动 (com.android.launcher):
@@ -268,6 +279,8 @@ public class XposedInit implements IXposedHookLoadPackage {
         } else if ("android".equals(lpparam.packageName)) {
             // system_server: 承载"贴边最小化"的真正提交逻辑(com.android.server.wm.FlexibleTaskController)
             hookFloatWindowEdgeHangSystemServer(lpparam);
+            // system_server: 横屏应用小窗保持比例(com.android.server.wm.FlexibleTaskController)
+            hookFloatWindowLandscapeKeepRatio(lpparam);
         }
     }
 
@@ -1213,6 +1226,7 @@ public class XposedInit implements IXposedHookLoadPackage {
         // Feature 18 — 悬浮小窗贴边挂机: 真正的提交逻辑在 system_server(android 作用域), 见 hookFloatWindowEdgeHangSystemServer。
         hookGestureBarHeight(lpparam);
         hookGestureBarLongPressDisable(lpparam);
+        hookMBack(lpparam);
     }
 
     private static final java.util.WeakHashMap<Object, Boolean> sBarExtraApplied =
@@ -1255,6 +1269,336 @@ public class XposedInit implements IXposedHookLoadPackage {
                     });
         } catch (Throwable t) {
             log("gesture_bar long press hook failed: " + t);
+        }
+    }
+
+    private static final long MBACK_RIPPLE_HIDE_DELAY_MS = 280L;
+
+    private static void hookMBack(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> handleClass = XposedHelpers.findClass(
+                    "com.oplus.systemui.navigationbar.gesture.sidegesture.OplusNavigationHandle",
+                    lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(handleClass, "handleValidTouchEvent",
+                    android.view.MotionEvent.class, new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!readBool(KEY_MBACK_ENABLED, false)) return;
+                            android.view.View handle = (android.view.View) param.thisObject;
+                            handleMBackTouch(handle, (android.view.MotionEvent) param.args[0]);
+                            param.setResult(null);
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(handleClass, "onAttachedToWindow",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (readBool(KEY_MBACK_ENABLED, false)) {
+                                ensureMBackSurface((android.view.View) param.thisObject);
+                            }
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(handleClass, "onLayout", boolean.class,
+                    int.class, int.class, int.class, int.class, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            updateMBackSurface((android.view.View) param.thisObject);
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(handleClass, "onDetachedFromWindow",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            removeMBackSurface((android.view.View) param.thisObject);
+                        }
+                    });
+        } catch (Throwable t) {
+            log("mback hook failed: " + t);
+        }
+    }
+
+    private static void handleMBackTouch(final android.view.View handle,
+            android.view.MotionEvent event) {
+        if (event == null) return;
+        MBackSurface surface = ensureMBackSurface(handle);
+        int action = event.getActionMasked();
+        if (action == android.view.MotionEvent.ACTION_DOWN) {
+            cancelMBackLongPress(handle);
+            XposedHelpers.setAdditionalInstanceField(handle, "mback_down", Boolean.TRUE);
+            XposedHelpers.setAdditionalInstanceField(handle, "mback_long", Boolean.FALSE);
+            XposedHelpers.setAdditionalInstanceField(handle, "mback_cancelled", Boolean.FALSE);
+            XposedHelpers.setAdditionalInstanceField(handle, "mback_down_x", event.getX());
+            XposedHelpers.setAdditionalInstanceField(handle, "mback_down_y", event.getY());
+            if (surface != null) {
+                surface.update();
+                surface.showAnimated();
+            }
+            final Runnable longPress = new Runnable() {
+                @Override
+                public void run() {
+                    if (!Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(
+                            handle, "mback_down"))
+                            || Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(
+                            handle, "mback_cancelled"))) {
+                        return;
+                    }
+                    XposedHelpers.setAdditionalInstanceField(handle, "mback_long", Boolean.TRUE);
+                    android.view.View feedback = handle;
+                    feedback.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+                    triggerNavigation(handle, true);
+                }
+            };
+            XposedHelpers.setAdditionalInstanceField(handle, "mback_runnable", longPress);
+            handle.postDelayed(longPress, android.view.ViewConfiguration.getLongPressTimeout());
+            return;
+        }
+        if (!Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(handle, "mback_down"))) {
+            return;
+        }
+        if (action == android.view.MotionEvent.ACTION_MOVE) {
+            // 从白条向左/右/上划动时放弃接管（不震动、不触发导航），交由系统手势处理。
+            float dx = event.getX() - getMBackFloat(handle, "mback_down_x");
+            float dy = event.getY() - getMBackFloat(handle, "mback_down_y");
+            float swipe = Math.round(MBACK_SWIPE_DP * readDensity());
+            if (Math.abs(dx) > swipe || dy < -swipe) {
+                XposedHelpers.setAdditionalInstanceField(handle, "mback_cancelled", Boolean.TRUE);
+                cancelMBackLongPress(handle);
+                hideMBackSurface(handle);
+            }
+            return;
+        }
+        if (action == android.view.MotionEvent.ACTION_UP) {
+            boolean cancelled = Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(
+                    handle, "mback_cancelled"));
+            boolean longPressed = Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(
+                    handle, "mback_long"));
+            cancelMBackLongPress(handle);
+            if (!cancelled && !longPressed) {
+                handle.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+                triggerNavigation(handle, false);
+            }
+            XposedHelpers.setAdditionalInstanceField(handle, "mback_down", Boolean.FALSE);
+            hideMBackSurface(handle);
+            return;
+        }
+        if (action == android.view.MotionEvent.ACTION_CANCEL
+                || action == android.view.MotionEvent.ACTION_POINTER_DOWN) {
+            XposedHelpers.setAdditionalInstanceField(handle, "mback_cancelled", Boolean.TRUE);
+            cancelMBackLongPress(handle);
+            XposedHelpers.setAdditionalInstanceField(handle, "mback_down", Boolean.FALSE);
+            hideMBackSurface(handle);
+        }
+    }
+
+    private static float getMBackFloat(android.view.View view, String key) {
+        Object value = XposedHelpers.getAdditionalInstanceField(view, key);
+        return value instanceof Number ? ((Number) value).floatValue() : 0.0f;
+    }
+
+    private static void cancelMBackLongPress(android.view.View handle) {
+        Object runnable = XposedHelpers.getAdditionalInstanceField(handle, "mback_runnable");
+        if (runnable instanceof Runnable) handle.removeCallbacks((Runnable) runnable);
+        XposedHelpers.setAdditionalInstanceField(handle, "mback_runnable", null);
+    }
+
+    private static MBackSurface ensureMBackSurface(android.view.View handle) {
+        Object existing = XposedHelpers.getAdditionalInstanceField(handle, "mback_surface");
+        if (existing instanceof MBackSurface) {
+            ((MBackSurface) existing).update();
+            return (MBackSurface) existing;
+        }
+        android.widget.FrameLayout host = findMBackHost(handle);
+        if (host == null) return null;
+        MBackSurface surface = new MBackSurface(handle, host);
+        surface.setVisibility(android.view.View.INVISIBLE);
+        surface.setClickable(true);
+        surface.setFocusable(true);
+        surface.setOnTouchListener(new android.view.View.OnTouchListener() {
+            @Override
+            public boolean onTouch(android.view.View view, android.view.MotionEvent event) {
+                return true;
+            }
+        });
+        android.widget.FrameLayout.LayoutParams lp =
+                new android.widget.FrameLayout.LayoutParams(1, 1);
+        host.addView(surface, 0, lp);
+        XposedHelpers.setAdditionalInstanceField(handle, "mback_surface", surface);
+        surface.update();
+        return surface;
+    }
+
+    private static android.widget.FrameLayout findMBackHost(android.view.View view) {
+        android.view.ViewParent parent = view.getParent();
+        android.widget.FrameLayout fallback = null;
+        while (parent instanceof android.view.View) {
+            if (parent instanceof android.widget.FrameLayout) {
+                if (fallback == null) fallback = (android.widget.FrameLayout) parent;
+                if (parent.getClass().getName().contains("NavigationBarFrame")) {
+                    return (android.widget.FrameLayout) parent;
+                }
+            }
+            parent = parent.getParent();
+        }
+        return fallback;
+    }
+
+    private static void updateMBackSurface(android.view.View handle) {
+        Object surface = XposedHelpers.getAdditionalInstanceField(handle, "mback_surface");
+        if (surface instanceof MBackSurface) ((MBackSurface) surface).update();
+    }
+
+    private static void hideMBackSurface(android.view.View handle) {
+        Object surface = XposedHelpers.getAdditionalInstanceField(handle, "mback_surface");
+        if (surface instanceof MBackSurface) ((MBackSurface) surface).hideAnimated();
+    }
+
+    private static void removeMBackSurface(android.view.View handle) {
+        cancelMBackLongPress(handle);
+        Object surface = XposedHelpers.getAdditionalInstanceField(handle, "mback_surface");
+        if (surface instanceof MBackSurface && ((MBackSurface) surface).getParent() instanceof android.view.ViewGroup) {
+            ((android.view.ViewGroup) ((MBackSurface) surface).getParent()).removeView((MBackSurface) surface);
+        }
+        XposedHelpers.setAdditionalInstanceField(handle, "mback_surface", null);
+    }
+
+    private static void triggerNavigation(android.view.View handle, boolean home) {
+        try {
+            android.view.View parent = handle;
+            Class<?> navViewClass = XposedHelpers.findClass(
+                    "com.android.systemui.navigationbar.views.NavigationBarView",
+                    handle.getContext().getClassLoader());
+            while (parent != null && !navViewClass.isInstance(parent)) {
+                parent = parent.getParent() instanceof android.view.View
+                        ? (android.view.View) parent.getParent() : null;
+            }
+            if (parent == null) return;
+            if (home) {
+                if (injectHomeKey()) return;
+                Object homeDispatcher = XposedHelpers.callMethod(parent, "getHomeButton");
+                Object homeView = XposedHelpers.callMethod(homeDispatcher, "getCurrentView");
+                if (homeView != null) XposedHelpers.callMethod(homeView, "performClick");
+                return;
+            }
+            Object dispatcher = XposedHelpers.callMethod(parent, "getBackButton");
+            Object keyView = XposedHelpers.callMethod(dispatcher, "getCurrentView");
+            if (keyView == null) return;
+            long now = android.os.SystemClock.uptimeMillis();
+            XposedHelpers.callMethod(keyView, "sendEvent", 0, 0, now);
+            XposedHelpers.callMethod(keyView, "sendEvent", 1, 0);
+        } catch (Throwable t) {
+            log("mback navigation failed: " + t);
+        }
+    }
+
+    private static boolean injectHomeKey() {
+        try {
+            Class<?> inputManagerClass = Class.forName("android.hardware.input.InputManager");
+            Object inputManager = XposedHelpers.callStaticMethod(inputManagerClass, "getInstance");
+            long now = android.os.SystemClock.uptimeMillis();
+            int flags = android.view.KeyEvent.FLAG_FROM_SYSTEM
+                    | android.view.KeyEvent.FLAG_VIRTUAL_HARD_KEY;
+            android.view.KeyEvent down = new android.view.KeyEvent(
+                    now, now, android.view.KeyEvent.ACTION_DOWN,
+                    android.view.KeyEvent.KEYCODE_HOME, 0, 0,
+                    android.view.KeyCharacterMap.VIRTUAL_KEYBOARD, 0, flags,
+                    android.view.InputDevice.SOURCE_KEYBOARD);
+            android.view.KeyEvent up = new android.view.KeyEvent(
+                    now, now, android.view.KeyEvent.ACTION_UP,
+                    android.view.KeyEvent.KEYCODE_HOME, 0, 0,
+                    android.view.KeyCharacterMap.VIRTUAL_KEYBOARD, 0, flags,
+                    android.view.InputDevice.SOURCE_KEYBOARD);
+            XposedHelpers.callMethod(inputManager, "injectInputEvent", down, 0);
+            XposedHelpers.callMethod(inputManager, "injectInputEvent", up, 0);
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private static final class MBackSurface extends android.view.View {
+        private final android.view.View source;
+        private final android.view.ViewGroup host;
+
+        MBackSurface(android.view.View source, android.view.ViewGroup host) {
+            super(source.getContext());
+            this.source = source;
+            this.host = host;
+            android.graphics.drawable.GradientDrawable mask =
+                    new android.graphics.drawable.GradientDrawable();
+            mask.setColor(android.graphics.Color.WHITE);
+            mask.setCornerRadius(1000.0f);
+            android.content.res.ColorStateList rippleColor =
+                    android.content.res.ColorStateList.valueOf(
+                            android.graphics.Color.argb(64, 255, 255, 255));
+            setBackground(new android.graphics.drawable.RippleDrawable(
+                    rippleColor, null, mask));
+            setAlpha(1.0f);
+            setWillNotDraw(true);
+        }
+
+        void showAnimated() {
+            removeCallbacks(hideRunnable);
+            setAlpha(1.0f);
+            setVisibility(android.view.View.VISIBLE);
+            setPressed(true);
+            if (getBackground() != null) {
+                getBackground().setHotspot(getWidth() / 2.0f, getHeight() / 2.0f);
+            }
+        }
+
+        void hideAnimated() {
+            setPressed(false);
+            removeCallbacks(hideRunnable);
+            postDelayed(hideRunnable, MBACK_RIPPLE_HIDE_DELAY_MS);
+        }
+
+        private final Runnable hideRunnable = new Runnable() {
+            @Override
+            public void run() {
+                setVisibility(android.view.View.INVISIBLE);
+            }
+        };
+
+        // MBackSurface 基于手势白条尺寸，上下各固定留白 8dp，高度 = 白条高度 + 2*留白。
+        private static final int MBACK_PADDING_DP = 8;
+
+        void update() {
+            if (getParent() != host) return;
+            int[] sourceLocation = new int[2];
+            int[] hostLocation = new int[2];
+            source.getLocationInWindow(sourceLocation);
+            host.getLocationInWindow(hostLocation);
+            int barHeight = getSourceInt("mHeight", source.getHeight());
+            float density = readDensity();
+            int padding = Math.round(MBACK_PADDING_DP * density);
+            int gestureZoneHeight = barHeight + padding * 2;
+            int width = source.getWidth() + padding * 2;
+            int height = gestureZoneHeight;
+            android.widget.FrameLayout.LayoutParams lp =
+                    (android.widget.FrameLayout.LayoutParams) getLayoutParams();
+            if (lp.width != width || lp.height != height) {
+                lp.width = width;
+                lp.height = height;
+                setLayoutParams(lp);
+            }
+            // 从下方（贴手势区底）布局，底部避开手势区加高的一半（extraPx/2）。
+            int extraPx = 0;
+            if (readInt(KEY_GESTURE_BAR_HEIGHT_ENABLED, 1) == 1) {
+                int extraDp = Math.max(0, Math.min(20, readInt(KEY_GESTURE_BAR_HEIGHT_DP, 10)));
+                extraPx = Math.round(extraDp * density);
+            }
+            int barCenterXInHost = (sourceLocation[0] - hostLocation[0]) + source.getWidth() / 2;
+            setX(barCenterXInHost - width / 2);
+            setY(Math.max(0, host.getHeight() - gestureZoneHeight - Math.max(0, (extraPx - 1) / 2)));
+            invalidate();
+        }
+
+        private int getSourceInt(String field, int fallback) {
+            try {
+                return XposedHelpers.getIntField(source, field);
+            } catch (Throwable ignored) {
+                return fallback;
+            }
         }
     }
 
@@ -1315,8 +1659,41 @@ public class XposedInit implements IXposedHookLoadPackage {
                             }
                         }
                     });
+            XposedHelpers.findAndHookMethod(handleClass, "setVertical", boolean.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            applyGestureBarWidth((android.view.View) param.thisObject);
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(handleClass, "onAttachedToWindow",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            applyGestureBarWidth((android.view.View) param.thisObject);
+                        }
+                    });
         } catch (Throwable t) {
             log("gesture_bar hook (handle) failed: " + t);
+        }
+    }
+
+    private static void applyGestureBarWidth(android.view.View view) {
+        try {
+            if (readInt(KEY_GESTURE_BAR_WIDTH_ENABLED, 1) != 1) return;
+            int dp = Math.max(80, Math.min(120,
+                    readInt(KEY_GESTURE_BAR_WIDTH_DP, 100)));
+            int width = Math.round(dp * readDensity());
+            android.view.ViewGroup.LayoutParams raw = view.getLayoutParams();
+            if (!(raw instanceof android.widget.LinearLayout.LayoutParams)) return;
+            android.widget.LinearLayout.LayoutParams lp =
+                    (android.widget.LinearLayout.LayoutParams) raw;
+            if (lp.width == width && lp.gravity == android.view.Gravity.CENTER) return;
+            lp.width = width;
+            lp.gravity = android.view.Gravity.CENTER;
+            view.setLayoutParams(lp);
+        } catch (Throwable t) {
+            log("gesture_bar width hook err: " + t);
         }
     }
 
@@ -2025,10 +2402,11 @@ public class XposedInit implements IXposedHookLoadPackage {
      *       -> FlexibleTaskController.exitFlexibleTaskWindowInnerLocked(AbsFlexibleTaskExitStrategy)
      *         -> exitFlexibleTask -> TaskExtImpl.moveTaskToBackForPanorama -> Task.moveTaskToBack (切后台 -> 边缘迷你条)
      * 正常"拖到非边缘松手保持浮窗"走 finishMovingTask -> Task.resize, 不经过 exitFlexibleTask*, 故本 hook 不影响它。
-     * 做法: beforeHook 中开关开启时直接 setResult(null) 拦截该提交, 任务不去后台、浮窗保持前台可见。
-     * 注意(已知问题): 拦截后最小化动画已把 surface 收缩到边缘, 系统仍会 hide 真实窗口,
-     * 导致任务前台却无可见焦点窗口 -> 音量条不出现 / Input dispatching timed out (ANR)。
-     * 此版本按用户要求回退, 需在此基础上另寻不隐藏窗口的更深层改动才能真正稳定。
+     * 做法: beforeHook 中开关开启时调用系统已有的 updateFocusWhenExitFlexibleTask，
+     * 由其内部通过 AOSP ActivityTaskManagerService#setFocusedTask 聚焦小窗下方任务，
+     * 但绝不拦截原生退出提交。系统继续完成缩成图标、隐藏窗口和切后台，挂机进程仍可在后台运行。
+     * 关键点: 不能在 exitFlexibleTaskWindowInnerLocked 上 setResult(null)，否则迅速贴边时
+     * 原生 ToFloat 收尾会被截断，窗口就会卡在拖拽位置而不会变成图标。
      * 用 ContentProvider 通道(readBool)实时读取开关, 改设置即时生效, 无需重启/重载进程。
      */
     private static void hookFloatWindowEdgeHangSystemServer(final XC_LoadPackage.LoadPackageParam lpparam) {
@@ -2043,16 +2421,137 @@ public class XposedInit implements IXposedHookLoadPackage {
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
                                 if (!readBool(KEY_FLOAT_WINDOW_EDGE_HANG_ENABLED, false)) return;
-                            } catch (Throwable ignored) {
-                                return;
+                                final Object strategy = param.args[0];
+                                if (strategy == null) return;
+                                if (((Number) XposedHelpers.callMethod(strategy, "getExitTo")).intValue() != 5) return;
+                                final Object flexibleTask = XposedHelpers.getObjectField(strategy, "mTask");
+                                if (flexibleTask != null) {
+                                    // 设备框架真实公开方法；内部执行 mAtms.setFocusedTask(nextTask.mTaskId)。
+                                    XposedHelpers.callMethod(param.thisObject,
+                                            "updateFocusWhenExitFlexibleTask", flexibleTask);
+                                }
+                                // 禁止 setResult(null)：必须让系统完成 ToFloat 图标动画和后台收尾。
+                            } catch (Throwable t) {
+                                // 聚焦失败不能影响原生 ToFloat 收尾。
+                                log("!!! edge_hang focus-behind failed, keep native exit: " + t);
                             }
-                            // 拦截"贴边最小化"提交: 任务保持前台浮窗, 不切后台。
-                            param.setResult(null);
                         }
                     });
-            log(">>> matched android (system_server): float_window_edge_hang");
+            log(">>> matched android (system_server): float_window_edge_hang (focus behind, native exit)");
         } catch (Throwable t) {
             log("!!! float_window_edge_hang system_server hook failed: " + t);
+        }
+    }
+
+    /**
+     * 横屏应用小窗保持比例(system_server, com.android.server.wm.FlexibleTaskController)。
+     * 系统 fillFlexibleTaskInfo 对横屏应用(isLandScapeOriention)硬编码 ratio=0.5625f(高/宽=9:16),
+     * 与设备真实屏幕比例不符。本功能让横屏应用的小窗 宽:高 = 屏幕 高:宽(如 19.5:9),
+     * 即 高/宽 = 屏幕宽/屏幕高 = 1 / getFlexibleTaskFullScreenRatio(屏高, 屏宽)。
+     * 做法:
+     *  - afterHook fillFlexibleTaskInfo: 开关开启且为横屏应用时, 读取返回的 FlexibleTaskInfo,
+     *    将 ratio 改为目标值, 按系统同款公式重算 scale, 并据目标比例重算 launchBounds(保持系统选定的高度与居中)。
+     *  - afterHook getFlexibleTaskAvailableRatioByActivity: 把目标比例加入可选比例列表, 使拖拽缩放可达该比例。
+     * 运行时门控, 关闭立即恢复系统默认。仅 android/system_server 作用域。
+     */
+    private static void hookFloatWindowLandscapeKeepRatio(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            final Class<?> ftc = XposedHelpers.findClass(
+                    "com.android.server.wm.FlexibleTaskController", lpparam.classLoader);
+            // FlexibleTaskInfo 与 Builder 在同一包内, 用同 ClassLoader 取。
+            final Class<?> ftiClass = XposedHelpers.findClass(
+                    "com.android.server.wm.FlexibleTaskInfo", lpparam.classLoader);
+
+            // 1) fillFlexibleTaskInfo: 修正横屏应用小窗的 ratio / scale / launchBounds
+            XposedHelpers.findAndHookMethod(ftc, "fillFlexibleTaskInfo",
+                    "com.android.server.wm.FlexibleTaskInfo$Builder",
+                    android.graphics.Rect.class,
+                    android.content.Intent.class,
+                    android.content.pm.ActivityInfo.class,
+                    boolean.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_FLOAT_WINDOW_LANDSCAPE_KEEP_RATIO_ENABLED, false)) return;
+                                if (!((Boolean) param.args[4])) return; // 非横屏应用不处理
+                                Object result = param.getResult();
+                                if (result == null) return;
+                                android.graphics.Rect windowBounds = (android.graphics.Rect) param.args[1];
+                                if (windowBounds == null || windowBounds.isEmpty()) return;
+                                final int wW = windowBounds.width();
+                                final int wH = windowBounds.height();
+                                if (wW <= 0 || wH <= 0) return;
+                                // 目标 ratio = 高/宽 = 屏幕宽/屏幕高 = 1 / getFlexibleTaskFullScreenRatio(wH, wW)
+                                float fullScreenRatio = ((Number) XposedHelpers.callMethod(
+                                        param.thisObject, "getFlexibleTaskFullScreenRatio", wH, wW)).floatValue();
+                                if (fullScreenRatio <= 0f) return;
+                                final float targetRatio = 1.0f / fullScreenRatio; // 高/宽
+                                final float scale = targetRatio / (wW * 1.0f / wH);
+                                XposedHelpers.callMethod(result, "setRatio", targetRatio);
+                                XposedHelpers.callMethod(result, "setScale", scale);
+                                // 重算 launchBounds: 保持系统选定的高度, 按目标比例求宽, 在 windowBounds 内居中
+                                Object oldBounds = XposedHelpers.callMethod(result, "getLaunchBounds");
+                                if (oldBounds instanceof android.graphics.Rect) {
+                                    android.graphics.Rect ob = (android.graphics.Rect) oldBounds;
+                                    final int h = ob.height();
+                                    if (h > 0) {
+                                        final int nw = (int) (h / targetRatio + 0.5f);
+                                        final int left = ob.centerX() - nw / 2;
+                                        final int top = ob.top;
+                                        android.graphics.Rect nb = new android.graphics.Rect(left, top, left + nw, top + h);
+                                        // 约束在 windowBounds 内(避免越界)
+                                        if (nb.right > windowBounds.right) nb.offset(-(nb.right - windowBounds.right), 0);
+                                        if (nb.left < windowBounds.left) nb.offset(windowBounds.left - nb.left, 0);
+                                        XposedHelpers.callMethod(result, "setLaunchBounds", nb);
+                                    }
+                                }
+                            } catch (Throwable t) {
+                                log("!!! landscape_keep_ratio fillFlexibleTaskInfo failed: " + t);
+                            }
+                        }
+                    });
+
+            // 2) getFlexibleTaskAvailableRatioByActivity: 把目标比例加入可选列表(拖拽缩放可达)
+            XposedHelpers.findAndHookMethod(ftc, "getFlexibleTaskAvailableRatioByActivity",
+                    "com.android.server.wm.ActivityRecord",
+                    String.class, boolean.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_FLOAT_WINDOW_LANDSCAPE_KEEP_RATIO_ENABLED, false)) return;
+                                Object result = param.getResult();
+                                if (!(result instanceof java.util.List)) return;
+                                @SuppressWarnings("unchecked")
+                                java.util.List<Float> list = (java.util.List<Float>) result;
+                                android.graphics.Rect windowBounds = (android.graphics.Rect) param.args[1];
+                                int wW = 0, wH = 0;
+                                if (windowBounds != null && !windowBounds.isEmpty()) {
+                                    wW = windowBounds.width(); wH = windowBounds.height();
+                                } else {
+                                    android.util.DisplayMetrics dm = android.content.res.Resources.getSystem().getDisplayMetrics();
+                                    wW = dm.widthPixels; wH = dm.heightPixels;
+                                }
+                                if (wW <= 0 || wH <= 0) return;
+                                float fullScreenRatio = ((Number) XposedHelpers.callMethod(
+                                        param.thisObject, "getFlexibleTaskFullScreenRatio", wH, wW)).floatValue();
+                                if (fullScreenRatio <= 0f) return;
+                                final float targetRatio = 1.0f / fullScreenRatio;
+                                boolean has = false;
+                                for (Float f : list) {
+                                    if (Math.abs(f - targetRatio) < 0.001f) { has = true; break; }
+                                }
+                                if (!has) list.add(targetRatio);
+                            } catch (Throwable t) {
+                                log("!!! landscape_keep_ratio getFlexibleTaskAvailableRatioByActivity failed: " + t);
+                            }
+                        }
+                    });
+
+            log(">>> matched android (system_server): float_window_landscape_keep_ratio (FlexibleTaskController)");
+        } catch (Throwable t) {
+            log("!!! float_window_landscape_keep_ratio system_server hook failed: " + t);
         }
     }
 

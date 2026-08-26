@@ -511,3 +511,7 @@ hook `OplusNavigationHandle#onDraw(Canvas)`，在 beforeHook 中 `canvas.save()`
 - 设备上 `InsetsFrameProvider` 的类型/隐藏 API 反射存在差异，按 provider 当前 bottom 值筛选比依赖 `getInsetsType()` 更可靠。
 - 只需重载 `com.android.systemui` 即可验证本功能，不需要重载 system_server。
 - 修改 `android` 作用域的其他功能时，遵守项目规则：不得擅自重载 system_server；如确需重载，必须先询问用户，获同意后只能使用 `setprop ctl.restart zygote`。
+
+## 16. 手势滑动条宽度调整
+
+手势白条宽度设置项为 `gesture_bar_width_enabled` / `gesture_bar_width_dp`，默认开启，默认 `100dp`，可调范围 `80–120dp`。设置界面通过 `SwitchItem.sliderMin`、`sliderMax` 映射实际范围，SystemUI hook 对读取值再次限制在 `80–120dp`，避免旧值越界。只修改 `OplusNavigationHandle` 自身的宽度，并设置居中布局，不修改手势区窗口或系统 insets。

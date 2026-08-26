@@ -92,7 +92,7 @@ class MainActivity : ComponentActivity() {
 /**
  * 单个设置项: key 用于持久化与 Xposed 读取, label 取自原 strings.xml 中的名称。
  * sliderKey 非空时, 开关打开后下方显示滑条: 范围 0..sliderMax(整数步进), 默认 sliderDefault,
- * sliderUnit 为值后缀(如 dp/sp/%)。sliderMax 统一取对应功能硬编码值的两倍, 0 即系统默认(不改变)。
+ * sliderUnit 为值后缀(如 dp/sp/%)。sliderMin/sliderMax 为整数范围，0 即系统默认(不改变)。
  */
 internal data class SwitchItem(
     val key: String,
@@ -103,6 +103,7 @@ internal data class SwitchItem(
     val sliderDefault: Int = 0,
     val sliderUnit: String = "dp",
     val defaultEnabled: Boolean = false,
+    val sliderMin: Int = 0,
 )
 
 internal data class SelectItem(
@@ -123,7 +124,7 @@ private val DESKTOP = listOf(
     SwitchItem("hide_ghostlock_enabled", "彻底隐藏 GhostLock 图标", subtitle = "显然已经有 root 的时候不需要再 root"),
 )
 private val QS = listOf(
-    SwitchItem("qs_scrim_translucent_enabled", "自定义控制/通知中心背景亮度", sliderKey = "qs_scrim_brightness", sliderMax = 20, sliderDefault = 5, sliderUnit = ""),
+    SwitchItem("qs_scrim_translucent_enabled", "自定义控制/通知中心背景亮度", sliderKey = "qs_scrim_brightness", sliderMax = 20, sliderDefault = 5, sliderUnit = "%"),
     SwitchItem("qs_carrier_enabled", "去除控制中心运营商显示"),
     SwitchItem("qs_topmargin_enabled", "隐藏控制中心顶部状态图标簇"),
     SwitchItem("qs_tile_name_ellipsis_enabled", "分离版 Wi-Fi / 蓝牙名称单行省略"),
@@ -134,7 +135,7 @@ private val NOTIF = listOf(
     SwitchItem("fluid_cloud_keep_percent_enabled", "流体云出现时不隐藏电量百分比"),
 )
 private val HIDDEN = listOf(
-    SwitchItem("recents_show_hidden_enabled", "多任务显示隐藏应用"),
+    SwitchItem("recents_show_hidden_enabled", "多任务显示已隐藏应用"),
     SwitchItem("hide_apps_noverify_enabled", "打开隐藏应用文件夹免验证"),
     SwitchItem("pinch_out_open_hide_apps_enabled", "桌面双指张开打开隐藏应用"),
     SwitchItem("hide_apps_title_folder_enabled", "应用隐藏标题显示文件夹名"),
@@ -142,13 +143,16 @@ private val HIDDEN = listOf(
 
 // 小窗相关设置: 改动需重启 system_server(框架) 才生效(本模块该作用域为 android/system_server)。
 private val FLOATWINDOW = listOf(
-    SwitchItem("recents_hide_freeform_enabled", "多任务不显示小窗应用", subtitle = "小窗(自由窗口)不出现在多任务切换卡片中，应用仍前台运行"),
-    SwitchItem("float_window_edge_hang_enabled", "悬浮小窗贴边挂机"),
+    SwitchItem("recents_hide_freeform_enabled", "多任务隐藏小窗应用"),
+    SwitchItem("float_window_edge_hang_enabled", "悬浮小窗贴边挂机", "调试中，目前贴边时需等待变成图标再松手"),
+    SwitchItem("float_window_landscape_keep_ratio_enabled", "横屏应用小窗保持比例", "横屏应用小窗的宽高比等于屏幕高宽比"),
 )
 
 private val NAV = listOf(
     SwitchItem("gesture_bar_height_enabled", "调整底部手势区高度", "缓解屏幕底部圆角区域吃掉应用内容", "gesture_bar_height_dp", 32, 16),
+    SwitchItem("gesture_bar_width_enabled", "调整手势滑动条宽度", sliderKey = "gesture_bar_width_dp", sliderMax = 120, sliderDefault = 100, sliderUnit = "dp", defaultEnabled = true, sliderMin = 80),
     SwitchItem("gesture_bar_long_press_disable_enabled", "禁止长按手势条放大", "理论可弥补 OxygenOS 没有助手设置项的问题", defaultEnabled = true),
+    SwitchItem("mback_enabled", "启用 MBack", "点击手势条返回，长按回桌面"),
 )
 
 // 标题栏底部分割线: 界面上滑时出现, 初始两端各内缩 16dp, 随滚动量在该距离内逐渐延长至通栏。
@@ -202,7 +206,7 @@ fun SettingsScreen() {
                             },
                             items = listOf(
                                 ActionMenuItem("重启作用域", { restartScope(ctx) }),
-                                ActionMenuItem("软重启系统", { softRebootSystem(ctx) }),
+                                ActionMenuItem("重启 Zygote", { softRebootSystem(ctx) }),
                             ),
                         )
                     },
@@ -226,12 +230,12 @@ fun SettingsScreen() {
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            item { CouixSmallTitle(text = "By Rikumi / Couix 基于 Miuix 魔改") }
+            item { CouixSmallTitle(text = "By Rikumi / Couix 基于 Miuix 魔改 / 让 Flyme 精神永续") }
             item {
                 CouixMasterToggle(
                     checked = anyEnabled,
                     title = "一键启用",
-                    subtitle = if (anyEnabled) "滑块设置通常最左/最右为系统值，中间为推荐值" else "点击无脑启用全部，注意下方隐藏应用的设置",
+                    subtitle = if (anyEnabled) "滑块最左/最右为系统值，中间通常为推荐值" else "点击无脑启用全部，注意下方隐藏应用的设置",
                     onCheckedChange = { target ->
                         // 先更新 UI(所有开关立即显示 target, 播放切换动画), 暂不落盘。
                         masterOverride = target
@@ -240,7 +244,10 @@ fun SettingsScreen() {
                             delay(MASTER_TOGGLE_ANIM_MS)
                             // 动画结束后再真正写入设置; IO 线程执行, 避免阻塞 UI。
                             withContext(Dispatchers.IO) {
-                                allItems.forEach { setBool(ctx, it.key, target) }
+                                allItems.forEach { item ->
+                                    setBool(ctx, item.key, target)
+                                    if (!target) item.sliderKey?.let { setInt(ctx, it, item.sliderDefault) }
+                                }
                             }
                             // 清除临时覆盖, 各开关回到以 prefs 为准(此时已与 target 一致, 无跳变)。
                             masterOverride = null
@@ -257,7 +264,7 @@ fun SettingsScreen() {
             item { CouixGroup(items = NOTIF, prefs = prefs, ctx = ctx, version = version, overrideValue = masterOverride, onItemChanged = { version++ }) }
             item { CouixSmallTitle(text = "隐藏应用") }
             item { CouixGroup(items = HIDDEN, prefs = prefs, ctx = ctx, version = version, overrideValue = masterOverride, onItemChanged = { version++ }) }
-            item { CouixSmallTitle(text = "小窗（需重启系统）") }
+            item { CouixSmallTitle(text = "小窗（需重启 Zygote）") }
             item { CouixGroup(items = FLOATWINDOW, prefs = prefs, ctx = ctx, version = version, overrideValue = masterOverride, onItemChanged = { version++ }) }
             item { CouixSmallTitle(text = "导航与手势") }
             item { CouixGroup(items = NAV, prefs = prefs, ctx = ctx, version = version, overrideValue = masterOverride, onItemChanged = { version++ }) }
@@ -309,7 +316,7 @@ private fun restartScope(ctx: Context) {
 }
 
 /**
- * 软重启系统（对齐 KernelSU 实现）：通过 init 的 ctl.restart 属性重启 zygote 服务。
+ * 重启 Zygote（对齐 KernelSU 实现）：通过 init 的 ctl.restart 属性重启 zygote 服务。
  * 这会让 Android 用户空间（system_server 与全部应用）重新拉起，但 Linux 内核不重启，
  * 因此 KernelSU（内核模块）及其挂载/注入的模块（含 LSPosed Zygisk）在重启后依然生效。
  * 与完整 reboot 不同，本操作不会丢失越狱环境。

@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -13,6 +16,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Spacer
@@ -21,8 +25,11 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
@@ -82,10 +89,9 @@ private val COUIX_SWITCH_RADIUS = 12.dp
 private val COUIX_SWITCH_THUMB_R = 8.dp
 
 // ColorOS 风格滑条
-private val COUIX_SLIDER_TRACK_H = 24.dp
-private val COUIX_SLIDER_TRACK_H_IDLE = 8.dp
-private val COUIX_SLIDER_GAP = 4.dp
-private val COUIX_SLIDER_THUMB_R = 12.dp
+private val COUIX_SLIDER_TRACK_H = 20.dp
+private val COUIX_SLIDER_GAP = 3.dp
+private val COUIX_SLIDER_THUMB_R = 10.dp
 
 // 分组卡片圆角（miuix 默认 16dp -> 12dp）。
 private val COUIX_CARD_CORNER = 12.dp
@@ -109,7 +115,7 @@ fun couixTextStyles(): TextStyles {
     val base = defaultTextStyles()
     return base.copy(
         body1 = base.body1.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold),
-        body2 = base.body2.copy(fontSize = 13.sp),
+        body2 = base.body2.copy(fontSize = 14.sp),
     )
 }
 
@@ -225,36 +231,88 @@ fun CouixSwitchPreference(
     title: String,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    onTitleClick: (() -> Unit)? = null,
+    leftTrailingContent: @Composable RowScope.() -> Unit = {},
+    showDivider: Boolean = false,
 ) {
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clickable { onCheckedChange(!checked) }
-            .padding(horizontal = COUIX_ROW_HPADDING, vertical = COUIX_ROW_VPADDING),
+            .clickable { onCheckedChange(!checked) },
     ) {
-        Column(
+        Row(
             modifier = Modifier
-                .padding(end = 64.dp)
-                .align(Alignment.CenterStart),
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            BasicText(
-                text = title,
-                style = MiuixTheme.textStyles.body1.copy(color = MiuixTheme.colorScheme.onSurface),
-            )
-            if (subtitle != null) {
-                BasicText(
-                    text = subtitle,
-                    style = MiuixTheme.textStyles.body2.copy(
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .then(
+                        if (onTitleClick != null) {
+                            Modifier.clickable { onTitleClick() }
+                        } else {
+                            Modifier
+                        },
                     ),
-                    modifier = Modifier.padding(top = 4.dp),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .fillMaxWidth()
+                        .padding(
+                            start = COUIX_ROW_HPADDING,
+                            top = COUIX_ROW_VPADDING,
+                            bottom = COUIX_ROW_VPADDING,
+                            end = 12.dp,
+                        ),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        BasicText(
+                            text = title,
+                            style = MiuixTheme.textStyles.body1.copy(color = MiuixTheme.colorScheme.onSurface),
+                        )
+                        if (subtitle != null) {
+                            BasicText(
+                                text = subtitle,
+                                style = MiuixTheme.textStyles.body2.copy(
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                ),
+                                modifier = Modifier.padding(top = 6.dp),
+                            )
+                        }
+                    }
+                    leftTrailingContent()
+                }
+            }
+            if (showDivider) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterVertically)
+                        .width((1f / LocalDensity.current.density).dp)
+                        .height(24.dp)
+                        .background(MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.2f)),
+                )
+            }
+            Row(
+                modifier = Modifier.padding(
+                    start = if (showDivider) 12.dp else 0.dp,
+                    top = COUIX_ROW_VPADDING,
+                    bottom = COUIX_ROW_VPADDING,
+                    end = COUIX_ROW_HPADDING,
+                ),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CouixSwitch(
+                    checked = checked,
                 )
             }
         }
-        CouixSwitch(
-            checked = checked,
-            modifier = Modifier.align(Alignment.CenterEnd),
-        )
     }
 }
 
@@ -349,7 +407,7 @@ private fun CouixDropdownItem(
         modifier = modifier
             .fillMaxWidth()
             .clickable { onClick() }
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+            .padding(horizontal = 16.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BasicText(
@@ -394,7 +452,7 @@ private fun CouixDropdownDivider() {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp)
+            .padding(start = 14.dp, end = 14.dp)
             .height(dividerH)
             .background(MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.12f)),
     )
@@ -431,6 +489,13 @@ private fun CouixSelectRow(
         mutableStateOf(prefs.getInt(item.key, item.defaultValue).coerceIn(0, item.options.lastIndex))
     }
     var expanded by remember { mutableStateOf(false) }
+    var popupVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(expanded) {
+        if (!expanded) {
+            delay(220)
+            popupVisible = false
+        }
+    }
     val options = item.options
     val onSurface = MiuixTheme.colorScheme.onSurface
     val summary = MiuixTheme.colorScheme.onSurfaceVariantSummary
@@ -446,7 +511,14 @@ private fun CouixSelectRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
+                .clickable {
+                    if (expanded) {
+                        expanded = false
+                    } else {
+                        popupVisible = true
+                        expanded = true
+                    }
+                }
                 .padding(horizontal = COUIX_ROW_HPADDING, vertical = COUIX_ROW_VPADDING),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -463,11 +535,11 @@ private fun CouixSelectRow(
             CouixDropdownArrow(color = summary, modifier = Modifier.size(18.dp))
         }
 
-        Popup(
+        if (popupVisible) Popup(
             alignment = Alignment.TopEnd,
             offset = IntOffset(0, anchorHeightPx),
             onDismissRequest = { expanded = false },
-            properties = PopupProperties(focusable = expanded),
+            properties = PopupProperties(focusable = true),
         ) {
             Box(modifier = Modifier.width(COUIX_DROPDOWN_WIDTH)) {
                 AnimatedVisibility(
@@ -582,12 +654,6 @@ fun CouixSlider(
     val onSurface = MiuixTheme.colorScheme.onSurface
     val trackOff = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.2f)
     val v = value.coerceIn(0f, 1f)
-    var dragging by remember { mutableStateOf(false) }
-    // 高度动画: 1 = 拖动中全高, 0 = 空闲收缩
-    val sizeAnim by animateFloatAsState(
-        targetValue = if (dragging) 1f else 0f,
-        label = "couix_slider_size",
-    )
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -600,9 +666,9 @@ fun CouixSlider(
             }
             .pointerInput(Unit) {
                 detectHorizontalDragGestures(
-                    onDragStart = { dragging = true },
-                    onDragEnd = { dragging = false },
-                    onDragCancel = { dragging = false },
+                    onDragStart = { },
+                    onDragEnd = { },
+                    onDragCancel = { },
                 ) { change, _ ->
                     change.consume()
                     val range = size.width.coerceAtLeast(1)
@@ -613,10 +679,9 @@ fun CouixSlider(
         Canvas(Modifier.matchParentSize()) {
             val gap = COUIX_SLIDER_GAP.toPx()
             val thumbR = COUIX_SLIDER_THUMB_R.toPx()
-            val idleH = COUIX_SLIDER_TRACK_H_IDLE.toPx()
             val cy = size.height / 2f
-            // 轨道与激活部分同高, 随拖动动画从 idleH 到全高; barR 为半高兼作圆角与延伸量
-            val barH = idleH + (COUIX_SLIDER_TRACK_H.toPx() - idleH) * sizeAnim
+            // 轨道恒为全高(已去除 idle 收缩态); barR 为半高兼作圆角与延伸量
+            val barH = COUIX_SLIDER_TRACK_H.toPx()
             val barR = barH / 2f
             // thumb 中心按比例走全宽, 不为半径留白
             val cx = size.width * v
@@ -658,52 +723,97 @@ fun CouixActionMenu(
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var popupVisible by remember { mutableStateOf(false) }
     var pendingConfirm by remember { mutableStateOf<ActionMenuItem?>(null) }
+    LaunchedEffect(expanded) {
+        if (!expanded) {
+            delay(220)
+            popupVisible = false
+        }
+    }
+    // Popup 挂载后(expanded 初始为 false)再置 true, 让 AnimatedVisibility 播放进场动画
+    LaunchedEffect(popupVisible) {
+        if (popupVisible) {
+            delay(16)
+            expanded = true
+        }
+    }
 
-    var anchorHeightPx by remember { mutableStateOf(0) }
     val dropdownShape = miuixShape(COUIX_CARD_CORNER)
 
     Box(
-        modifier = modifier.onGloballyPositioned { anchorHeightPx = it.size.height },
+        modifier = modifier,
     ) {
-        IconButton(onClick = { expanded = !expanded }) { icon() }
+        IconButton(
+            onClick = {
+                if (expanded) {
+                    expanded = false
+                } else {
+                    popupVisible = true
+                }
+            },
+        ) { icon() }
 
-        Popup(
-            alignment = Alignment.TopEnd,
-            offset = IntOffset(0, anchorHeightPx),
+        // 菜单锚定到屏幕左上角(0,0)，宽度铺满全屏并右对齐，使菜单从最右上角开始布局：
+        // 向下移动 24dp、向左 12dp 微调，使其恰好落在图标下方而非压住图标，
+        // 再次点击右上角图标时菜单顶部就位于图标处，可快速重复触发重启作用域。
+        if (popupVisible) Popup(
+            alignment = Alignment.TopStart,
+            offset = IntOffset(0, 0),
             onDismissRequest = { expanded = false },
-            properties = PopupProperties(focusable = expanded),
+            properties = PopupProperties(focusable = true),
         ) {
-            Box(modifier = Modifier.width(COUIX_DROPDOWN_WIDTH)) {
-                AnimatedVisibility(
-                    visible = expanded,
-                    enter = scaleIn(
-                    initialScale = 0.8f,
-                    transformOrigin = COUIX_DROPDOWN_TRANSFORM_ORIGIN,
-                ) + fadeIn(),
-                exit = scaleOut(
-                    targetScale = 0.8f,
-                    transformOrigin = COUIX_DROPDOWN_TRANSFORM_ORIGIN,
-                ) + fadeOut(),
-            ) {
-                Column(
+            // 全屏根容器: 透明遮罩捕获菜单外点击以收起菜单, 菜单本身靠右上角对齐
+            Box(modifier = Modifier.fillMaxSize()) {
+                // 透明全屏遮罩, 点击外部收起菜单
+                Box(
                     modifier = Modifier
-                        .width(COUIX_DROPDOWN_WIDTH)
-                        .background(MiuixTheme.colorScheme.surfaceContainer, dropdownShape)
-                        .clip(dropdownShape),
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) { expanded = false },
+                )
+                // 菜单容器: 右上角对齐并留出间距, 点击菜单项不触发遮罩收起
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(end = 16.dp, top = 16.dp),
                 ) {
-                    items.forEachIndexed { index, item ->
-                        if (index > 0) CouixDropdownDivider()
-                        CouixDropdownItem(
-                            text = item.label,
-                            selected = false,
+                    Box(modifier = Modifier.width(COUIX_DROPDOWN_WIDTH)) {
+                        AnimatedVisibility(
+                            visible = expanded,
+                            enter = scaleIn(
+                            initialScale = 0.8f,
+                            transformOrigin = COUIX_DROPDOWN_TRANSFORM_ORIGIN,
+                            animationSpec = tween(durationMillis = 120),
+                        ) + fadeIn(animationSpec = tween(durationMillis = 120)),
+                        exit = scaleOut(
+                            targetScale = 0.8f,
+                            transformOrigin = COUIX_DROPDOWN_TRANSFORM_ORIGIN,
+                            animationSpec = tween(durationMillis = 120),
+                        ) + fadeOut(animationSpec = tween(durationMillis = 120)),
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .width(COUIX_DROPDOWN_WIDTH)
+                                .background(MiuixTheme.colorScheme.surfaceContainer, dropdownShape)
+                                .clip(dropdownShape),
                         ) {
-                            expanded = false
-                            if (item.confirmTitle != null) pendingConfirm = item else item.onClick()
+                            items.forEachIndexed { index, item ->
+                                if (index > 0) CouixDropdownDivider()
+                                CouixDropdownItem(
+                                    text = item.label,
+                                    selected = false,
+                                ) {
+                                    expanded = false
+                                    if (item.confirmTitle != null) pendingConfirm = item else item.onClick()
+                                }
+                            }
                         }
                     }
+                    }
                 }
-            }
             }
         }
     }
@@ -821,28 +931,53 @@ private fun CouixSwitchRow(
         )
         return
     }
-    // 带滑条的设置项: 开关行 + 开关打开时下方显示滑条(整数步进, 右侧显示当前值)。
-    // AnimatedVisibility 让 item 高度随开关动画; 滑条以 item 底部为锚点(expandFrom/shrinkTowards
-    // = Bottom), 打开时自底部向上滑入展开, 关闭时向底部收起滑出。
+    // 带滑条的设置项: 数值显示在标题行右侧, 滑条默认折叠; 单独开启功能时自动展开。
+    var expanded by remember(item.key) { mutableStateOf(false) }
+    var intVal by remember(item.sliderKey, item.sliderMin, item.sliderMax, version, overrideValue) {
+        mutableStateOf(prefs.getInt(item.sliderKey, item.sliderDefault).coerceIn(item.sliderMin, item.sliderMax))
+    }
     Column(modifier = Modifier.fillMaxWidth()) {
         CouixSwitchPreference(
             checked = checked,
             onCheckedChange = {
                 checked = it
+                expanded = it
                 setBool(ctx, item.key, it)
+                if (!it) {
+                    intVal = item.sliderDefault
+                    setInt(ctx, item.sliderKey, item.sliderDefault)
+                }
                 onItemChanged()
             },
             title = item.label,
             subtitle = item.subtitle,
+            onTitleClick = if (checked) {
+                { expanded = !expanded }
+            } else {
+                null
+            },
+            leftTrailingContent = {
+                if (checked) {
+                    BasicText(
+                        text = "${intVal}${item.sliderUnit}",
+                        style = MiuixTheme.textStyles.body2.copy(
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                            fontWeight = if (intVal != item.sliderDefault) FontWeight.Bold else null,
+                        ),
+                        modifier = Modifier
+                            .padding(start = 12.dp)
+                            .width(40.dp),
+                    )
+                }
+            },
+            showDivider = checked,
         )
         AnimatedVisibility(
-            visible = checked,
+            visible = checked && expanded,
             enter = expandVertically(expandFrom = Alignment.Bottom),
             exit = shrinkVertically(shrinkTowards = Alignment.Bottom),
         ) {
-            var intVal by remember(item.sliderKey, item.sliderMax) {
-                mutableStateOf(prefs.getInt(item.sliderKey, item.sliderDefault).coerceIn(0, item.sliderMax))
-            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -854,9 +989,11 @@ private fun CouixSwitchRow(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 CouixSlider(
-                    value = intVal.toFloat() / item.sliderMax,
+                    value = ((intVal - item.sliderMin).toFloat() /
+                            (item.sliderMax - item.sliderMin).coerceAtLeast(1)).coerceIn(0f, 1f),
                     onValueChange = { f ->
-                        val nv = (f * item.sliderMax).roundToInt().coerceIn(0, item.sliderMax)
+                        val nv = (item.sliderMin + f * (item.sliderMax - item.sliderMin))
+                            .roundToInt().coerceIn(item.sliderMin, item.sliderMax)
                         if (nv != intVal) {
                             intVal = nv
                             setInt(ctx, item.sliderKey, nv)
@@ -864,18 +1001,7 @@ private fun CouixSwitchRow(
                     },
                     modifier = Modifier
                         .weight(1f)
-                        .padding(horizontal = 6.dp),
-                )
-                // 数值文字占固定宽度槽位(按最大值宽度预留), 避免其宽度变化挤压滑条
-                BasicText(
-                    text = "${intVal}${item.sliderUnit}",
-                    style = MiuixTheme.textStyles.body2.copy(
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.End,
-                    ),
-                    modifier = Modifier
-                        .padding(start = 12.dp)
-                        .width(40.dp),
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
                 )
             }
         }
