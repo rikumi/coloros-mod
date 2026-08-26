@@ -458,8 +458,8 @@ private fun CouixSwitchRow(
             enter = expandVertically(expandFrom = Alignment.Bottom),
             exit = shrinkVertically(shrinkTowards = Alignment.Bottom),
         ) {
-            var intVal by remember(item.sliderKey) {
-                mutableStateOf(prefs.getInt(item.sliderKey, item.sliderDefault))
+            var intVal by remember(item.sliderKey, item.sliderMax) {
+                mutableStateOf(prefs.getInt(item.sliderKey, item.sliderDefault).coerceIn(0, item.sliderMax))
             }
             Row(
                 modifier = Modifier

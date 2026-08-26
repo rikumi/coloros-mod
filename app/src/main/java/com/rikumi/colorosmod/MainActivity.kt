@@ -96,9 +96,10 @@ internal data class SwitchItem(
 
 private val DESKTOP = listOf(
     SwitchItem("icon_gap_enabled", "增加图标与名称间距", sliderKey = "icon_gap_dp", sliderMax = 8, sliderDefault = 4),
-    SwitchItem("indicator_enabled", "减小页面与 Dock 间距", sliderKey = "indicator_dp", sliderMax = 32, sliderDefault = 16),
+    SwitchItem("indicator_enabled", "减小页面与 Dock 间距", sliderKey = "indicator_dp", sliderMax = 32, sliderDefault = 16, sliderUnit = "dp"),
     SwitchItem("shrink_popup_menu", "缩小图标长按菜单", sliderKey = "popup_scale_percent", sliderMax = 20, sliderDefault = 10, sliderUnit = "%"),
     SwitchItem("folder_bg_transparent_enabled", "文件夹展开背景透明"),
+    SwitchItem("edit_mode_bg_transparent_enabled", "取消编辑模式背景遮罩", subtitle = "编辑桌面和页面预览时保持壁纸清晰"),
     SwitchItem("hide_contacts_enabled", "彻底隐藏电话本图标"),
     SwitchItem("hide_gboard_enabled", "彻底隐藏 Gboard 图标"),
     SwitchItem("hide_ghostlock_enabled", "彻底隐藏 GhostLock 图标", subtitle = "显然已经有 root 的时候不需要再 root"),
@@ -199,7 +200,7 @@ fun SettingsScreen() {
                 CouixMasterToggle(
                     checked = anyEnabled,
                     title = "一键启用",
-                    subtitle = if (anyEnabled) "所有滑块设置最左/最右为系统值，中间为默认值" else "点击无脑启用全部，注意下方隐藏应用的设置",
+                    subtitle = if (anyEnabled) "滑块设置通常最左/最右为系统值，中间为推荐值" else "点击无脑启用全部，注意下方隐藏应用的设置",
                     onCheckedChange = { target ->
                         // 先更新 UI(所有开关立即显示 target, 播放切换动画), 暂不落盘。
                         masterOverride = target

@@ -50,8 +50,8 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  *     - 隐藏运营商: OplusQuickStatusBarHeader#onFinishInflate 中 R.id.qs_carrier_text
  *       (位于 qs_clock_container 内) / R.id.carrier_group 显示运营商名，afterHook 直接 GONE。
  *     - 隐藏状态图标簇: 用户不需要控制中心展开后顶部的状态图标簇(R.id.quick_qs_status_icons, 内含
- *       icons + batteryRemainingIcon), 故在 OplusQuickStatusBarHeader#updateHeadersPadding(afterHook) 中
- *       直接把该簇 GONE。注意: 通知栏(CombinedShadeHeader)的状态图标不在本模块处理范围, 不受影响。
+ *       icons + batteryRemainingIcon), 在展开进度回调中原地渐隐。注意: 通知栏(CombinedShadeHeader)
+ *       的状态图标不在本模块处理范围, 不受影响。
  *     - 页脚: OplusQSFooterImpl#updateResources$15(仅 collapsed 时触发) 把 mSettingsContainer 顶部 padding
  *       重置为 0 后叠加 QS_FOOTER_MARGIN_DP(较小, 让日期/设置按钮小幅下沉, 不过深)。
  *
@@ -115,6 +115,9 @@ public class XposedInit implements IXposedHookLoadPackage {
     // 这里 hook 该方法: 当有文件夹处于打开(含打开/关闭动画)状态时, 把模糊值强制为 0,
     // 从而整屏不再变灰, 文件夹直接浮在清晰壁纸上; 不影响多任务/应用抽屉等其它场景的模糊。
     private static final String KEY_FOLDER_BG_TRANSPARENT_ENABLED = "folder_bg_transparent_enabled";
+    // Feature 16 — 桌面编辑模式背景遮罩透明化 (com.android.launcher):
+    // ToggleBarState/PagePreviewState 原生把编辑态壁纸 blur 固定为 1.0f, 同时可能叠加页面背景 alpha。
+    private static final String KEY_EDIT_MODE_BG_TRANSPARENT_ENABLED = "edit_mode_bg_transparent_enabled";
     // Feature 10 — 合并控制中心背景 scrim 亮度 (com.android.systemui)
     private static final String KEY_QS_SCRIM_TRANSLUCENT_ENABLED = "qs_scrim_translucent_enabled";
     // 背景亮度滑条键(0-20, 默认 10): 0=全黑, 20=系统默认 lumin(不压暗)。
@@ -185,7 +188,10 @@ public class XposedInit implements IXposedHookLoadPackage {
 
     private static final int ICON_GAP_DP = 4;
     private static final int INDICATOR_REDUCE_DP = 16; // pull page indicator 16dp closer to page AND to Dock
+    private static final int INDICATOR_REDUCE_MAX_DP = 32;
     private static final int QS_FOOTER_MARGIN_DP = 8; // smaller top gap for footer (date/settings) so it sinks a little
+    // 状态图标簇只在展开初段渐隐，避免透明前被系统原生移动动画带走。
+    private static final float QS_STATUS_HIDE_FADE_FRACTION = 0.12f;
     private static final float SUBTITLE_ORIG_SP = 24f; // system default subtitle text size
     private static final int SUBTITLE_REDUCE_SP_DEFAULT = 8; // default reduction (24sp -> 16sp); slider 0..2x
     private static final float SUBTITLE_OFFSET_DP = 8f; // move subtitle up & right by 8dp each (at default reduction)
@@ -392,14 +398,15 @@ public class XposedInit implements IXposedHookLoadPackage {
         // Feature 1 — 图标间距: 始终注入, 运行时按 KEY_ICON_GAP_ENABLED 门控(关闭返回原值),
         // 间距值由 KEY_ICON_GAP_DP(0-8dp, 默认 4dp) 在运行时读取, App 内拖滑条即时生效。
         hookPxRuntime(lpparam, "com.android.launcher.layoutparam.IconParam",
-                "getIconDrawablePaddingPx", density, KEY_ICON_GAP_ENABLED, KEY_ICON_GAP_DP, ICON_GAP_DP, 1);
+                "getIconDrawablePaddingPx", density, KEY_ICON_GAP_ENABLED, KEY_ICON_GAP_DP, ICON_GAP_DP, 8, 1);
         hookPxRuntime(lpparam, "com.android.launcher.layoutparam.AllAppsParam",
-                "getAllAppsIconDrawablePaddingPx", density, KEY_ICON_GAP_ENABLED, KEY_ICON_GAP_DP, ICON_GAP_DP, 1);
+                "getAllAppsIconDrawablePaddingPx", density, KEY_ICON_GAP_ENABLED, KEY_ICON_GAP_DP, ICON_GAP_DP, 8, 1);
 
         // Feature 2 — 指示点间距: 始终注入, 运行时按 KEY_INDICATOR_ENABLED 门控,
         // 缩减量由 KEY_INDICATOR_DP(0-32dp, 默认 16dp) 在运行时读取。
         hookPxRuntime(lpparam, "com.android.launcher.layoutparam.HotseatParam",
-                "getHotseatBarSizePx", density, KEY_INDICATOR_ENABLED, KEY_INDICATOR_DP, INDICATOR_REDUCE_DP, -1);
+                "getHotseatBarSizePx", density, KEY_INDICATOR_ENABLED, KEY_INDICATOR_DP,
+                INDICATOR_REDUCE_DP, INDICATOR_REDUCE_MAX_DP, -1);
 
         // Feature 4 — 多任务显示隐藏应用: 始终注入, 运行时按 KEY_RECENTS_SHOW_HIDDEN_ENABLED 门控。
         hookRecentsShowHidden(lpparam);
@@ -637,6 +644,9 @@ public class XposedInit implements IXposedHookLoadPackage {
 
         // Feature 14 — 桌面文件夹展开背景透明化: 始终注入, 运行时按 KEY_FOLDER_BG_TRANSPARENT_ENABLED 门控。
         hookFolderOpenBgBlur(lpparam);
+
+        // Feature 16 — 编辑模式背景遮罩透明化: 始终注入, 运行时按开关门控。
+        hookEditModeBgBlur(lpparam);
     }
 
     /** Feature 9 — 通过 launcher 内部 API 打开隐藏应用(深度保护)文件夹。 */
@@ -723,6 +733,117 @@ public class XposedInit implements IXposedHookLoadPackage {
             return XposedHelpers.callStaticMethod(sAbstractFloatingViewClass, "getOpenFolder", launcher) != null;
         } catch (Throwable t) {
             return false;
+        }
+    }
+
+    /**
+     * Feature 16 — 取消桌面编辑模式的背景遮罩。
+     * 系统桌面的 ToggleBarState 与 PagePreviewState 会把编辑态壁纸 blur 固定为 1.0f，
+     * 并在部分设备上给桌面根视图/页面背景附加 alpha。只改最终 setBlur 会错过状态切换动画，
+     * 因此直接在状态提供目标值的三个方法上返回 0，进入和退出编辑态都保持幂等。
+     */
+    private static void hookEditModeBgBlur(final XC_LoadPackage.LoadPackageParam lpparam) {
+        String[] stateClasses = {
+                "com.android.launcher3.states.ToggleBarState",
+                "com.android.launcher3.states.PagePreviewState"
+        };
+        Class<?> launcherClass = XposedHelpers.findClass(
+                "com.android.launcher3.Launcher", lpparam.classLoader);
+        for (String stateClass : stateClasses) {
+            hookEditModeFloatMethod(stateClass, lpparam, "getBlurUnchecked",
+                    android.content.Context.class);
+            hookEditModeIntMethod(stateClass, lpparam, "getLauncherRootViewBgAlpha",
+                    android.content.Context.class);
+            hookEditModeIntMethod(stateClass, lpparam, "getCellLayoutBgAlpha", launcherClass);
+        }
+        hookEditModeDepthBlur(lpparam);
+    }
+
+    private static void hookEditModeDepthBlur(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> depthClass = XposedHelpers.findClass(
+                    "com.android.launcher3.uioverrides.states.OplusDepthController", lpparam.classLoader);
+            XC_MethodHook forceZero = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    if (!readBool(KEY_EDIT_MODE_BG_TRANSPARENT_ENABLED, false)) return;
+                    try {
+                        Object launcher = XposedHelpers.getObjectField(param.thisObject, "mLauncher");
+                        if (isLauncherEditMode(launcher)) param.args[0] = 0f;
+                    } catch (Throwable t) {
+                        log("edit mode depth blur hook error: " + t);
+                    }
+                }
+            };
+            XposedHelpers.findAndHookMethod(depthClass, "setBlur", float.class, forceZero);
+            XposedHelpers.findAndHookMethod(depthClass, "setBlur", float.class, boolean.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!readBool(KEY_EDIT_MODE_BG_TRANSPARENT_ENABLED, false)) return;
+                            try {
+                                Object launcher = XposedHelpers.getObjectField(param.thisObject, "mLauncher");
+                                if (isLauncherEditMode(launcher)) param.args[0] = 0f;
+                            } catch (Throwable t) {
+                                log("edit mode depth blur hook error: " + t);
+                            }
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(depthClass, "setBlurWithoutAnim", float.class, forceZero);
+            log("HOOK OK launcher OplusDepthController blur paths (edit bg transparent)");
+        } catch (Throwable t) {
+            log("HOOK FAIL launcher OplusDepthController blur paths (edit bg transparent): " + t);
+        }
+    }
+
+    private static boolean isLauncherEditMode(Object launcher) {
+        if (launcher == null) return false;
+        try {
+            Object stateManager = XposedHelpers.callMethod(launcher, "getStateManager");
+            Object state = XposedHelpers.callMethod(stateManager, "getState");
+            if (state == null) return false;
+            String name = state.getClass().getName();
+            return name.endsWith("ToggleBarState") || name.endsWith("PagePreviewState");
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private static void hookEditModeFloatMethod(String className,
+                                                 XC_LoadPackage.LoadPackageParam lpparam,
+                                                 String methodName, Class<?> argType) {
+        try {
+            XposedHelpers.findAndHookMethod(className, lpparam.classLoader, methodName, argType,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (readBool(KEY_EDIT_MODE_BG_TRANSPARENT_ENABLED, false)) {
+                                param.setResult(0f);
+                            }
+                        }
+                    });
+            log("HOOK OK launcher " + className + "#" + methodName + " (edit bg transparent)");
+        } catch (Throwable t) {
+            log("HOOK FAIL launcher " + className + "#" + methodName + ": " + t);
+        }
+    }
+
+    private static void hookEditModeIntMethod(String className,
+                                               XC_LoadPackage.LoadPackageParam lpparam,
+                                               String methodName, Class<?> argType) {
+        try {
+            XposedHelpers.findAndHookMethod(className, lpparam.classLoader, methodName, argType,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (readBool(KEY_EDIT_MODE_BG_TRANSPARENT_ENABLED, false)) {
+                                param.setResult(0);
+                            }
+                        }
+                    });
+            log("HOOK OK launcher " + className + "#" + methodName + " (edit bg transparent)");
+        } catch (Throwable t) {
+            log("HOOK FAIL launcher " + className + "#" + methodName + ": " + t);
         }
     }
 
@@ -1052,38 +1173,33 @@ public class XposedInit implements IXposedHookLoadPackage {
 
     /**
      * 控制中心顶栏间距(经典/合并模式, 用户所用模式)。
-     *  - 右侧状态图标簇 quick_qs_status_icons: 簇是 wrap_content + 子视图 0dp, 配合 status_bar_padding_top
-     *    (约71px) 顶部 padding, 使那约9px高的图标被底对齐在簇底, 相对时钟显得"多沉一次"(即电量双重下沉)。
-     *    改 padding 只动上方空白、图标不动, 故在 updateHeadersPadding 之后调用 raiseStatusRow(): 用 translationY
-     *    把整行(icons + batteryRemainingIcon)等比上移到簇顶附近的小间距(desiredTopPx)处 —— 电池与 wifi 同高,
-     *    整行不再过低。每帧收敛, 幂等。
+     *  - 右侧状态图标簇 quick_qs_status_icons: 在 OplusQSFakeStatusController 的展开进度回调中
+     *    原地渐隐，避免先执行系统原生位移动画再消失。
      *  - 页脚 OplusQSFooterImpl#mSettingsContainer(updateResources$15 仅在 collapsed 时把顶部 padding 重置为 0
      *    后再叠加 footerPx): 让日期/设置按钮小幅下沉(footerPx 较小, 避免之前"过于偏下")。
      */
     private static void hookQsTopMargin(final XC_LoadPackage.LoadPackageParam lpparam,
                                         final int footerPx) {
-        // 经典控制中心: 用户在展开后不需要顶部的状态图标簇(icons + battery), 直接 GONE。
-        // updateHeadersPadding 在每次布局时都会被调用, 因此在此持续把该簇隐藏, 防止被重新显示。
+        // 真正执行顶部图标簇位移动画的是 OplusQSFakeStatusController 的展开进度监听器，
+        // 不是 OplusQuickStatusBarHeader#setExpansion（该版本没有这个方法）。
         try {
             XposedHelpers.findAndHookMethod(
-                    "com.oplus.systemui.qs.OplusQuickStatusBarHeader",
-                    lpparam.classLoader, "updateHeadersPadding",
+                    "com.oplus.systemui.qs.fake.OplusQSFakeStatusController$qsPanelExpandFractionListener$1",
+                    lpparam.classLoader, "onFractionChanged", float.class,
                     new XC_MethodHook() {
                         @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
+                        protected void beforeHookedMethod(MethodHookParam param) {
                             try {
-                                // 运行时动态门控: 关闭则不调整顶栏间距。
-                                if (!readBool(KEY_QS_TOPMARGIN_ENABLED, false)) return;
-                                android.view.View header = (android.view.View) param.thisObject;
-                                hideQsStatusCluster(header, header.getResources());
+                                float fraction = ((Float) param.args[0]).floatValue();
+                                applyQsStatusClusterFade(param.thisObject, fraction);
                             } catch (Throwable t) {
-                                log("qs_hide_status apply fail: " + t);
+                                log("qs_status fade apply fail: " + t);
                             }
                         }
                     });
-            log("HOOK OK com.oplus.systemui.qs.OplusQuickStatusBarHeader#updateHeadersPadding");
+            log("HOOK OK OplusQSFakeStatusController$qsPanelExpandFractionListener#onFractionChanged");
         } catch (Throwable t) {
-            log("HOOK FAIL OplusQuickStatusBarHeader#updateHeadersPadding :: " + Log.getStackTraceString(t));
+            log("HOOK FAIL OplusQSFakeStatusController fraction listener :: " + Log.getStackTraceString(t));
         }
         // 经典控制中心: 设置按钮/页脚日期 (仅 collapsed 时 updateResources$15 重置 padding 为 0 后再叠加 footerPx)
         try {
@@ -1115,34 +1231,20 @@ public class XposedInit implements IXposedHookLoadPackage {
     }
 
     /**
-     * 把整行状态图标(icons + batteryRemainingIcon)等比上移到簇顶附近的小间距处, 消除"双重下沉"。
-     * 成因: 簇是 wrap_content + 子视图 0dp, 配合 status_bar_padding_top(约71px) 顶部 padding,
-     * 使那约9px高的图标被底对齐在簇底(y≈簇底), 而簇顶在更上方、时钟更高, 故电池相对时钟显得"多沉一次"。
-     * 直接改 padding 只会改变上方空白、图标纹丝不动, 因此这里改用 translationY 把两个视图整行上移:
-     * 二者等比上移 → 电池永远与 wifi 同高, 且整行不再过低。坐标用父级相对值 + post 到布局后执行,
-     * 不受窗口滚动/展开动画影响; 每帧收敛(已是目标位置就不再动), 幂等。
+     * 在系统真正执行图标簇位移动画前设置透明度，避免用户看到移动过程。
+     * 监听器实例的 this$0 是 OplusQSFakeStatusController，quickStatus 就是 quick_qs_status_icons。
      */
-    /**
-     * 隐藏控制中心展开后顶部的状态图标簇(R.id.quick_qs_status_icons, 内含 icons + batteryRemainingIcon)。
-     * 用户不需要它们; 直接 GONE 也比之前"对齐上移动画"的方案更彻底(顺带消除展开末端的瞬移)。
-     * 仅在 OplusQuickStatusBarHeader(经典合并模式的 QS 顶栏)中处理, 通知栏 CombinedShadeHeader 不受影响。
-     */
-    private static void hideQsStatusCluster(final android.view.View header, final android.content.res.Resources res) {
-        header.post(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    int id = res.getIdentifier("quick_qs_status_icons", "id", "com.android.systemui");
-                    if (id == 0) return;
-                    android.view.View cluster = header.findViewById(id);
-                    if (cluster != null && cluster.getVisibility() != android.view.View.GONE) {
-                        cluster.setVisibility(android.view.View.GONE);
-                    }
-                } catch (Throwable t) {
-                    log("hideQsStatusCluster fail: " + t);
-                }
-            }
-        });
+    private static void applyQsStatusClusterFade(Object fractionListener, float expansionFraction) {
+        Object controller = XposedHelpers.getObjectField(fractionListener, "this$0");
+        android.view.View cluster = (android.view.View) XposedHelpers.getObjectField(controller, "quickStatus");
+        if (cluster == null) return;
+        if (!readBool(KEY_QS_TOPMARGIN_ENABLED, false)) {
+            cluster.setAlpha(1f);
+            return;
+        }
+        float progress = Math.max(0f, Math.min(1f,
+                expansionFraction / QS_STATUS_HIDE_FADE_FRACTION));
+        cluster.setAlpha(1f - progress);
     }
 
     private static void addFooterTopPadding(Object footer, int footerPx) {        try {
@@ -1486,7 +1588,7 @@ public class XposedInit implements IXposedHookLoadPackage {
     private static void hookPxRuntime(XC_LoadPackage.LoadPackageParam lpparam,
                                       String className, String methodName, final float density,
                                       final String gateKey, final String dpKey, final int dpDef,
-                                      final int sign) {
+                                      final int dpMax, final int sign) {
         try {
             XposedHelpers.findAndHookMethod(className, lpparam.classLoader, methodName,
                     new XC_MethodHook() {
@@ -1495,7 +1597,7 @@ public class XposedInit implements IXposedHookLoadPackage {
                             if (!readBool(gateKey, false)) return;
                             Object ret = param.getResult();
                             if (ret instanceof Integer) {
-                                int dp = readInt(dpKey, dpDef);
+                                int dp = Math.max(0, Math.min(dpMax, readInt(dpKey, dpDef)));
                                 param.setResult((Integer) ret + sign * Math.round(dp * density));
                             }
                         }
