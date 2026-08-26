@@ -1043,75 +1043,68 @@ public class XposedInit implements IXposedHookLoadPackage {
     }
 
     /**
-     * 设置首页图标样式：只切换 Settings 原有的 force-rounded 分支，不创建或改造 Drawable。
-     * TopLevelSettings#shouldForceRoundedIcon 的返回值会传入 DashboardFeatureProviderImpl，
-     * false 使用系统原生不规则图标路径，true 使用系统原生 AdaptiveIcon 圆形主题色背景路径。
+     * 设置首页图标样式：复用 Settings/Oplus 已有的 COUIRoundImageView 绘制路径。
+     * Oplus 首页来自 top_level_settings_oplus.xml，不经过 DashboardFeatureProviderImpl；
+     * COUIPreference 的 couiIconStyle=0 是圆形，=1 是不规则圆角图标。
      */
     private static void hookSettingsHomeIconStyle(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
+            final Class<?> oplusTopLevelClass = XposedHelpers.findClass(
+                    "com.oplus.settings.feature.homepage.OplusTopLevelSettings",
+                    lpparam.classLoader);
+            final Class<?> preferenceScreenClass = XposedHelpers.findClass(
+                    "androidx.preference.PreferenceScreen", lpparam.classLoader);
             XposedHelpers.findAndHookMethod(
-                    "com.android.settings.homepage.TopLevelSettings",
+                    "com.android.settings.dashboard.DashboardFragment",
                     lpparam.classLoader,
-                    "shouldForceRoundedIcon",
+                    "displayResourceTilesToScreen",
+                    preferenceScreenClass,
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
-                            int style = readInt(KEY_SETTINGS_HOME_ICON_STYLE,
-                                    SETTINGS_HOME_ICON_STYLE_DEFAULT);
-                            if (style == SETTINGS_HOME_ICON_STYLE_IRREGULAR) {
-                                param.setResult(false);
-                            } else if (style == SETTINGS_HOME_ICON_STYLE_CIRCLE) {
-                                param.setResult(true);
-                            }
-                        }
-                    });
-            Class<?> tileClass = XposedHelpers.findClass(
-                    "com.android.settingslib.drawer.Tile", lpparam.classLoader);
-            Class<?> preferenceClass = XposedHelpers.findClass(
-                    "androidx.preference.Preference", lpparam.classLoader);
-            // 直接修改系统 bindIcon 的 force-rounded 入参，保留 Settings 自己的两套绘制实现。
-            XposedHelpers.findAndHookMethod(
-                    "com.android.settings.dashboard.DashboardFeatureProviderImpl",
-                    lpparam.classLoader,
-                    "lambda$bindIcon$11",
-                    preferenceClass,
-                    tileClass,
-                    boolean.class,
-                    String.class,
-                    android.graphics.drawable.Icon.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!oplusTopLevelClass.isInstance(param.thisObject)) return;
                             int style = readInt(KEY_SETTINGS_HOME_ICON_STYLE,
                                     SETTINGS_HOME_ICON_STYLE_DEFAULT);
                             if (style == SETTINGS_HOME_ICON_STYLE_DEFAULT) return;
-                            Object tile = param.args[1];
-                            if (tile != null && "com.android.settings.category.ia.homepage".equals(
-                                    String.valueOf(XposedHelpers.callMethod(tile, "getCategory")))) {
-                                param.args[2] = style == SETTINGS_HOME_ICON_STYLE_CIRCLE;
-                            }
+                            int couiStyle = style == SETTINGS_HOME_ICON_STYLE_CIRCLE ? 0 : 1;
+                            applySettingsHomeIconStyle(param.args[0], couiStyle,
+                                    lpparam.classLoader);
                         }
                     });
-            // 当前设备启用了 homepageRevamp；该分支会绕过 forceRoundedIcon，直接生成 expressive 圆图标。
-            // 关闭该系统分支后，继续执行同一个 bindIcon 中原有的 z2/AdaptiveIcon 分支：
-            // z2=false 为不规则图标，z2=true 为圆形图标，均不自行绘制。
-            XposedHelpers.findAndHookMethod(
-                    "com.android.settings.flags.Flags",
-                    lpparam.classLoader,
-                    "homepageRevamp",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            if (readInt(KEY_SETTINGS_HOME_ICON_STYLE,
-                                    SETTINGS_HOME_ICON_STYLE_DEFAULT)
-                                    != SETTINGS_HOME_ICON_STYLE_DEFAULT) {
-                                param.setResult(false);
-                            }
-                        }
-                    });
-            log("HOOK OK settings native homepage icon style");
+            log("HOOK OK settings native COUI homepage icon style");
         } catch (Throwable t) {
-            log("HOOK FAIL settings native homepage icon style: " + t);
+            log("HOOK FAIL settings native COUI homepage icon style: " + t);
+        }
+    }
+
+    private static void applySettingsHomeIconStyle(Object preferenceGroup,
+            int couiStyle, ClassLoader classLoader) {
+        if (preferenceGroup == null) return;
+        try {
+            Class<?> couiPreferenceClass = XposedHelpers.findClass(
+                    "com.coui.appcompat.preference.COUIPreference", classLoader);
+            if (couiPreferenceClass.isInstance(preferenceGroup)) {
+                Object icon = XposedHelpers.callMethod(preferenceGroup, "getIcon");
+                if (icon != null) {
+                    int current = (Integer) XposedHelpers.callMethod(
+                            preferenceGroup, "getIconStyle");
+                    if (current != couiStyle) {
+                        XposedHelpers.callMethod(preferenceGroup, "setIconStyle", couiStyle);
+                    }
+                }
+            }
+            Class<?> preferenceGroupClass = XposedHelpers.findClass(
+                    "androidx.preference.PreferenceGroup", classLoader);
+            if (!preferenceGroupClass.isInstance(preferenceGroup)) return;
+            int count = (Integer) XposedHelpers.callMethod(
+                    preferenceGroup, "getPreferenceCount");
+            for (int i = 0; i < count; i++) {
+                Object child = XposedHelpers.callMethod(
+                        preferenceGroup, "getPreference", i);
+                applySettingsHomeIconStyle(child, couiStyle, classLoader);
+            }
+        } catch (Throwable t) {
+            log("settings homepage COUI icon style error: " + t);
         }
     }
 
