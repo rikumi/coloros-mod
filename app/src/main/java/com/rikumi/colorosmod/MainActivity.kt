@@ -152,7 +152,7 @@ private val NAV = listOf(
     SwitchItem("gesture_bar_height_enabled", "调整底部手势区高度", "缓解屏幕底部圆角区域吃掉应用内容", "gesture_bar_height_dp", 32, 16),
     SwitchItem("gesture_bar_width_enabled", "调整手势滑动条宽度", sliderKey = "gesture_bar_width_dp", sliderMax = 120, sliderDefault = 100, sliderUnit = "dp", defaultEnabled = true, sliderMin = 80),
     SwitchItem("gesture_bar_long_press_disable_enabled", "禁止长按手势条放大", "理论可弥补 OxygenOS 没有助手设置项的问题", defaultEnabled = true),
-    SwitchItem("mback_enabled", "启用 MBack", "点击手势条返回，长按回桌面"),
+    SwitchItem("mback_enabled", "启用 mBack", "点击手势条返回，长按回桌面"),
 )
 
 // 标题栏底部分割线: 界面上滑时出现, 初始两端各内缩 16dp, 随滚动量在该距离内逐渐延长至通栏。
