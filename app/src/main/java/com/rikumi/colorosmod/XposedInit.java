@@ -117,6 +117,14 @@ public class XposedInit implements IXposedHookLoadPackage {
     // 这里 hook 该方法: 当有文件夹处于打开(含打开/关闭动画)状态时, 把模糊值强制为 0,
     // 从而整屏不再变灰, 文件夹直接浮在清晰壁纸上; 不影响多任务/应用抽屉等其它场景的模糊。
     private static final String KEY_FOLDER_BG_TRANSPARENT_ENABLED = "folder_bg_transparent_enabled";
+    // Feature 23 — 调整桌面文件夹展开/收起动画持续时间 (com.android.launcher):
+    // 文件夹动画时长由 OplusFolderAnimationManager 构造时读取 4 个 integer 资源
+    // (folder_open_duration=850ms, folder_close_duration=800ms,
+    //  folder_light_open_duration=600ms, folder_light_close_duration=600ms) 决定,
+    // 基类 FolderAnimationManager 另读 config_materialFolderExpandDuration=200ms。
+    // 开关开启时统一替换为滑条值(100-500ms, 默认 300), 关闭时返回原值。
+    private static final String KEY_FOLDER_ANIM_DURATION_ENABLED = "folder_anim_duration_enabled";
+    private static final String KEY_FOLDER_ANIM_DURATION_MS = "folder_anim_duration_ms";
     // Feature 16 — 桌面编辑模式背景遮罩透明化 (com.android.launcher):
     // ToggleBarState/PagePreviewState 原生把编辑态壁纸 blur 固定为 1.0f, 同时可能叠加页面背景 alpha。
     private static final String KEY_EDIT_MODE_BG_TRANSPARENT_ENABLED = "edit_mode_bg_transparent_enabled";
@@ -173,6 +181,8 @@ public class XposedInit implements IXposedHookLoadPackage {
     private static final String KEY_GESTURE_BAR_WIDTH_ENABLED = "gesture_bar_width_enabled";
     private static final String KEY_GESTURE_BAR_WIDTH_DP = "gesture_bar_width_dp";
     private static final String KEY_MBACK_ENABLED = "mback_enabled";
+    private static final String KEY_GESTURE_TOUCH_THROUGH_ENABLED =
+            "gesture_touch_through_enabled";
     // 判定为向左/右/上划动的阈值（dp），超过则放弃 MBack 接管。
     private static final int MBACK_SWIPE_DP = 20;
     private static final String KEY_GESTURE_BAR_LONG_PRESS_DISABLE_ENABLED =
@@ -680,6 +690,9 @@ public class XposedInit implements IXposedHookLoadPackage {
         // Feature 14 — 桌面文件夹展开背景透明化: 始终注入, 运行时按 KEY_FOLDER_BG_TRANSPARENT_ENABLED 门控。
         hookFolderOpenBgBlur(lpparam);
 
+        // Feature 23 — 调整文件夹动画持续时间: 始终注入, 运行时按开关+滑条门控。
+        hookFolderAnimDuration(lpparam);
+
         // Feature 16 — 编辑模式背景遮罩透明化: 始终注入, 运行时按开关门控。
         hookEditModeBgBlur(lpparam);
     }
@@ -754,6 +767,190 @@ public class XposedInit implements IXposedHookLoadPackage {
             log("HOOK OK launcher OplusDepthController#setBlur (transparent folder bg)");
         } catch (Throwable t) {
             log("HOOK FAIL launcher OplusDepthController#setBlur: " + t);
+        }
+    }
+
+    // Feature 23 — 调整桌面文件夹展开/收起动画持续时间 (com.android.launcher):
+    // ColorOS 文件夹动画由两条路径驱动, 仅 hook Resources.getInteger 不够:
+    //   1. 普通动画(动画等级<3): OplusFolderAnimationManager 用 spring 物理动画
+    //      (RtSpringAnimatorSet+COUISpringAnimation), 时长由 spring response 决定,
+    //      所有子图标/标题/页脚动画都经 RtSpringAnimatorWrapper 包装;
+    //   2. light 动画(动画等级>=3): FolderAnimUtil.getLightFolderContentAnimation /
+    //      getLightLauncherContentAnim 用 ObjectAnimator + setDuration(常量 150/400ms)。
+    // 此处分别覆盖: (a) RtSpringAnimatorWrapper 构造后把 spring response 改为 ms/1000;
+    // (b) setBounceAndResponse 重入时同样覆盖; (c) getAnimDuration 返回 ms;
+    // (d) getLightFolderContentAnimation 遍历子动画 setDuration(ms);
+    // (e) 保留 Resources.getInteger 覆盖 workspace 背景动画(WallpaperUtil)与基类时长。
+    private static void hookFolderAnimDuration(final XC_LoadPackage.LoadPackageParam lpparam) {
+        hookFolderSpringDuration(lpparam);
+        hookFolderLightDuration(lpparam);
+        hookFolderResDuration(lpparam);
+    }
+
+    // 读取用户设置的动画时长; 开关关闭或越界时返回 -1(不生效)。
+    private static int folderAnimMs() {
+        if (!readBool(KEY_FOLDER_ANIM_DURATION_ENABLED, false)) return -1;
+        int ms = readInt(KEY_FOLDER_ANIM_DURATION_MS, 300);
+        if (ms < 100 || ms > 500) return -1;
+        return ms;
+    }
+
+    // 普通 spring 路径: 文件夹子图标/标题/页脚动画全部经 RtSpringAnimatorWrapper 包装,
+    // spring force 的 response(响应时间, 秒)决定动画时长, 这里统一改为 ms/1000。
+    private static void hookFolderSpringDuration(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            final Class<?> wrapperClass = XposedHelpers.findClass(
+                    "com.android.launcher3.folder.RtSpringAnimatorWrapper", lpparam.classLoader);
+            final Class<?> springAnimClass = XposedHelpers.findClass(
+                    "com.coui.appcompat.animation.dynamicanimation.COUISpringAnimation", lpparam.classLoader);
+            // 初次创建: 构造后把 COUISpringForce 的 response 改为 ms/1000。
+            XposedHelpers.findAndHookConstructor(wrapperClass, springAnimClass,
+                    android.view.View.class, String.class, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                int ms = folderAnimMs();
+                                if (ms < 0) return;
+                                Object springAnim = param.args[0];
+                                Object force = XposedHelpers.getObjectField(springAnim, "A");
+                                if (force != null) {
+                                    XposedHelpers.callMethod(force, "d", ms / 1000.0f);
+                                }
+                            } catch (Throwable t) {
+                                log("folder spring duration ctor error: " + t);
+                            }
+                        }
+                    });
+            // 打开/关闭期间重入更新参数时同样覆盖 response。
+            XposedHelpers.findAndHookMethod(wrapperClass, "setBounceAndResponse",
+                    float.class, float.class, new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                int ms = folderAnimMs();
+                                if (ms < 0) return;
+                                param.args[1] = ms / 1000.0f;
+                            } catch (Throwable t) {
+                                log("folder spring duration setter error: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK launcher RtSpringAnimatorWrapper (folder spring duration)");
+        } catch (Throwable t) {
+            log("HOOK FAIL launcher RtSpringAnimatorWrapper (folder spring duration): " + t);
+        }
+    }
+
+    // light 路径: 文件夹本体动画(ObjectAnimator+setDuration 常量)与 launcher 内容动画时长。
+    private static void hookFolderLightDuration(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            final Class<?> animUtilClass = XposedHelpers.findClass(
+                    "com.android.launcher3.anim.light.FolderAnimUtil", lpparam.classLoader);
+            final Class<?> folderClass = XposedHelpers.findClass(
+                    "com.android.launcher3.folder.Folder", lpparam.classLoader);
+            final Class<?> folderIconClass = XposedHelpers.findClass(
+                    "com.android.launcher3.folder.FolderIcon", lpparam.classLoader);
+            final Class<?> propsHolderClass = XposedHelpers.findClass(
+                    "com.android.launcher3.anim.light.FolderAnimPropsHolder", lpparam.classLoader);
+            // light 模式下 launcher 内容(hotseat/workspace/pageIndicator)动画时长。
+            XposedHelpers.findAndHookMethod(animUtilClass, "getAnimDuration",
+                    boolean.class, boolean.class, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                int ms = folderAnimMs();
+                                if (ms < 0) return;
+                                param.setResult((long) ms);
+                            } catch (Throwable t) {
+                                log("folder light animDuration error: " + t);
+                            }
+                        }
+                    });
+            // light 模式文件夹本体缩放/位移/透明度动画: 遍历子动画统一 setDuration。
+            XposedHelpers.findAndHookMethod(animUtilClass, "getLightFolderContentAnimation",
+                    boolean.class, folderClass, folderIconClass, propsHolderClass, boolean.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                int ms = folderAnimMs();
+                                if (ms < 0) return;
+                                Object animatorSet = param.getResult();
+                                if (animatorSet instanceof android.animation.AnimatorSet) {
+                                    for (Object child : ((android.animation.AnimatorSet) animatorSet).getChildAnimations()) {
+                                        if (child instanceof android.animation.ValueAnimator) {
+                                            ((android.animation.ValueAnimator) child).setDuration(ms);
+                                        }
+                                    }
+                                }
+                            } catch (Throwable t) {
+                                log("folder light content error: " + t);
+                            }
+                        }
+                    });
+            // 隐藏应用文件夹(AppHiddenFolder)在动画 props 无效时回退的超轻量动画:
+            // getAnimator() 中跳过 spring 路径后走这里, 硬编码 360/300ms, 统一覆盖。
+            XposedHelpers.findAndHookMethod(animUtilClass, "getSuperLightFolderContentAnimation",
+                    boolean.class, folderClass, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                int ms = folderAnimMs();
+                                if (ms < 0) return;
+                                Object animatorSet = param.getResult();
+                                if (animatorSet instanceof android.animation.AnimatorSet) {
+                                    for (Object child : ((android.animation.AnimatorSet) animatorSet).getChildAnimations()) {
+                                        if (child instanceof android.animation.ValueAnimator) {
+                                            ((android.animation.ValueAnimator) child).setDuration(ms);
+                                        }
+                                    }
+                                }
+                            } catch (Throwable t) {
+                                log("folder super light content error: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK launcher FolderAnimUtil (folder light duration)");
+        } catch (Throwable t) {
+            log("HOOK FAIL launcher FolderAnimUtil (folder light duration): " + t);
+        }
+    }
+
+    // workspace 背景动画(WallpaperUtil 用 folder_*_duration 资源) + 基类 FolderAnimationManager 时长。
+    private static void hookFolderResDuration(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            final int[] folderAnimResIds = {
+                    0x7f0b0028, // config_materialFolderExpandDuration (FolderAnimationManager.mDuration)
+                    0x7f0b0072, // folder_close_duration
+                    0x7f0b0073, // folder_light_close_duration
+                    0x7f0b0074, // folder_light_open_duration
+                    0x7f0b0075, // folder_open_duration
+            };
+            XposedHelpers.findAndHookMethod(android.content.res.Resources.class, "getInteger",
+                    int.class, new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                int id = (Integer) param.args[0];
+                                boolean hit = false;
+                                for (int rid : folderAnimResIds) {
+                                    if (rid == id) {
+                                        hit = true;
+                                        break;
+                                    }
+                                }
+                                if (!hit) return;
+                                int ms = folderAnimMs();
+                                if (ms < 0) return;
+                                param.setResult(ms);
+                            } catch (Throwable t) {
+                                log("folder anim duration hook error: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK launcher Resources#getInteger (folder anim duration)");
+        } catch (Throwable t) {
+            log("HOOK FAIL launcher Resources#getInteger (folder anim duration): " + t);
         }
     }
 
@@ -1227,6 +1424,8 @@ public class XposedInit implements IXposedHookLoadPackage {
         hookGestureBarHeight(lpparam);
         hookGestureBarLongPressDisable(lpparam);
         hookMBack(lpparam);
+        // 独立功能 — 避免手势区域点击穿透: 与 mBack 解耦, 各自独立开关。
+        hookGestureTouchThrough(lpparam);
     }
 
     private static final java.util.WeakHashMap<Object, Boolean> sBarExtraApplied =
@@ -1285,7 +1484,18 @@ public class XposedInit implements IXposedHookLoadPackage {
                         protected void beforeHookedMethod(MethodHookParam param) {
                             if (!readBool(KEY_MBACK_ENABLED, false)) return;
                             android.view.View handle = (android.view.View) param.thisObject;
-                            handleMBackTouch(handle, (android.view.MotionEvent) param.args[0]);
+                            android.view.MotionEvent ev = (android.view.MotionEvent) param.args[0];
+                            // mBack 仅在白条水平范围内生效; 白条外(两侧)只响应系统手势,
+                            // 不触发返回/震动, 也不接管事件(放行 handle 原逻辑)。
+                            if (ev.getActionMasked() == android.view.MotionEvent.ACTION_DOWN) {
+                                XposedHelpers.setAdditionalInstanceField(handle, "mback_in_range",
+                                        isInMBackBarRange(handle, ev));
+                            }
+                            if (!Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(
+                                    handle, "mback_in_range"))) {
+                                return;
+                            }
+                            handleMBackTouch(handle, ev);
                             param.setResult(null);
                         }
                     });
@@ -1315,6 +1525,128 @@ public class XposedInit implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             log("mback hook failed: " + t);
         }
+    }
+
+    // 独立功能: 避免手势区域点击穿透。
+    // 根因: 手势导航下 NavigationBarExImpl.updateInsetsTouchability 把导航栏窗口的
+    // 触摸区域(touchableRegion)限制为白条区域, 白条两侧的手势带事件不派发给该窗口,
+    // 直接透传给下层应用。修复: 1) 扩大 touchableRegion 到手势带全宽, 让事件进入
+    // 导航栏窗口视图树; 2) 手势带内放置全宽透明拦截层(GestureBlockSurface)消费全部
+    // 触摸, 事件不再透传。手势识别在 input monitor 层(SideGestureDetector)不受影响。
+    private static void hookGestureTouchThrough(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            // 手势模式下导航栏窗口触摸区域为空(按钮隐藏时 getButtonLocations 返回空),
+            // 导致底部手势带触摸全部穿透。hook OnComputeInternalInsetsListener 实现
+            // (NavigationBar$$ExternalSyntheticLambda10), after 中把手势带(导航栏窗口
+            // 整宽)设为触摸区域, 配合拦截层消费事件。InternalInsetsInfo 为 @hide 类,
+            // 编译期不可见, 用反射访问。
+            Class<?> insetsInfoClass = XposedHelpers.findClass(
+                    "android.view.ViewTreeObserver$InternalInsetsInfo", null);
+            Class<?> insetsListenerClass = XposedHelpers.findClass(
+                    "com.android.systemui.navigationbar.views.NavigationBar$$ExternalSyntheticLambda10",
+                    lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(insetsListenerClass, "onComputeInternalInsets",
+                    insetsInfoClass, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_GESTURE_TOUCH_THROUGH_ENABLED, false)) return;
+                                Object info = param.args[0];
+                                Object navBar = XposedHelpers.getObjectField(param.thisObject, "f$0");
+                                Object viewObj = XposedHelpers.getObjectField(navBar, "mView");
+                                if (viewObj instanceof android.view.View) {
+                                    android.view.View view = (android.view.View) viewObj;
+                                    Object regionObj = XposedHelpers.getObjectField(info, "touchableRegion");
+                                    if (regionObj instanceof android.graphics.Region) {
+                                        ((android.graphics.Region) regionObj).set(
+                                                0, 0, view.getWidth(), view.getHeight());
+                                    }
+                                    // TOUCHABLE_INSETS_REGION = 3
+                                    XposedHelpers.callMethod(info, "setTouchableInsets", 3);
+                                }
+                            } catch (Throwable t) {
+                                dbg("gesture touch-through region error: " + t);
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            dbg("gesture touch-through region hook failed: " + t);
+        }
+        try {
+            // 拦截层消费进入窗口视图树的手势带触摸。
+            Class<?> handleClass = XposedHelpers.findClass(
+                    "com.oplus.systemui.navigationbar.gesture.sidegesture.OplusNavigationHandle",
+                    lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(handleClass, "onAttachedToWindow",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (readBool(KEY_GESTURE_TOUCH_THROUGH_ENABLED, false)) {
+                                ensureGestureBlockSurface((android.view.View) param.thisObject);
+                            }
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(handleClass, "onLayout", boolean.class,
+                    int.class, int.class, int.class, int.class, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            updateGestureBlockSurface((android.view.View) param.thisObject);
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(handleClass, "onDetachedFromWindow",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            removeGestureBlockSurface((android.view.View) param.thisObject);
+                        }
+                    });
+        } catch (Throwable t) {
+            log("gesture touch-through hook failed: " + t);
+        }
+    }
+
+    private static GestureBlockSurface ensureGestureBlockSurface(android.view.View handle) {
+        Object existing = XposedHelpers.getAdditionalInstanceField(handle, "gesture_block_surface");
+        if (existing instanceof GestureBlockSurface) {
+            ((GestureBlockSurface) existing).update();
+            return (GestureBlockSurface) existing;
+        }
+        android.widget.FrameLayout host = findMBackHost(handle);
+        if (host == null) return null;
+        GestureBlockSurface surface = new GestureBlockSurface(handle, host);
+        surface.setClickable(true);
+        surface.setFocusable(true);
+        surface.setFocusableInTouchMode(true);
+        surface.setOnTouchListener(new android.view.View.OnTouchListener() {
+            @Override
+            public boolean onTouch(android.view.View view, android.view.MotionEvent event) {
+                return true;
+            }
+        });
+        android.widget.FrameLayout.LayoutParams lp =
+                new android.widget.FrameLayout.LayoutParams(1, 1);
+        host.addView(surface, 0, lp);
+        XposedHelpers.setAdditionalInstanceField(handle, "gesture_block_surface", surface);
+        surface.update();
+        return surface;
+    }
+
+    private static void updateGestureBlockSurface(android.view.View handle) {
+        Object surface = XposedHelpers.getAdditionalInstanceField(handle, "gesture_block_surface");
+        if (surface instanceof GestureBlockSurface) {
+            ((GestureBlockSurface) surface).update();
+        }
+    }
+
+    private static void removeGestureBlockSurface(android.view.View handle) {
+        Object surface = XposedHelpers.getAdditionalInstanceField(handle, "gesture_block_surface");
+        if (surface instanceof GestureBlockSurface) {
+            android.view.ViewParent parent = ((GestureBlockSurface) surface).getParent();
+            if (parent instanceof android.view.ViewGroup) {
+                ((android.view.ViewGroup) parent).removeView((GestureBlockSurface) surface);
+            }
+        }
+        XposedHelpers.setAdditionalInstanceField(handle, "gesture_block_surface", null);
     }
 
     private static void handleMBackTouch(final android.view.View handle,
@@ -1376,6 +1708,9 @@ public class XposedInit implements IXposedHookLoadPackage {
             if (!cancelled && !longPressed) {
                 handle.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
                 triggerNavigation(handle, false);
+            } else if (!cancelled && longPressed) {
+                // 长按触发回桌面后松手: 追加与长按触发一致的线性马达反馈。
+                handle.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
             }
             XposedHelpers.setAdditionalInstanceField(handle, "mback_down", Boolean.FALSE);
             hideMBackSurface(handle);
@@ -1387,6 +1722,23 @@ public class XposedInit implements IXposedHookLoadPackage {
             cancelMBackLongPress(handle);
             XposedHelpers.setAdditionalInstanceField(handle, "mback_down", Boolean.FALSE);
             hideMBackSurface(handle);
+        }
+    }
+
+    // 判断 DOWN 事件是否落在白条水平范围(含 8dp 留白), 与 MBackSurface 宽度口径一致。
+    // 依据反编译: 系统原生用 ev.getX()(input monitor 转发, 即屏幕坐标) 与实例字段
+    // viewScreenLeft(onLayout 时赋值, 屏幕坐标) 比较判定 inGestureXRange。
+    // 这里复刻该口径并放宽 padding。白条外(两侧区域)不触发 mBack, 放行 handle 原逻辑。
+    private static boolean isInMBackBarRange(android.view.View handle,
+            android.view.MotionEvent ev) {
+        try {
+            int padding = Math.round(MBackSurface.MBACK_PADDING_DP * readDensity());
+            float x = ev.getX();
+            int left = XposedHelpers.getIntField(handle, "viewScreenLeft");
+            int right = left + handle.getWidth();
+            return x >= left - padding && x <= right + padding;
+        } catch (Throwable t) {
+            return true;
         }
     }
 
@@ -1591,6 +1943,58 @@ public class XposedInit implements IXposedHookLoadPackage {
             int barCenterXInHost = (sourceLocation[0] - hostLocation[0]) + source.getWidth() / 2;
             setX(barCenterXInHost - width / 2);
             setY(Math.max(0, host.getHeight() - gestureZoneHeight - Math.max(0, extraPx / 2 + Math.round(MBACK_MARGIN_BOTTOM_DP * density))));
+            invalidate();
+        }
+
+        private int getSourceInt(String field, int fallback) {
+            try {
+                return XposedHelpers.getIntField(source, field);
+            } catch (Throwable ignored) {
+                return fallback;
+            }
+        }
+    }
+
+    // 全宽透明拦截层: 覆盖整条手势带(host 整宽 × 手势带高度), 消费所有触摸,
+    // 防止点击穿透到下层应用。无任何视觉效果。
+    private static final class GestureBlockSurface extends android.view.View {
+        private final android.view.View source;
+        private final android.view.ViewGroup host;
+
+        GestureBlockSurface(android.view.View source, android.view.ViewGroup host) {
+            super(source.getContext());
+            this.source = source;
+            this.host = host;
+            setWillNotDraw(true);
+        }
+
+        // 手势带高度与 MBackSurface 保持一致: 白条高度 + 上下 8dp 留白。
+        private static final float BLOCK_PADDING_DP = 8f;
+        private static final float BLOCK_MARGIN_BOTTOM_DP = -4f;
+
+        void update() {
+            if (getParent() != host) return;
+            float density = readDensity();
+            int barHeight = getSourceInt("mHeight", source.getHeight());
+            int padding = Math.round(BLOCK_PADDING_DP * density);
+            int gestureZoneHeight = barHeight + padding * 2;
+            int width = host.getWidth();
+            int height = gestureZoneHeight;
+            android.widget.FrameLayout.LayoutParams lp =
+                    (android.widget.FrameLayout.LayoutParams) getLayoutParams();
+            if (lp.width != width || lp.height != height) {
+                lp.width = width;
+                lp.height = height;
+                setLayoutParams(lp);
+            }
+            int extraPx = 0;
+            if (readInt(KEY_GESTURE_BAR_HEIGHT_ENABLED, 1) == 1) {
+                int extraDp = Math.max(0, Math.min(20, readInt(KEY_GESTURE_BAR_HEIGHT_DP, 10)));
+                extraPx = Math.round(extraDp * density);
+            }
+            setX(0);
+            setY(Math.max(0, host.getHeight() - gestureZoneHeight
+                    - Math.max(0, extraPx / 2 + Math.round(BLOCK_MARGIN_BOTTOM_DP * density))));
             invalidate();
         }
 

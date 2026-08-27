@@ -235,9 +235,16 @@ fun CouixSwitchPreference(
     leftTrailingContent: @Composable RowScope.() -> Unit = {},
     showDivider: Boolean = false,
 ) {
+    val density = LocalDensity.current
+    // 按整行实际高度动态计算分割线高度，使分割线随列表项(含副标题/数值)高度自适应。
+    var rowHeightPx by remember { mutableStateOf(0) }
+    val dividerHeight: Dp = with(density) {
+        (rowHeightPx - 2 * COUIX_ROW_VPADDING.toPx()).coerceAtLeast(0f).toDp()
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
+            .onGloballyPositioned { rowHeightPx = it.size.height }
             .clickable { onCheckedChange(!checked) },
     ) {
         Row(
@@ -294,8 +301,8 @@ fun CouixSwitchPreference(
                 Box(
                     modifier = Modifier
                         .align(Alignment.CenterVertically)
-                        .width((1f / LocalDensity.current.density).dp)
-                        .height(24.dp)
+                        .width((1f / density.density).dp)
+                        .height(dividerHeight)
                         .background(MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.2f)),
                 )
             }
@@ -966,8 +973,7 @@ private fun CouixSwitchRow(
                             fontWeight = if (intVal != item.sliderDefault) FontWeight.Bold else null,
                         ),
                         modifier = Modifier
-                            .padding(start = 12.dp)
-                            .width(40.dp),
+                            .padding(start = 12.dp),
                     )
                 }
             },

@@ -118,6 +118,7 @@ private val DESKTOP = listOf(
     SwitchItem("indicator_enabled", "减小页面与 Dock 间距", sliderKey = "indicator_dp", sliderMax = 32, sliderDefault = 16, sliderUnit = "dp"),
     SwitchItem("shrink_popup_menu", "缩小图标长按菜单", sliderKey = "popup_scale_percent", sliderMax = 20, sliderDefault = 10, sliderUnit = "%"),
     SwitchItem("folder_bg_transparent_enabled", "文件夹展开背景透明"),
+    SwitchItem("folder_anim_duration_enabled", "调整文件夹动画持续时间", sliderKey = "folder_anim_duration_ms", sliderMax = 500, sliderDefault = 300, sliderUnit = "ms", sliderMin = 100),
     SwitchItem("edit_mode_bg_transparent_enabled", "取消编辑模式背景遮罩"),
     SwitchItem("hide_contacts_enabled", "彻底隐藏电话本图标"),
     SwitchItem("hide_gboard_enabled", "彻底隐藏 Gboard 图标"),
@@ -153,6 +154,7 @@ private val NAV = listOf(
     SwitchItem("gesture_bar_width_enabled", "调整手势滑动条宽度", sliderKey = "gesture_bar_width_dp", sliderMax = 120, sliderDefault = 100, sliderUnit = "dp", defaultEnabled = true, sliderMin = 80),
     SwitchItem("gesture_bar_long_press_disable_enabled", "禁止长按手势条放大", "理论可弥补 OxygenOS 没有助手设置项的问题", defaultEnabled = true),
     SwitchItem("mback_enabled", "启用 mBack", "点击手势条返回，长按回桌面"),
+    SwitchItem("gesture_touch_through_enabled", "避免手势区域点击穿透"),
 )
 
 // 标题栏底部分割线: 界面上滑时出现, 初始两端各内缩 16dp, 随滚动量在该距离内逐渐延长至通栏。
@@ -218,7 +220,7 @@ fun SettingsScreen() {
                             .fillMaxWidth()
                             .padding(horizontal = TOP_BAR_DIVIDER_INSET * (1f - dividerProgress))
                             .height((1f / density.density).dp)
-                            .background(Color.White.copy(alpha = 0.2f * dividerProgress)),
+                            .background(Color.White.copy(alpha = 0.26f * dividerProgress)),
                     )
                 }
             }
