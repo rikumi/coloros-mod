@@ -87,7 +87,8 @@ public final class LauncherHooks {
                                 return;
                             }
                             android.view.View v = (android.view.View) param.thisObject;
-                            int pct = readInt(KEY_POPUP_SCALE_PERCENT, POPUP_SHRINK_PERCENT_DEFAULT);
+                            int pct = Math.max(0, Math.min(20,
+                                    readInt(KEY_POPUP_SCALE_PERCENT, POPUP_SHRINK_PERCENT_DEFAULT)));
                             Object applied = XposedHelpers.getAdditionalInstanceField(v, "colorosmod_popup_pct");
                             if (applied instanceof Integer && (Integer) applied == pct) {
                                 return;
@@ -106,7 +107,8 @@ public final class LauncherHooks {
         if (!readBool(KEY_SHRINK_POPUP_MENU, false)) {
             return;
         }
-        int pct = readInt(KEY_POPUP_SCALE_PERCENT, POPUP_SHRINK_PERCENT_DEFAULT);
+        int pct = Math.max(0, Math.min(20,
+                readInt(KEY_POPUP_SCALE_PERCENT, POPUP_SHRINK_PERCENT_DEFAULT)));
         float scale = 1f - pct / 100f;
         android.view.View target;
         try {
@@ -935,9 +937,8 @@ public final class LauncherHooks {
                             if (!readBool(KEY_INDICATOR_ENABLED, false)) return;
                             Object result = param.getResult();
                             if (!(result instanceof Integer)) return;
-                            int configuredDp = Math.max(0, Math.min(
+                            int requestedDp = Math.max(0, Math.min(
                                     32, readInt(KEY_INDICATOR_DP, INDICATOR_REDUCE_DP)));
-                            int requestedDp = Math.min(INDICATOR_REDUCE_MAX_DP, configuredDp);
                             if (requestedDp == 0) return;
                             try {
                                 Object workspace = XposedHelpers.getObjectField(

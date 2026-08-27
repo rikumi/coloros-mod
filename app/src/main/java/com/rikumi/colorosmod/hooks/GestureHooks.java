@@ -205,18 +205,28 @@ public final class GestureHooks {
         }
     }
 
-    static final float GESTURE_BAND_PADDING_DP = 8f;
+    // mBack 热区留白: 手势条高度设置值(KEY_GESTURE_BAR_HEIGHT_DP, 单位 dp)的一半加 4dp, 上限 10dp。
+    // readInt(KEY_GESTURE_BAR_HEIGHT_DP, 0) 的默认值 0 即关闭功能时的系统初始值:
+    // 开关关闭时把该值当作 0 处理, 继续按公式计算。
+    static float getMBackBandPaddingDp() {
+        int dp = readInt(KEY_GESTURE_BAR_HEIGHT_ENABLED, 0) == 1
+                ? readInt(KEY_GESTURE_BAR_HEIGHT_DP, 0)
+                : 0;
+        return Math.min(dp / 2f + 4f, 10f);
+    }
 
-    static final float GESTURE_BAND_MARGIN_BOTTOM_DP = -4f;
-
-    // 白条厚度(mHeight)。触摸区域的 dispatch 独立于拦截层的创建时机, 因此区域计算
-    // 不能依赖拦截层: 一旦拿不到就退化成"完全不设置区域", 表现为整条穿透且 mBack 失效。
+    // 白条厚度(mHeight)与白条底部间距(mHandleBottom)。触摸区域的 dispatch 独立于
+    // 拦截层的创建时机, 因此区域计算不能依赖拦截层: 一旦拿不到就退化成
+    // "完全不设置区域", 表现为整条穿透且 mBack 失效。
     static volatile int sGestureBarHeightPx = -1;
+    static volatile int sGestureBarHandleBottomPx = -1;
 
     static void rememberGestureBarHeight(android.view.View handle) {
         try {
             int h = XposedHelpers.getIntField(handle, "mHeight");
             if (h > 0) sGestureBarHeightPx = h;
+            int bottom = XposedHelpers.getIntField(handle, "mHandleBottom");
+            if (bottom > 0) sGestureBarHandleBottomPx = bottom;
         } catch (Throwable ignored) {
         }
     }
@@ -226,6 +236,15 @@ public final class GestureHooks {
         android.view.View handle = findHandleInTree(root);
         if (handle != null) rememberGestureBarHeight(handle);
         return sGestureBarHeightPx > 0 ? sGestureBarHeightPx : Math.round(3f * readDensity());
+    }
+
+    static int getGestureBarHandleBottomPx(android.view.View root) {
+        if (sGestureBarHandleBottomPx > 0) return sGestureBarHandleBottomPx;
+        android.view.View handle = findHandleInTree(root);
+        if (handle != null) rememberGestureBarHeight(handle);
+        // 反编译资源 navigation_handle_bottom = 7dp。
+        return sGestureBarHandleBottomPx > 0
+                ? sGestureBarHandleBottomPx : Math.round(7f * readDensity());
     }
 
     static android.view.View findHandleInTree(android.view.View v) {
@@ -242,21 +261,17 @@ public final class GestureHooks {
     }
 
     // 取 mBack 热区顶部 -> 窗口底部这一段: 返回热区顶部在 host 坐标系中的 y。
-    // 口径与 MBackSurface 水波纹位置一致(该位置在设备上已验证正确)。
+    // 口径与 MBackSurface 一致(以白条绘制中心垂直居中, 上下各 padding 留白):
+    // 白条中心 y = host 高 - mHandleBottom - mHeight/2 - 画布上移量,
+    // 热区顶部 = 白条中心 - (mHeight + 2*padding)/2。
     // 不能用 getLocationInWindow: OplusNavigationHandle 铺满整个导航栏窗口,
     // 其 top 相对 host 恒为 0, 会退化成"整条导航栏"。
     static int computeGestureBandTop(android.view.View host, int barHeight) {
         float density = readDensity();
-        int padding = Math.round(GESTURE_BAND_PADDING_DP * density);
-        int gestureZoneHeight = barHeight + padding * 2;
-        int extraPx = 0;
-        if (readInt(KEY_GESTURE_BAR_HEIGHT_ENABLED, 1) == 1) {
-            int extraDp = Math.max(0, Math.min(20, readInt(KEY_GESTURE_BAR_HEIGHT_DP, 10)));
-            extraPx = Math.round(extraDp * density);
-        }
-        int bottomOffset = Math.max(0,
-                extraPx / 2 + Math.round(GESTURE_BAND_MARGIN_BOTTOM_DP * density));
-        return Math.max(0, host.getHeight() - gestureZoneHeight - bottomOffset);
+        int padding = Math.round(getMBackBandPaddingDp() * density);
+        int handleBottom = getGestureBarHandleBottomPx(host);
+        return Math.max(0, host.getHeight() - handleBottom - barHeight - padding
+                - getGestureBarCanvasLiftPx());
     }
 
     static GestureBlockSurface ensureGestureBlockSurface(android.view.View handle) {
@@ -386,7 +401,7 @@ public final class GestureHooks {
     static boolean isInMBackBarRange(android.view.View handle,
             android.view.MotionEvent ev) {
         try {
-            int padding = Math.round(GESTURE_BAND_PADDING_DP * readDensity());
+            int padding = Math.round(getMBackBandPaddingDp() * readDensity());
             float x = ev.getX();
             int left = XposedHelpers.getIntField(handle, "viewScreenLeft");
             int right = left + handle.getWidth();
@@ -565,16 +580,20 @@ public final class GestureHooks {
             }
         };
 
-        // MBackSurface 基于手势白条尺寸，上下各固定留白 8dp，高度 = 白条高度 + 2*留白。
+        // MBackSurface 完全跟随白条实际绘制位置：与白条中心严格垂直居中，
+        // 尺寸 = 白条尺寸 + 上下左右各 getMBackBandPaddingDp() 留白。
+        // 白条在 OplusNavigationHandle 内的绘制区域为
+        // [viewHeight - mHandleBottom - mHeight, viewHeight - mHandleBottom]（见反编译 onDraw），
+        // 防烧屏通过 setTranslationY 平移整个 View，getLocationInWindow 经矩阵映射已含该位移。
 
         void update() {
             if (getParent() != host) return;
             int barHeight = getSourceInt("mHeight", source.getHeight());
+            int handleBottom = getSourceInt("mHandleBottom", 0);
             float density = readDensity();
-            int padding = Math.round(GESTURE_BAND_PADDING_DP * density);
-            int gestureZoneHeight = barHeight + padding * 2;
+            int padding = Math.round(getMBackBandPaddingDp() * density);
             int width = source.getWidth() + padding * 2;
-            int height = gestureZoneHeight;
+            int height = barHeight + padding * 2;
             android.widget.FrameLayout.LayoutParams lp =
                     (android.widget.FrameLayout.LayoutParams) getLayoutParams();
             if (lp.width != width || lp.height != height) {
@@ -582,14 +601,18 @@ public final class GestureHooks {
                 lp.height = height;
                 setLayoutParams(lp);
             }
-            // 从下方（贴手势区底）布局，底部避开手势区加高的一半（extraPx/2）。
             int[] sourceLocation = new int[2];
             int[] hostLocation = new int[2];
             source.getLocationInWindow(sourceLocation);
             host.getLocationInWindow(hostLocation);
             int barCenterXInHost = (sourceLocation[0] - hostLocation[0]) + source.getWidth() / 2;
+            // 白条绘制中心在 host 坐标系中的 y：View 顶 + 白条中心相对 View 顶的偏移，
+            // 再扣除手势条加高模块在 onDraw 中的画布上移量。
+            int barCenterYInHost = (sourceLocation[1] - hostLocation[1])
+                    + source.getHeight() - handleBottom - barHeight / 2
+                    - getGestureBarCanvasLiftPx();
             setX(barCenterXInHost - width / 2);
-            setY(computeGestureBandTop(host, barHeight));
+            setY(barCenterYInHost - height / 2);
             invalidate();
         }
 
@@ -652,9 +675,9 @@ public final class GestureHooks {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             try {
-                                if (readInt(KEY_GESTURE_BAR_HEIGHT_ENABLED, 1) != 1) return;
-                                int dp = Math.max(0, Math.min(20,
-                                        readInt(KEY_GESTURE_BAR_HEIGHT_DP, 10)));
+                                if (readInt(KEY_GESTURE_BAR_HEIGHT_ENABLED, 0) != 1) return;
+                                int dp = Math.max(0, Math.min(24,
+                                        readInt(KEY_GESTURE_BAR_HEIGHT_DP, 12)));
                                 int extraPx = Math.round(dp * readDensity());
                                 android.view.WindowManager.LayoutParams lp =
                                         (android.view.WindowManager.LayoutParams) param.getResult();
@@ -677,9 +700,8 @@ public final class GestureHooks {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
-                                int dp = 10;
-                                if (dp <= 0) return;
-                                int half = Math.round(dp * readDensity() * 0.5f);
+                                int half = getGestureBarCanvasLiftPx();
+                                if (half <= 0) return;
                                 android.graphics.Canvas c = (android.graphics.Canvas) param.args[0];
                                 c.save();
                                 c.translate(0, -half);
@@ -717,6 +739,15 @@ public final class GestureHooks {
         } catch (Throwable t) {
             log("gesture_bar hook (handle) failed: " + t);
         }
+    }
+
+    // 手势条加高模块在 OplusNavigationHandle#onDraw 中的画布上移量(px)。
+    // MBackSurface 定位需扣除同一数值，两者必须保持一致。
+    static int getGestureBarCanvasLiftPx() {
+        if (readInt(KEY_GESTURE_BAR_HEIGHT_ENABLED, 0) != 1) return 0;
+        int dp = 10;
+        if (dp <= 0) return 0;
+        return Math.round(dp * readDensity() * 0.5f);
     }
 
     static void applyGestureBarWidth(android.view.View view) {

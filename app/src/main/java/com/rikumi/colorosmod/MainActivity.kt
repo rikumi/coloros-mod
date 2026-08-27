@@ -150,9 +150,9 @@ private val FLOATWINDOW = listOf(
 )
 
 private val NAV = listOf(
-    SwitchItem("gesture_bar_height_enabled", "调整底部手势区高度", "缓解屏幕底部圆角区域吃掉应用内容", "gesture_bar_height_dp", 32, 16),
+    SwitchItem("gesture_bar_height_enabled", "增大底部手势区高度", "缓解屏幕底部圆角区域吃掉应用内容", "gesture_bar_height_dp", 24, 12),
     SwitchItem("gesture_bar_width_enabled", "调整手势滑动条宽度", sliderKey = "gesture_bar_width_dp", sliderMax = 120, sliderDefault = 100, sliderUnit = "dp", defaultEnabled = true, sliderMin = 80),
-    SwitchItem("gesture_bar_long_press_disable_enabled", "禁止长按手势条放大", "理论可弥补 OxygenOS 没有助手设置项的问题", defaultEnabled = true),
+    SwitchItem("gesture_bar_long_press_disable_enabled", "禁止手势条动画效果", "理论可解决 OxygenOS 关不掉助手动画的问题", defaultEnabled = true),
     SwitchItem("mback_enabled", "启用 mBack", "点击手势条返回，长按回桌面"),
     SwitchItem("gesture_touch_through_enabled", "避免手势区域点击穿透"),
 )

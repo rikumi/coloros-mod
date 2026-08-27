@@ -75,7 +75,7 @@ public class XposedInit implements IXposedHookLoadPackage {
     public static final String KEY_EDIT_MODE_BG_TRANSPARENT_ENABLED = "edit_mode_bg_transparent_enabled";
     // Feature 10 — 合并控制中心背景 scrim 亮度 (com.android.systemui)
     public static final String KEY_QS_SCRIM_TRANSLUCENT_ENABLED = "qs_scrim_translucent_enabled";
-    // 背景亮度滑条键(0-20, 默认 10): 0=全黑, 20=系统默认 lumin(不压暗)。
+    // 背景亮度滑条键(0-20, 默认 5): 0=全黑, 20=系统默认 lumin(不压暗)。
     public static final String KEY_QS_SCRIM_BRIGHTNESS = "qs_scrim_brightness";
     // 控制中心 WLAN/蓝牙 名称单行省略: 可伸缩 tile 的次级名称(SSID / 蓝牙设备名)承载在
     // labelDesc(TextSwitcher, R.id.tile_label_desc), 由 updateLabelDescText 经 TextSwitcherExtKt
@@ -121,16 +121,15 @@ public class XposedInit implements IXposedHookLoadPackage {
             new java.util.concurrent.ConcurrentHashMap<String, Object[]>(); // key -> {Long ts, Boolean val}
 
     public static final int ICON_GAP_DP = 4;
-    public static final int INDICATOR_REDUCE_DP = 32; // requested page-to-Dock gap reduction in dp
-    public static final int INDICATOR_REDUCE_MAX_DP = 128;
+    public static final int INDICATOR_REDUCE_DP = 16; // requested page-to-Dock gap reduction in dp
     public static final int QS_FOOTER_MARGIN_DP = 8; // smaller top gap for footer (date/settings) so it sinks a little
     public static final float SUBTITLE_ORIG_SP = 24f; // system default subtitle text size
     public static final int SUBTITLE_REDUCE_SP_DEFAULT = 8; // default reduction (24sp -> 16sp); slider 0..2x
     public static final float SUBTITLE_OFFSET_DP = 8f; // move subtitle up & right by 8dp each (at default reduction)
     public static final int SUBTITLE_PAD_DP = 4; // extra top & bottom padding for the subtitle tv (at default reduction)
     public static final int NOTIFICATION_PADDING_DP = 4; // extra top & bottom padding for non-minimized (non-silent) notifications
-    // 控制中心背景亮度: 默认 10(对应约 50% 系统默认 lumin); 系统默认 lumin 的 RGB 值为 0x33(51)。
-    public static final int QS_SCRIM_BRIGHTNESS_DEFAULT = 10;
+    // 控制中心背景亮度: 默认 5(对应约 25% 系统默认 lumin); 系统默认 lumin 的 RGB 值为 0x33(51)。
+    public static final int QS_SCRIM_BRIGHTNESS_DEFAULT = 5;
     public static final int QS_SCRIM_LUMIN_MAX = 0x33;
 
     // 调试日志: 仅用 Log.e(error 级别), 因为 ColorOS 会丢弃 Log.d/v/i/w 等非 error 日志。

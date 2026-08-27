@@ -241,7 +241,9 @@ public final class SystemUiHooks {
                                 if (!readBool(KEY_NOTIFICATION_SUBTITLE_ENABLED, false)) return;
                                 // 滑条 = 字号缩减量(0=系统默认 24sp, 默认 8sp -> 16sp, 最大 16sp -> 8sp);
                                 // 偏移与额外内边距按缩减比例等比缩放, 缩减为 0 时整体即系统默认样式。
-                                int reduceSp = readInt(KEY_NOTIFICATION_SUBTITLE_SP, SUBTITLE_REDUCE_SP_DEFAULT);
+                                int reduceSp = Math.max(0, Math.min(16,
+                                        readInt(KEY_NOTIFICATION_SUBTITLE_SP,
+                                                SUBTITLE_REDUCE_SP_DEFAULT)));
                                 float t = reduceSp / (float) SUBTITLE_REDUCE_SP_DEFAULT;
                                 float fontSizePx = (SUBTITLE_ORIG_SP - reduceSp) * density;
                                 float offsetPx = SUBTITLE_OFFSET_DP * t * density;
@@ -306,8 +308,9 @@ public final class SystemUiHooks {
                             try {
                                 // 低频路径: 刷新缓存值供高频 hook 读取。
                                 boolean enabled = readBool(KEY_NOTIFICATION_PADDING_ENABLED, false);
-                                int padPx = Math.round(
-                                        readInt(KEY_NOTIFICATION_PADDING_DP, NOTIFICATION_PADDING_DP) * density);
+                                int padPx = Math.round(Math.max(0, Math.min(8,
+                                        readInt(KEY_NOTIFICATION_PADDING_DP,
+                                                NOTIFICATION_PADDING_DP))) * density);
                                 sNotifPadEnabled = enabled;
                                 sNotifPadPx = padPx;
 
