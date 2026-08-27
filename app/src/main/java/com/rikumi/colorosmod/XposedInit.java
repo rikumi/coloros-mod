@@ -1560,8 +1560,8 @@ public class XposedInit implements IXposedHookLoadPackage {
         };
 
         // MBackSurface 基于手势白条尺寸，上下各固定留白 8dp，高度 = 白条高度 + 2*留白。
-        private static final float MBACK_PADDING_DP = 7.5f;
-        private static final float MBACK_MARGIN_BOTTOM_DP = -3.5f;
+        private static final float MBACK_PADDING_DP = 8f;
+        private static final float MBACK_MARGIN_BOTTOM_DP = -4f;
 
         void update() {
             if (getParent() != host) return;
