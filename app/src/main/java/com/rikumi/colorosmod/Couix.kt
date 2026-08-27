@@ -119,12 +119,8 @@ fun couixTextStyles(): TextStyles {
     )
 }
 
-/**
- * 分组副标题（顶部小标题）：比 miuix SmallTitle 更小、常规字重。
- * miuix SmallTitle 用 subtitle(14sp/Bold) 且不支持外部覆盖字号字重，
- * 这里用 BasicText 直接绘制，颜色跟随 onSurfaceVariantSummary，
- * 左右内缩 28dp、上下 4dp（与分组卡片间距较小）。
- */
+// 分组副标题（顶部小标题）：比 miuix SmallTitle 更小、常规字重。
+// miuix SmallTitle 用 subtitle(14sp/Bold) 且不支持外部覆盖字号字重，故用 BasicText 直接绘制。
 @Composable
 fun CouixSmallTitle(
     text: String,
@@ -336,12 +332,9 @@ fun CouixItemDivider(modifier: Modifier = Modifier) {
     )
 }
 
-/**
- * 一个设置分组卡片：圆角更小，item 之间用 1px 分割线（内缩 24dp）隔开。
- * 配合上方 SmallTitle 的较小 insideMargin，分组副标题到卡片的间距也更小。
- * version 用于强制各开关在外部(如"全部开启/关闭")改动后重新读取 prefs; onItemChanged 在
- * 任一项切换时回调, 供顶层刷新主开关状态。
- */
+// 一个设置分组卡片：圆角更小，item 之间用 1px 分割线（内缩 24dp）隔开。
+// version 用于强制各开关在外部(如"全部开启/关闭")改动后重新读取 prefs; onItemChanged 在
+// 任一项切换时回调, 供顶层刷新主开关状态。
 @Composable
 internal fun CouixGroup(
     items: List<SwitchItem>,
@@ -644,13 +637,9 @@ fun CouixMasterToggle(
     }
 }
 
-/**
- * ColorOS 风格自绘滑条: 轨道加高加圆成胶囊容器, 滑块内嵌其中(四周留 2dp 间隙);
- * 激活部分与滑块同宽(高)同圆角, 从轨道内左缘延伸到滑块右缘, 二者连成一个胶囊。
- * 支持点按与水平拖动, value 为 0..1 的比例; 只响应水平手势, 不消费竖直滚动。
- * 拖动时轨道与激活部分为全高(24dp); 未拖动时二者高度动画收缩为 COUIX_SLIDER_TRACK_H_IDLE
- * (滑块尺寸不变, 突出于收缩后的轨道之上)。
- */
+// ColorOS 风格自绘滑条: 轨道加高加圆成胶囊容器, 滑块内嵌其中(四周留 2dp 间隙); 激活部分与
+// 滑块同宽同圆角, 从轨道内左缘延伸到滑块右缘, 二者连成一个胶囊。只响应水平手势, 不消费竖直滚动。
+// 拖动时轨道为全高(24dp), 未拖动时高度动画收缩为 COUIX_SLIDER_TRACK_H_IDLE(滑块尺寸不变)。
 @Composable
 fun CouixSlider(
     value: Float,

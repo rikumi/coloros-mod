@@ -317,12 +317,8 @@ private fun restartScope(ctx: Context) {
     }
 }
 
-/**
- * 重启 Zygote（对齐 KernelSU 实现）：通过 init 的 ctl.restart 属性重启 zygote 服务。
- * 这会让 Android 用户空间（system_server 与全部应用）重新拉起，但 Linux 内核不重启，
- * 因此 KernelSU（内核模块）及其挂载/注入的模块（含 LSPosed Zygisk）在重启后依然生效。
- * 与完整 reboot 不同，本操作不会丢失越狱环境。
- */
+// 重启 Zygote（对齐 KernelSU 实现）：通过 init 的 ctl.restart 属性重启 zygote 服务。
+// 只重启 Android 用户空间，Linux 内核不重启，因此 KernelSU 与 LSPosed Zygisk 依然生效。
 private fun softRebootSystem(ctx: Context) {
     runCatching {
         Runtime.getRuntime().exec("su").also { p ->
@@ -337,21 +333,10 @@ private fun softRebootSystem(ctx: Context) {
     }
 }
 
-/**
- * 读取 ColorOS 主题色(强调色)。
- *
- * ColorOS 的主题色是 COUI 主题系统里的 couiColorPrimary, 与 Android 莫奈动态色
- * (system_accent1_*) 是两套独立体系。SystemUI 在 OpUtils#getThemeAccentColor 里
- * 通过 ContextThemeWrapper(Theme_SystemUI) + COUIThemeOverlay.applyThemeOverlays()
- * resolve R.attr.couiColorPrimary 得到当前主题色, 并把它落盘到
- * Settings.Secure["sysui_type_accent_color"](格式 "#RRGGBB", 如 "#ff8c909f")。
- *
- * 因此直接读这个 key 即可拿到用户当前主题色(实测 #ff8c909f, 即略微偏蓝的灰色)。
- * 兜底: 若 SystemUI 尚未写入, 退而读 theme_customization_overlay_packages JSON 里的
- * accent_color / system_palette(值为无 "#" 前缀的 hex, 补前缀后 Color.parseColor)。
- *
- * @param fallback 所有来源都拿不到颜色时的兜底色(0xAARRGGBB)。
- */
+// 读取 ColorOS 主题色(强调色)。SystemUI 在 OpUtils#getThemeAccentColor 里 resolve
+// R.attr.couiColorPrimary 并落盘到 Settings.Secure["sysui_type_accent_color"]("#RRGGBB"),
+// 直接读该 key 即可(与 Android 莫奈动态色 system_accent1_* 是两套独立体系)。
+// 兜底: 退而读 theme_customization_overlay_packages JSON 里的 accent_color / system_palette。
 private fun colorOSAccentColor(context: Context, fallback: Long): Color {
     return try {
         // 首选: SystemUI 计算并缓存的 ColorOS 主题色。
@@ -407,17 +392,9 @@ private fun hasRootAccess(): Boolean {
     return runRoot("id -u")?.trim() == "0"
 }
 
-/**
- * 模块是否已在 LSPosed 中启用。
- *
- * LSPosed 1.8+ 把模块启用状态存在 SQLite 库 /data/adb/lspd/config/modules_config.db 的
- * modules_state 表(enabled 字段), 且启用/禁用的变更常驻留在 -wal 文件里尚未 checkpoint。
- * 因此不能只读主 .db(会读到旧的 enabled=1), 必须连同 -wal/-shm 一起拷出后用只读方式打开,
- * 让 SQLite 自动合并 WAL 得到最新状态。
- *
- * 判定: modules_state 中存在本模块记录且 enabled=1 才算启用; 记录不存在(LSPosed 禁用时会
- * 删除该记录)或 enabled=0 都视为未启用。任何异常 / 无 root / 路径不存在一律返回 false。
- */
+// 模块是否已在 LSPosed 中启用。状态存在 SQLite 库 modules_config.db 的 modules_state 表,
+// 但变更常驻留在 -wal 里未 checkpoint, 故不能只读主 .db(会读到旧的 enabled=1), 必须连同
+// -wal/-shm 一起拷出后只读打开, 让 SQLite 自动合并 WAL。判定: 有本模块记录且 enabled=1。
 private fun isModuleEnabledInLsposed(ctx: Context, pkg: String): Boolean {
     val db = File(ctx.cacheDir, "lspd_modules_config.db")
     // 先删旧拷贝再重新拷出(连同 wal/shm), 避免上次残留的旧数据库造成误判。
