@@ -1560,7 +1560,8 @@ public class XposedInit implements IXposedHookLoadPackage {
         };
 
         // MBackSurface 基于手势白条尺寸，上下各固定留白 8dp，高度 = 白条高度 + 2*留白。
-        private static final int MBACK_PADDING_DP = 8;
+        private static final float MBACK_PADDING_DP = 7.5f;
+        private static final float MBACK_MARGIN_BOTTOM_DP = -3.5f;
 
         void update() {
             if (getParent() != host) return;
@@ -1589,7 +1590,7 @@ public class XposedInit implements IXposedHookLoadPackage {
             }
             int barCenterXInHost = (sourceLocation[0] - hostLocation[0]) + source.getWidth() / 2;
             setX(barCenterXInHost - width / 2);
-            setY(Math.max(0, host.getHeight() - gestureZoneHeight - Math.max(0, extraPx / 2 - Math.round(1 * density))));
+            setY(Math.max(0, host.getHeight() - gestureZoneHeight - Math.max(0, extraPx / 2 + Math.round(MBACK_MARGIN_BOTTOM_DP * density))));
             invalidate();
         }
 
