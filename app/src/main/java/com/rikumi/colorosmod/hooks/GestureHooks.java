@@ -102,16 +102,14 @@ public final class GestureHooks {
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
-                            if (readBool(KEY_MBACK_ENABLED, false)) {
-                                ensureMBackSurface((android.view.View) param.thisObject);
-                            }
+                            syncMBackSurface((android.view.View) param.thisObject);
                         }
                     });
             XposedHelpers.findAndHookMethod(handleClass, "onLayout", boolean.class,
                     int.class, int.class, int.class, int.class, new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
-                            updateMBackSurface((android.view.View) param.thisObject);
+                            syncMBackSurface((android.view.View) param.thisObject);
                         }
                     });
             XposedHelpers.findAndHookMethod(handleClass, "onDetachedFromWindow",
@@ -144,12 +142,13 @@ public final class GestureHooks {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             try {
-                                if (!readBool(KEY_GESTURE_TOUCH_THROUGH_ENABLED, false)) return;
                                 Object info = param.args[0];
                                 Object navBar = XposedHelpers.getObjectField(param.thisObject, "f$0");
                                 Object viewObj = XposedHelpers.getObjectField(navBar, "mView");
                                 if (viewObj instanceof android.view.View) {
                                     android.view.View view = (android.view.View) viewObj;
+                                    // 通知中心/控制中心展开时保留系统原始区域, 不做任何拦截。
+                                    if (!isGestureBlockActive(view)) return;
                                     // 触摸区域决定窗口真正拦截的范围(导航栏窗口实测 179px 高,
                                     // 设成整窗口会挡住底部整条)。只取 mBack 热区顶部到窗口
                                     // 底部这一段; 其上方的事件照旧透传给下层应用。
@@ -181,16 +180,14 @@ public final class GestureHooks {
                         protected void afterHookedMethod(MethodHookParam param) {
                             android.view.View handle = (android.view.View) param.thisObject;
                             rememberGestureBarHeight(handle);
-                            if (readBool(KEY_GESTURE_TOUCH_THROUGH_ENABLED, false)) {
-                                ensureGestureBlockSurface(handle);
-                            }
+                            syncGestureBlockSurface(handle);
                         }
                     });
             XposedHelpers.findAndHookMethod(handleClass, "onLayout", boolean.class,
                     int.class, int.class, int.class, int.class, new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
-                            updateGestureBlockSurface((android.view.View) param.thisObject);
+                            syncGestureBlockSurface((android.view.View) param.thisObject);
                         }
                     });
             XposedHelpers.findAndHookMethod(handleClass, "onDetachedFromWindow",
@@ -202,6 +199,30 @@ public final class GestureHooks {
                     });
         } catch (Throwable t) {
             log("gesture touch-through hook failed: " + t);
+        }
+        // 面板展开/收起时导航栏窗口不一定重算 insets, 靠 onComputeInternalInsets 无法及时撤销
+        // 拦截。OplusNavigationBarView.updateSlippery 在 CentralSurfacesImpl 的展开 fraction
+        // 达到 0/1 以及 QS 展开变化时都会被调用, 是可靠的同步时机。
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.oplusos.systemui.navigationbar.OplusNavigationBarView",
+                    lpparam.classLoader, "updateSlippery", new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                android.view.View navBarView = (android.view.View) param.thisObject;
+                                android.view.View handle = findHandleInTree(navBarView);
+                                if (handle == null) return;
+                                syncGestureBlockSurface(handle);
+                                // 触发一次 traversal 让 touchableRegion 按新状态重算。
+                                navBarView.requestLayout();
+                            } catch (Throwable t) {
+                                dbg("gesture block shade sync error: " + t);
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            log("gesture block shade sync hook failed: " + t);
         }
     }
 
@@ -245,6 +266,36 @@ public final class GestureHooks {
         // 反编译资源 navigation_handle_bottom = 7dp。
         return sGestureBarHandleBottomPx > 0
                 ? sGestureBarHandleBottomPx : Math.round(7f * readDensity());
+    }
+
+    // 通知中心/控制中心是否已展开。从 view 向上找到 NavigationBarView
+    // (OplusNavigationBarView), 读其 mPanelExpansionInteractor 判断。
+    static boolean isShadeExpanded(android.view.View view) {
+        android.view.View v = view;
+        while (v != null) {
+            // 只在导航栏根布局这一层做反射, 避免每层都触发字段查找异常。
+            if (v.getClass().getName().endsWith("NavigationBarView")) {
+                Object interactor = null;
+                try {
+                    interactor = XposedHelpers.getObjectField(v, "mPanelExpansionInteractor");
+                } catch (Throwable ignored) {
+                    // 字段尚未注入(多实例场景), 按未展开处理。
+                }
+                if (interactor == null) return false;
+                try {
+                    return Boolean.TRUE.equals(
+                            XposedHelpers.callMethod(interactor, "isFullyExpanded"))
+                            || Boolean.TRUE.equals(
+                                    XposedHelpers.callMethod(interactor, "isPanelExpanded"));
+                } catch (Throwable t) {
+                    dbg("shade expanded check error: " + t);
+                    return false;
+                }
+            }
+            android.view.ViewParent parent = v.getParent();
+            v = (parent instanceof android.view.View) ? (android.view.View) parent : null;
+        }
+        return false;
     }
 
     static android.view.View findHandleInTree(android.view.View v) {
@@ -304,6 +355,23 @@ public final class GestureHooks {
         Object surface = XposedHelpers.getAdditionalInstanceField(handle, "gesture_block_surface");
         if (surface instanceof GestureBlockSurface) {
             ((GestureBlockSurface) surface).update();
+        }
+    }
+
+    // 防穿透拦截层严格跟随 gesture_touch_through_enabled 运行期取值, 与 mBack 无关:
+    // 开则创建/更新, 关则立即从视图树移除(否则会残留到下次 SystemUI 重启)。
+    // 通知中心/控制中心展开时一律不生效: 面板窗口本身已接管触摸,
+    // 继续吞掉手势带事件只会让面板底部区域点不动。
+    static boolean isGestureBlockActive(android.view.View view) {
+        return readBool(KEY_GESTURE_TOUCH_THROUGH_ENABLED, false) && !isShadeExpanded(view);
+    }
+
+    static void syncGestureBlockSurface(android.view.View handle) {
+        if (isGestureBlockActive(handle)) {
+            ensureGestureBlockSurface(handle);
+        } else if (XposedHelpers.getAdditionalInstanceField(
+                handle, "gesture_block_surface") != null) {
+            removeGestureBlockSurface(handle);
         }
     }
 
@@ -432,14 +500,9 @@ public final class GestureHooks {
         if (host == null) return null;
         MBackSurface surface = new MBackSurface(handle, host);
         surface.setVisibility(android.view.View.INVISIBLE);
-        surface.setClickable(true);
-        surface.setFocusable(true);
-        surface.setOnTouchListener(new android.view.View.OnTouchListener() {
-            @Override
-            public boolean onTouch(android.view.View view, android.view.MotionEvent event) {
-                return true;
-            }
-        });
+        // 纯视觉反馈层: 不 clickable / 不 focusable / 不设 OnTouchListener。
+        // 白条 View 铺满整个导航栏窗口, 一旦这层参与触摸分发就会变成全宽拦截层,
+        // 等于在只开 mBack 时也屏蔽了手势区域穿透。
         android.widget.FrameLayout.LayoutParams lp =
                 new android.widget.FrameLayout.LayoutParams(1, 1);
         host.addView(surface, 0, lp);
@@ -466,6 +529,16 @@ public final class GestureHooks {
     static void updateMBackSurface(android.view.View handle) {
         Object surface = XposedHelpers.getAdditionalInstanceField(handle, "mback_surface");
         if (surface instanceof MBackSurface) ((MBackSurface) surface).update();
+    }
+
+    // mBack 反馈层严格跟随 mback_enabled 运行期取值: 开则创建/更新, 关则立即移除。
+    // 它只是一层视觉反馈(Ripple), 绝不能参与触摸拦截, 与防穿透功能完全无关。
+    static void syncMBackSurface(android.view.View handle) {
+        if (readBool(KEY_MBACK_ENABLED, false)) {
+            ensureMBackSurface(handle);
+        } else if (XposedHelpers.getAdditionalInstanceField(handle, "mback_surface") != null) {
+            removeMBackSurface(handle);
+        }
     }
 
     static void hideMBackSurface(android.view.View handle) {
