@@ -19,6 +19,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -38,8 +40,10 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,6 +57,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -72,7 +77,10 @@ import kotlin.math.roundToInt
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardColors
 import top.yukonga.miuix.kmp.basic.CardDefaults
+import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.ChevronForward
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.TextStyles
 import top.yukonga.miuix.kmp.theme.defaultTextStyles
@@ -82,9 +90,9 @@ import top.yukonga.miuix.kmp.theme.defaultTextStyles
  * 不直接改动 miuix 库本身，而是用一组包装 Composable 调整尺寸/间距/文字/圆角。
  */
 
-// 开关目标尺寸（miuix 默认 49x28dp -> 缩小到约 40x24dp）。
-private val COUIX_SWITCH_W = 40.dp
-private val COUIX_SWITCH_H = 24.dp
+// 开关目标尺寸（miuix 默认 49x28dp -> 缩小到约 36x22dp）。
+private val COUIX_SWITCH_W = 36.dp
+private val COUIX_SWITCH_H = 22.dp
 private val COUIX_SWITCH_RADIUS = 12.dp
 private val COUIX_SWITCH_THUMB_R = 8.dp
 
@@ -99,6 +107,9 @@ private val COUIX_CARD_CORNER = 12.dp
 // 分组左右外边距（相对屏幕边缘）。
 private val COUIX_GROUP_HMARGIN = 16.dp
 
+// 卡片下方留白 = 相邻 section 之间的间距（首页卡片→卡片、子页面卡片→下一节小标题）。
+private val COUIX_CARD_BOTTOM_GAP = 16.dp
+
 // 分割线两端距离 group 边界的内缩。
 private val COUIX_DIVIDER_INSET = 16.dp
 
@@ -109,6 +120,42 @@ private val COUIX_ROW_VPADDING = 13.dp
 // 下拉菜单宽度。
 private val COUIX_DROPDOWN_WIDTH = 160.dp
 private val COUIX_DROPDOWN_TRANSFORM_ORIGIN = TransformOrigin(0.85f, 0f)
+
+// 标题栏底部分割线: 界面上滑时出现, 初始两端各内缩 16dp, 随滚动量在该距离内逐渐延长至通栏。
+private val TOP_BAR_DIVIDER_INSET = 16.dp
+private val TOP_BAR_DIVIDER_EXTEND_SCROLL = 48.dp
+
+// 子页面返回按钮图标尺寸: miuix 图标固有尺寸为 24dp, 此处略微放大。
+internal val COUIX_BACK_ICON = 26.dp
+
+// 标题栏(首页大标题 / 子页面标题)共用尺寸: 垂直内边距、右侧内缩、标题字号三者一致,
+// 保证两种页面的标题栏高度完全相同。两侧都放有 40dp 的 IconButton(重启菜单),
+// 因此行高由它决定, 标题再高也不会撑开。
+private val COUIX_TOP_BAR_VPADDING = 8.dp
+private val COUIX_TOP_BAR_END = 16.dp
+
+// 子页面: 返回按钮左侧内缩, 以及返回按钮与标题之间的间距。
+private val COUIX_TOP_BAR_START = 8.dp
+private val COUIX_TOP_BAR_TITLE_GAP = 8.dp
+
+// 首页: 没有返回按钮, 标题自身按此值内缩(只影响水平位置, 不影响高度)。
+private val COUIX_LARGE_TITLE_START = 24.dp
+
+// 分类入口行: 图标尺寸及图标与标题的间距（无底色容器，图标直接绘制）。
+private val COUIX_CATEGORY_ICON = 22.dp
+private val COUIX_CATEGORY_ICON_GAP = 14.dp
+
+// 分类入口行右侧"进入子菜单"箭头尺寸: 明显小于左侧分类图标, 只作指示不抢视觉。
+private val COUIX_CATEGORY_CHEVRON = 16.dp
+
+// 该箭头在 onSurfaceVariantSummary 之上再压低不透明度, 进一步弱化。
+private const val COUIX_CATEGORY_CHEVRON_ALPHA = 0.6f
+
+// 分类入口行右侧副标题与标题/箭头之间的间隔。
+private val COUIX_CATEGORY_SUBTITLE_GAP = 12.dp
+
+// 分类入口行标题左边缘相对卡片左缘的距离: 带图标 item 的分割线从此处起，避开图标。
+internal val COUIX_CATEGORY_TEXT_START = COUIX_ROW_HPADDING + COUIX_CATEGORY_ICON + COUIX_CATEGORY_ICON_GAP
 
 /** 列表项标题采用粗体文字。 */
 fun couixTextStyles(): TextStyles {
@@ -137,44 +184,220 @@ fun CouixSmallTitle(
     )
 }
 
+/** 标题栏标题文字样式: 首页与子页面完全一致(title3 加粗)。 */
+@Composable
+private fun couixTopBarTitleStyle(): TextStyle =
+    MiuixTheme.textStyles.title3.copy(
+        color = MiuixTheme.colorScheme.onSurface,
+        fontWeight = FontWeight.Bold,
+    )
+
 /**
- * 自绘页面大标题：miuix TopAppBar 的大标题用固定 title2 样式（无法外部覆盖字重），
- * 这里用 BasicText 直接绘制，复用 title2 字号/字距、仅加粗，并自行处理状态栏 inset
+ * 标题栏外框: 首页大标题与子页面标题共用, 统一状态栏 inset、垂直内边距与底部分割线,
+ * 从而保证两种页面的标题栏高度完全相同。startPadding 因首页无返回按钮而不同,
+ * 但只影响水平位置, 不影响高度。
+ */
+@Composable
+private fun CouixTopBarFrame(
+    startPadding: Dp,
+    modifier: Modifier = Modifier,
+    dividerProgress: Float = 0f,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Box(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(
+                    start = startPadding,
+                    end = COUIX_TOP_BAR_END,
+                    top = COUIX_TOP_BAR_VPADDING,
+                    bottom = COUIX_TOP_BAR_VPADDING,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) { content() }
+        CouixTopBarDivider(progress = dividerProgress)
+    }
+}
+
+/**
+ * 自绘页面大标题：miuix TopAppBar 的大标题用固定样式（无法外部覆盖字重），
+ * 这里用 BasicText 直接绘制，仅加粗，并自行处理状态栏 inset
  * 与右侧 actions（如重启按钮）的布局。
+ * 高度与字号与 [CouixTopAppBar] 保持一致。
  */
 @Composable
 fun CouixLargeTitle(
     title: String,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    dividerProgress: Float = 0f,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
-    Column(
+    CouixTopBarFrame(
+        startPadding = COUIX_LARGE_TITLE_START,
+        modifier = modifier,
+        dividerProgress = dividerProgress,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            BasicText(text = title, style = couixTopBarTitleStyle())
+            if (subtitle != null) {
+                BasicText(
+                    text = subtitle,
+                    style = TextStyle(
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        fontSize = 12.sp,
+                    ),
+                )
+            }
+        }
+        actions()
+    }
+}
+
+/**
+ * 依据列表滚动状态计算标题栏分割线进度:
+ * 首项仍在屏幕内时按真实滚动偏移延长, 首项离开后保持通栏。
+ */
+@Composable
+internal fun couixTopBarDividerProgress(listState: LazyListState): Float {
+    val density = LocalDensity.current
+    return remember(listState, density) {
+        derivedStateOf {
+            if (listState.firstVisibleItemIndex > 0) {
+                1f
+            } else {
+                val scrollPx = listState.firstVisibleItemScrollOffset.toFloat()
+                (scrollPx / with(density) { TOP_BAR_DIVIDER_EXTEND_SCROLL.toPx() })
+                    .coerceIn(0f, 1f)
+            }
+        }
+    }.value
+}
+
+/** 标题栏底部分割线: 随 [progress] 从两端内缩逐渐延长至通栏。 */
+@Composable
+internal fun BoxScope.CouixTopBarDivider(progress: Float) {
+    val density = LocalDensity.current
+    if (progress > 0f) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = TOP_BAR_DIVIDER_INSET * (1f - progress))
+                .height((1f / density.density).dp)
+                .background(Color.White.copy(alpha = 0.26f * progress)),
+        )
+    }
+}
+
+/**
+ * 子页面标题栏: 左侧返回按钮 + 小标题, 右侧 actions（如重启菜单），
+ * 底部同样带随列表滚动延长的分割线。
+ */
+@Composable
+fun CouixTopAppBar(
+    title: String,
+    modifier: Modifier = Modifier,
+    dividerProgress: Float = 0f,
+    navigationIcon: @Composable () -> Unit = {},
+    actions: @Composable RowScope.() -> Unit = {},
+) {
+    CouixTopBarFrame(
+        startPadding = COUIX_TOP_BAR_START,
+        modifier = modifier,
+        dividerProgress = dividerProgress,
+    ) {
+        navigationIcon()
+        BasicText(
+            text = title,
+            style = couixTopBarTitleStyle(),
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = COUIX_TOP_BAR_TITLE_GAP),
+        )
+        actions()
+    }
+}
+
+/**
+ * 分组卡片容器: 与 CouixGroup 同款（更小圆角、略弱底色）,
+ * 供首页分类列表等自定义内容复用。
+ */
+@Composable
+internal fun CouixCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val baseCard = CardDefaults.defaultColors()
+    val cardColors: CardColors = baseCard.copy(color = baseCard.color.copy(alpha = 0.8f))
+    Card(
+        modifier = modifier.padding(
+            start = COUIX_GROUP_HMARGIN,
+            top = 2.dp,
+            end = COUIX_GROUP_HMARGIN,
+            bottom = COUIX_CARD_BOTTOM_GAP,
+        ),
+        cornerRadius = COUIX_CARD_CORNER,
+        colors = cardColors,
+        content = content,
+    )
+}
+
+/**
+ * 首页分类入口行: 左侧线条图标(与标题同色, 无底色), 中间标题, 右侧前进箭头。
+ * 配置了 subtitle 时不占第二行, 而是显示在前进箭头左侧、右对齐。
+ */
+@Composable
+internal fun CouixCategoryRow(
+    icon: ImageVector,
+    title: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+) {
+    val onSurface = MiuixTheme.colorScheme.onSurface
+    val summary = MiuixTheme.colorScheme.onSurfaceVariantSummary
+    Row(
         modifier = modifier
             .fillMaxWidth()
-            .windowInsetsPadding(WindowInsets.statusBars)
-            .padding(start = 24.dp, end = 16.dp, top = 20.dp, bottom = 8.dp),
+            .clickable { onClick() }
+            .padding(horizontal = COUIX_ROW_HPADDING, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            BasicText(
-                text = title,
-                style = MiuixTheme.textStyles.title2.copy(
-                    color = MiuixTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.Bold,
-                ),
-                modifier = Modifier.weight(1f),
-            )
-            actions()
-        }
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = onSurface,
+            modifier = Modifier.size(COUIX_CATEGORY_ICON),
+        )
+        BasicText(
+            text = title,
+            style = MiuixTheme.textStyles.body1.copy(color = onSurface),
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = COUIX_CATEGORY_ICON_GAP),
+        )
         if (subtitle != null) {
             BasicText(
                 text = subtitle,
-                style = TextStyle(
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    fontSize = 12.sp,
+                style = MiuixTheme.textStyles.body2.copy(
+                    color = summary,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.End,
                 ),
+                modifier = Modifier.padding(start = COUIX_CATEGORY_SUBTITLE_GAP),
             )
         }
+        Icon(
+            imageVector = MiuixIcons.ChevronForward,
+            contentDescription = null,
+            tint = summary.copy(alpha = summary.alpha * COUIX_CATEGORY_CHEVRON_ALPHA),
+            modifier = Modifier
+                // 仅当右侧有副标题时才需要间隔，其余行的箭头紧贴标题区右缘。
+                .padding(start = if (subtitle != null) COUIX_CATEGORY_SUBTITLE_GAP else 0.dp, end = 0.dp)
+                .size(COUIX_CATEGORY_CHEVRON),
+        )
     }
 }
 
@@ -321,12 +544,12 @@ fun CouixSwitchPreference(
 
 /** 物理 1px 分割线（按当前 density 折算），两端内缩 COUIX_DIVIDER_INSET。 */
 @Composable
-fun CouixItemDivider(modifier: Modifier = Modifier) {
+fun CouixItemDivider(modifier: Modifier = Modifier, startInset: Dp = COUIX_DIVIDER_INSET) {
     val thickness: Dp = (1f / LocalDensity.current.density).dp
     Box(
         modifier
             .fillMaxWidth()
-            .padding(start = COUIX_DIVIDER_INSET, end = COUIX_DIVIDER_INSET)
+            .padding(start = startInset, end = COUIX_DIVIDER_INSET)
             .height(thickness)
             .background(MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.16f)),
     )
@@ -345,16 +568,7 @@ internal fun CouixGroup(
     onItemChanged: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    // 取 miuix 默认卡片色，仅略微降低不透明度：既比默认浅层（减弱），
-    // 又保留足够不透明度不会比页面背景更暗。
-    val baseCard = CardDefaults.defaultColors()
-    val weakContainer = baseCard.color.copy(alpha = 0.8f)
-    val cardColors: CardColors = baseCard.copy(color = weakContainer)
-    Card(
-    modifier = modifier.padding(start = COUIX_GROUP_HMARGIN, top = 2.dp, end = COUIX_GROUP_HMARGIN, bottom = 12.dp),
-    cornerRadius = COUIX_CARD_CORNER,
-    colors = cardColors,
-    ) {
+    CouixCard(modifier = modifier) {
         items.forEachIndexed { index, item ->
             if (index > 0) CouixItemDivider()
             CouixSwitchRow(item = item, prefs = prefs, ctx = ctx, version = version, overrideValue = overrideValue, onItemChanged = onItemChanged)
@@ -370,19 +584,7 @@ internal fun CouixSelectGroup(
     version: Int = 0,
     modifier: Modifier = Modifier,
 ) {
-    val baseCard = CardDefaults.defaultColors()
-    val weakContainer = baseCard.color.copy(alpha = 0.8f)
-    val cardColors: CardColors = baseCard.copy(color = weakContainer)
-    Card(
-        modifier = modifier.padding(
-            start = COUIX_GROUP_HMARGIN,
-            top = 2.dp,
-            end = COUIX_GROUP_HMARGIN,
-            bottom = 12.dp,
-        ),
-        cornerRadius = COUIX_CARD_CORNER,
-        colors = cardColors,
-    ) {
+    CouixCard(modifier = modifier) {
         items.forEachIndexed { index, item ->
             if (index > 0) CouixItemDivider()
             CouixSelectRow(item = item, prefs = prefs, ctx = ctx, version = version)
@@ -592,19 +794,7 @@ fun CouixMasterToggle(
     modifier: Modifier = Modifier,
     subtitle: String? = null,
 ) {
-    val baseCard = CardDefaults.defaultColors()
-    val weakContainer = baseCard.color.copy(alpha = 0.8f)
-    val cardColors: CardColors = baseCard.copy(color = weakContainer)
-    Card(
-        modifier = modifier.padding(
-            start = COUIX_GROUP_HMARGIN,
-            top = 2.dp,
-            end = COUIX_GROUP_HMARGIN,
-            bottom = 12.dp,
-        ),
-        cornerRadius = COUIX_CARD_CORNER,
-        colors = cardColors,
-    ) {
+    CouixCard(modifier = modifier) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -912,7 +1102,7 @@ private fun CouixSwitchRow(
     // overrideValue 非空时优先显示覆盖值(主开关动画期间), 否则读 prefs;
     // version/overrideValue 变化时重新计算, 其余时刻用本地状态即时切换。
     var checked by remember(item.key, version, overrideValue) {
-        mutableStateOf(overrideValue ?: prefs.getBoolean(item.key, item.defaultEnabled))
+        mutableStateOf(overrideValue ?: prefs.getBoolean(item.key, false))
     }
     if (item.sliderKey == null) {
         CouixSwitchPreference(

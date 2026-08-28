@@ -110,6 +110,41 @@ public class XposedInit implements IXposedHookLoadPackage {
     public static final String KEY_HIDE_GBOARD_ENABLED = "hide_gboard_enabled";
     // Feature 15 — 隐藏 GhostLock 图标(com.ghostlock.app): 已有 root 时无需再 root。
     public static final String KEY_HIDE_GHOSTLOCK_ENABLED = "hide_ghostlock_enabled";
+    // 解锁时关机无需校验密码(com.android.systemui): 系统"关机校验密码"(Settings.Secure
+    // oplus_shutdown_need_verification_password) 开启后, 电源菜单里关机/重启都会先弹凭据校验;
+    // 唯一闸门是 ShutdownBiometricPrompt.isEnable(Context), 设备已解锁时返回 false 跳过校验。
+    public static final String KEY_UNLOCKED_SHUTDOWN_NOVERIFY_ENABLED =
+            "unlocked_shutdown_noverify_enabled";
+    // 取消解锁界面控件光效(com.android.systemui): COUI 给锁屏密码控件叠了三类非纯色绘制,
+    // 去掉后只剩背景填充色与描边(纯色), 按下时的缩放/变色反馈不受影响。
+    public static final String KEY_KEYGUARD_NO_LIGHT_EFFECT_ENABLED =
+            "keyguard_no_light_effect_enabled";
+    // 自定义密码界面背景亮度(com.android.systemui): 密码界面(bouncer)的背景 = 模糊壁纸 + 平台混色。
+    // 混色 top 层为 LUMINOSITY(mode 5) + #99262626, 会把亮度归一化到 RGB 0x26(38), 相当于给模糊
+    // 加了"最低亮度" —— 即使壁纸是纯黑也会抬出 (26,26,26) 的灰底, 表现为一层去不掉的遮罩。
+    // 实测确认它并非真正的遮罩 view(三块 scrim 的 alpha 均为 0), 改这个 MixColor 才是正解。
+    public static final String KEY_KEYGUARD_BOUNCER_BRIGHTNESS_ENABLED =
+            "keyguard_bouncer_brightness_enabled";
+    // 亮度滑条键(0-5, 默认 0): 0=全黑(去掉系统抬的最低亮度), 5=系统默认 lumin(0x26=38)。
+    public static final String KEY_KEYGUARD_BOUNCER_BRIGHTNESS = "keyguard_bouncer_brightness";
+    // 锁屏通知区域下移(com.android.systemui): 锁屏上通知区顶部位置有三个来源(见
+    // SystemUiHooks#hookKeyguardNotificationOffset), 三处统一叠加同一下移量。
+    public static final String KEY_KEYGUARD_NOTIFICATION_OFFSET_ENABLED =
+            "keyguard_notification_offset_enabled";
+    public static final String KEY_KEYGUARD_NOTIFICATION_OFFSET_DP =
+            "keyguard_notification_offset_dp";
+    public static final int KEYGUARD_NOTIFICATION_OFFSET_DP_DEFAULT = 20;
+    public static final int KEYGUARD_NOTIFICATION_OFFSET_DP_MAX = 40;
+    // 输入密码界面支持侧滑或下滑返回(com.android.systemui): 开启后密码界面允许键盘区下滑手势穿透到
+    // bouncer 容器以收起返回锁屏, 放行系统侧滑返回手势; 并把"上滑使用指纹解锁"提示改为"下滑返回指纹解锁"。
+    public static final String KEY_KEYGUARD_BOUNCER_SWIPE_BACK_ENABLED = "keyguard_bouncer_swipe_back_enabled";
+    // 密码支持滑动输入(com.android.systemui): 开启后密码数字键盘支持滑动连续输入。
+    // 手指进入某数字键"中间 2/3 半径"的圆形区域即视为按下该键: 立即输入该字符并显示按下态;
+    // 手指离开该键的范围时取消按下态(不重复输入)。实现见
+    // SystemUiHooks#hookKeyguardSlideInput —— 接管 COUINumericKeyboard 的
+    // handleActionDown / handleActionMove / handleActionUp(float, float, int) 三个私有方法,
+    // 把系统"矩形命中 + 抬起才输入"改为"圆形命中 + 进入即输入"。
+    public static final String KEY_KEYGUARD_SLIDE_INPUT_ENABLED = "keyguard_slide_input_enabled";
 
     // 跨进程读取开关用的应用 Context(被 hook 进程自身)与 ContentProvider 通道所需的字段。
     public static volatile android.content.Context sAppContext;
@@ -131,6 +166,10 @@ public class XposedInit implements IXposedHookLoadPackage {
     // 控制中心背景亮度: 默认 5(对应约 25% 系统默认 lumin); 系统默认 lumin 的 RGB 值为 0x33(51)。
     public static final int QS_SCRIM_BRIGHTNESS_DEFAULT = 5;
     public static final int QS_SCRIM_LUMIN_MAX = 0x33;
+    // 密码界面背景亮度: 默认 0(全黑, 即去掉系统给模糊加的最低亮度); 上限 5 = 系统默认效果。
+    // 实现按 overColor RGB 的比例缩放, 无需硬编码目标亮度。
+    public static final int KEYGUARD_BOUNCER_BRIGHTNESS_DEFAULT = 0;
+    public static final int KEYGUARD_BOUNCER_BRIGHTNESS_MAX = 5;
 
     // 调试日志: 仅用 Log.e(error 级别), 因为 ColorOS 会丢弃 Log.d/v/i/w 等非 error 日志。
     // 不触碰外部存储, 避免被 hook 的第三方进程(如桌面 com.android.launcher)因无存储权限而
@@ -141,7 +180,10 @@ public class XposedInit implements IXposedHookLoadPackage {
 
     // 真实错误日志: Log.e 立即输出, 文件写入异步执行, 避免阻塞 Launcher/SystemUI 主线程。
     // 仅输出到 logcat, 不写文件, 避免 IO 卡顿。
+    // 注意: 这里必须是 Log.e —— 曾因被清空实现导致所有 HOOK OK/FAIL 与异常静默丢失,
+    // 无法判断 hook 是否命中, 直接造成多轮盲改。禁止再把方法体清空。
     public static void log(String msg) {
+        Log.e(TAG, msg);
     }
 
     @Override
