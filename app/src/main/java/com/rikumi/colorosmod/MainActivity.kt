@@ -152,7 +152,7 @@ private val NOTIF = listOf(
     SwitchItem("notification_subtitle_enabled", "缩小通知静默区域副标题", sliderKey = "notification_subtitle_sp", sliderMax = 16, sliderDefault = 8, sliderUnit = "sp"),
     SwitchItem("notification_padding_enabled", "增加通知上下内边距", sliderKey = "notification_padding_dp", sliderMax = 8, sliderDefault = 4),
     SwitchItem("fluid_cloud_keep_percent_enabled", "流体云出现时不隐藏电量百分比"),
-    SwitchItem("statusbar_lyric_enabled", "状态栏显示歌词", "需播放器支持 MediaSession 的 ColorOS 歌词能力", dividerBefore = true),
+    SwitchItem("statusbar_lyric_enabled", "状态栏显示歌词", "需播放器支持 MediaSession metadata.lyricInfo ColorOS 歌词能力，暂不支持魅族歌词能力", dividerBefore = true),
 )
 private val HIDDEN = listOf(
     SwitchItem("recents_show_hidden_enabled", "多任务显示已隐藏应用"),
