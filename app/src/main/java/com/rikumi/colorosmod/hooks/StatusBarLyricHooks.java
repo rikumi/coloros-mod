@@ -88,7 +88,7 @@ public final class StatusBarLyricHooks {
     private static final float SCROLL_SPEED_PX_PER_MS = 0.1f;
     // 全西文(ASCII 占比 100%)时的速率倍率: 西文字母窄、信息密度低, 可以滚得更快;
     // 纯中文/日文等全角字符时保持基准速率。中间按 ASCII 占比线性插值。
-    private static final float SCROLL_SPEED_ASCII_FACTOR = 3f;
+    private static final float SCROLL_SPEED_ASCII_FACTOR = 2f;
     /** 系统存该模式的 Settings 键(StatusBarSettingsValueProxy#KEY_NOTIFICATION_PROMPT_MODE)。 */
     private static final String SETTINGS_KEY_NOTIFICATION_PROMPT_MODE = "notification_prompt_mode";
 
