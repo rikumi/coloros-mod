@@ -3,7 +3,9 @@ package com.rikumi.colorosmod.hooks;
 import static com.rikumi.colorosmod.XposedInit.*;
 
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
@@ -34,39 +36,9 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-/**
- * 状态栏歌词(com.android.systemui)。
- *
- * 【数据来源】复用 ColorOS 自己的锁屏/全屏歌词接口(已 dexdump 核对
- * OplusMediaDataManagerExImpl#loadLyricInBg 的字节码):
- * <pre>
- *   String lyricInfo = metadata.getString("lyricInfo");     // JSON 字符串
- *   JSONObject j = new JSONObject(lyricInfo);
- *   songName = j.optString("songName");
- *   artist   = j.optString("artist");
- *   lyric    = j.optString("lyric");                        // 歌词原文
- *   songId   = j.optString("songId");
- *   lyricData.setOriLyric(lyric);                           // -> LyricParser.parse()
- * </pre>
- * 音乐软件(含第三方适配)把歌词放进 MediaSession metadata 的这个自定义 key 里,
- * 因此读取它即可拿到逐行歌词, 不需要任何私有协议、也不需要在音乐软件进程注入。
- *
- * 【为什么控制中心显示歌名、全屏显示歌词】不是数据源不同, 而是 displayPolicy 的位掩码不同:
- *   isEnabled(i) = lines非空 && (displayPolicy & i) != 0
- *   控制中心 MediaControlPanelExtImp 用 isEnabled(16), 全屏 OplusMediaViewPagerAdapter 用 isEnabled(32)。
- * 部分软件只给了 32(全屏) 而没给 16(控制中心), 于是控制中心仍是歌名。
- * 本功能直接用原始歌词数据, 不受 displayPolicy 限制。
- *
- * 【歌词格式】LyricParser 逐行解析, 支持两种(见 {@link #parseLyric}):
- *   LRC : "[mm:ss.xx]歌词"          时间 = 分*60000 + 秒*1000 + 厘秒*10
- *   JSON: {"t":毫秒,"c":[{"tx":"文本"},...]}   c 数组内 tx 拼接成整句
- *
- * 【权限】SystemUI 持有 android.permission.MEDIA_CONTENT_CONTROL(已在 AndroidManifest 核对),
- * 故 MediaSessionManager#getActiveSessions(null) 可用, 无需成为 NotificationListenerService。
- *
- * 签名经 dexdump 核对: com.android.systemui.statusbar.phone.PhoneStatusBarView extends FrameLayout,
- * onAttachedToWindow()V 为**本类自有声明**(非继承 View), hook 不会扩散到所有 View。
- */
+// 状态栏歌词(com.android.systemui)。数据源复用 ColorOS 自己的歌词接口: metadata.getString("lyricInfo")
+// 返回 {songName, artist, lyric, songId} 的 JSON, lyric 即歌词原文, 故无需私有协议、也无需注入音乐软件进程。
+// 控制中心显示歌名而全屏显示歌词并非数据源不同, 而是 displayPolicy 位掩码不同(16 vs 32), 本功能不受其限制。
 public final class StatusBarLyricHooks {
 
     // ---- ColorOS 歌词接口常量(与 OplusMediaLyricData 一致) ----
@@ -92,36 +64,31 @@ public final class StatusBarLyricHooks {
     // clock 是 StatClock, 父容器 clock_for_fake 为 wrap_content, 故 clock GONE 后它宽度归零。
     private static final String[] HIDE_VIEW_IDS = {"clock"};
 
-    /**
-     * 通知图标区显示模式(NotificationIconAreaType 的取值来源):
-     * notificationShowMode 0/其它 -> 显示图标, 1 -> 只显示数字, 2 -> 不显示。
-     */
+    // 通知图标区显示模式(NotificationIconAreaType 的取值来源):
+    // notificationShowMode 0/其它 -> 显示图标, 1 -> 只显示数字, 2 -> 不显示。
     private static final int NOTIFICATION_SHOW_NUMBER = 1;
 
-    /**
-     * 歌词整体**视觉上移**校准(dp)。
-     * 布局参数已与时钟一致(同一盒子 + start|center), 但字体基线与时钟存在 1dp 的观感差,
-     * 这里用 translationY 做纯绘制偏移: 不影响测量、不参与布局, 也就不会干扰宽度计算。
-     */
+    /** 歌词字体的字重: medium(500)。 */
+    private static final int MEDIUM_WEIGHT = 500;
+
+    // 歌词整体**视觉上移**校准(dp)。布局参数已与时钟一致, 但字体基线与时钟存在 1dp 观感差,
+    // 用 translationY 做纯绘制偏移: 不影响测量、不参与布局, 不干扰宽度计算。
     private static final float LYRIC_VERTICAL_OFFSET_DP = 1f;
 
     /** 歌词与左侧通知图标之间的外边距(dp): 位于歌词盒子**之外**, 歌词永远画不到它里面。 */
     private static final int LYRIC_MARGIN_START_DP = 4;
-    /**
-     * 歌词右边缘与流体云之间保留的间距(dp)。
-     * 流体云(CapsulePluginContainer)覆盖在状态栏最上层, 贴着它裁切会让歌词边缘被压住,
-     * 因此右边界要再往左让出这一段。
-     */
+    // 歌词右边缘与流体云之间保留的间距(dp)。流体云(CapsulePluginContainer)覆盖在状态栏最上层,
+    // 贴着它裁切会让歌词边缘被压住, 故右边界要再往左让出这一段。
     private static final int LYRIC_GAP_BEFORE_FLUID_DP = 4;
 
     /** 超长歌词开始横向滚动前的停顿(ms): 先让人看清句首, 再开始滚。 */
     private static final long SCROLL_START_DELAY_MS = 500L;
-    /**
-     * 横向滚动的**固定速率**(px/ms): 时长 = 距离 / 速率, 与歌词长度无关。
-     * 按固定速率而不是固定时长, 长句才不会越滚越快、短句也不会慢得离谱。
-     * 0.1f 约合 10px/100ms。
-     */
+    // 横向滚动的**固定速率**(px/ms): 时长 = 距离 / 速率, 与歌词长度无关。
+    // 按固定速率而非固定时长, 长句才不会越滚越快、短句也不会慢得离谱。0.1f 约合 10px/100ms。
     private static final float SCROLL_SPEED_PX_PER_MS = 0.1f;
+    // 全西文(ASCII 占比 100%)时的速率倍率: 西文字母窄、信息密度低, 可以滚得更快;
+    // 纯中文/日文等全角字符时保持基准速率。中间按 ASCII 占比线性插值。
+    private static final float SCROLL_SPEED_ASCII_FACTOR = 3f;
     /** 系统存该模式的 Settings 键(StatusBarSettingsValueProxy#KEY_NOTIFICATION_PROMPT_MODE)。 */
     private static final String SETTINGS_KEY_NOTIFICATION_PROMPT_MODE = "notification_prompt_mode";
 
@@ -137,16 +104,11 @@ public final class StatusBarLyricHooks {
     private static android.animation.AnimatorSet sSwitchAnimator = null;
     /** 缓存的歌词可用宽度(宿主容器内, 到挖孔或流体云为止); 0 表示未测量。 */
     private static int sLyricMaxWidthPx = 0;
-    /**
-     * 当前已显示在状态栏上的歌词文本。
-     * tick 每 250ms 调用 showLyric, 靠它判断"文本是否真的变了",
-     * 相同则直接返回, 避免动画被反复重启(表现为滚到头又回起点、切换动画反复播放)。
-     */
+    // 当前已显示在状态栏上的歌词文本。tick 每 250ms 调 showLyric, 靠它判断"文本是否真的变了",
+    // 相同则直接返回, 避免动画被反复重启(表现为滚到头又回起点、切换动画反复播放)。
     private static volatile CharSequence sCurrentText = null;
-    /**
-     * 当前这句歌词的横向滚动终点(translationX, 非正数)。
-     * 可用宽度变化(流体云出现)后据此判断终点是否变窄, 决定要不要接着往下滚。
-     */
+    // 当前这句歌词的横向滚动终点(translationX, 非正数)。
+    // 可用宽度变化(流体云出现)后据此判断终点是否变窄, 决定要不要接着往下滚。
     private static float sScrollTargetX = 0f;
     private static View[] sHideViews = null;
     private static int[] sHideOrigVisibility = null;
@@ -161,9 +123,7 @@ public final class StatusBarLyricHooks {
     /** 已经 hook 过 setVisibility 的类, 避免重复 hook。 */
     private static final Set<Class<?>> sVisibilityHooked = new HashSet<>();
 
-    // ---- 下拉通知栏/控制中心时隐藏歌词 ----
-    // 复用本模块"隐藏控制中心顶部状态图标簇"(QsHooks#hookQsTopMargin)同一个展开进度回调,
-    // 不另发明检测方式。
+    // ---- 下拉通知栏/控制中心时隐藏歌词: 复用 QsHooks#hookQsTopMargin 同一个展开进度回调 ----
     /** 当前是否处于下拉/展开状态(由 QS 展开进度驱动)。 */
     private static boolean sPanelExpanded = false;
     /** 通知图标区仓库实例(构造时抓取), 用于把通知图标切成"只显示数字"。 */
@@ -184,16 +144,9 @@ public final class StatusBarLyricHooks {
     private static String sLyricSource = null;
     private static boolean sTicking = false;
 
-    /**
-     * 歌词的裁切窗口(FrameLayout)。
-     *
-     * 字幕 TextView 比这个容器宽(整句不换行), 靠 translationX 左右滚动,
-     * 因此**必须**保证左右两侧都被裁在这盒子里:
-     *   - 左侧 = 歌词盒子的左边缘 = 通知图标右侧 + 4dp 外边距;
-     *   - 右侧 = 右边界(挖孔 / 流体云左侧再让 8dp)。
-     * 不依赖 ViewGroup#setClipChildren(它在被 RenderNode 动画驱动的子 View 上并不可靠),
-     * 而是直接在 dispatchDraw 里 clipRect, 保证每帧都按盒子裁。
-     */
+    // 歌词的裁切窗口。字幕 TextView 比容器宽(整句不换行), 靠 translationX 滚动, 故左右两侧都必须裁在盒子里:
+    // 左侧 = 通知图标右侧 + 4dp 外边距, 右侧 = 右边界(挖孔 / 流体云左侧再让 8dp)。不依赖 setClipChildren
+    // (它在被 RenderNode 动画驱动的子 View 上不可靠), 直接在 dispatchDraw 里 clipRect, 保证每帧都按盒子裁。
     private static final class LyricClipLayout extends FrameLayout {
         LyricClipLayout(Context context) {
             super(context);
@@ -227,18 +180,9 @@ public final class StatusBarLyricHooks {
         }
     }
 
-    /**
-     * 下拉通知栏 / 展开控制中心的瞬间隐藏歌词。
-     *
-     * 复用本模块"隐藏控制中心顶部状态图标簇"(QsHooks#hookQsTopMargin)已经在用的同一个回调:
-     *   com.oplus.systemui.qs.fake.OplusQSFakeStatusController$qsPanelExpandFractionListener$1
-     *     #onFractionChanged(float)
-     * 它是 QS 面板的**展开进度**回调: 手指一动、fraction 第一次 > 0 就会触发,
-     * 原生在这之后才执行图标簇的位移动画 —— 所以在这里隐藏能做到"下拉瞬间立即消失"。
-     *
-     * 之前自己读 notification_panel 的 translationY 是行不通的: 面板与状态栏是两个独立窗口,
-     * 视图树不相通, 而且位移发生在动画开始之后, 必然慢一帧。
-     */
+    // 下拉通知栏/控制中心的瞬间隐藏歌词。复用 QsHooks 隐藏图标簇已在用的 QS 展开进度回调 onFractionChanged,
+    // fraction 第一次 > 0 就触发、早于原生位移动画。自己读面板 translationY 行不通: 面板与状态栏是两个独立
+    // 窗口、视图树不相通, 且位移发生在动画开始后, 必然慢一帧。
     private static void hookQsExpansion(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             XposedHelpers.findAndHookMethod(
@@ -276,21 +220,9 @@ public final class StatusBarLyricHooks {
         hookQsExpansion(lpparam);
     }
 
-    /**
-     * 抓住 {@code OplusNotificationIconAreaRepository} 实例, 以便显示歌词时把通知图标区切成
-     * "只显示数字"(NotificationIconAreaType.NOTIFICATION_SHOW_NUMBER)。
-     *
-     * 该仓库把通知图标区类型暴露成 StateFlow:
-     * <pre>
-     *   notificationIconAreaType = combine(notificationShowMode, isChildrenMode, isFocusMode)
-     *     儿童模式 / 专注模式            -> NOTIFICATION_NOT_SHOW   (优先级最高, 保持系统行为)
-     *     notificationShowMode == 1     -> NOTIFICATION_SHOW_NUMBER
-     *     notificationShowMode == 2     -> NOTIFICATION_NOT_SHOW
-     *     其它                          -> NOTIFICATION_SHOW_ICON
-     * </pre>
-     * notificationShowMode 是 MutableStateFlow, 直接 setValue(1) 就能实时切换, 不需要改系统设置;
-     * 还原时把系统设置里的真实值写回去即可。
-     */
+    // 抓住 OplusNotificationIconAreaRepository 实例以切换通知图标显示模式: 该仓库的 notificationIconAreaType =
+    // combine(notificationShowMode, isChildrenMode, isFocusMode), showMode 1 -> 只显示数字、2 -> 不显示。
+    // notificationShowMode 是 MutableStateFlow, setValue(1) 即可实时切换, 还原时把设置里的真实值写回。
     private static void hookNotificationIconAreaRepository(
             final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
@@ -317,17 +249,9 @@ public final class StatusBarLyricHooks {
         }
     }
 
-    /**
-     * 歌词显示期间**强制**时钟保持隐藏。
-     *
-     * 时钟的可见性会被 SystemUI 在锁屏、下拉通知、Dock、车载等各种时机动态切换,
-     * 光靠我们主动 setVisibility(GONE) 会被系统改回来(表现为歌词旁边闪出一个时钟)。
-     * 因此在这里拦截 setVisibility: 只要是我们隐藏期间, 任何想把时钟显示出来的调用都改成 GONE,
-     * 同时记下系统真正想要的值, 歌词结束后按它还原。
-     *
-     * 只在时钟实际所属的类链上 hook(而不是全局 View#setVisibility 一把梭):
-     * 子类若覆写了 setVisibility, 父类 hook 不会生效, 故从子类一路 hook 到 View。
-     */
+    // 歌词显示期间**强制**时钟保持隐藏。时钟可见性会被 SystemUI 在锁屏、下拉通知、Dock 等时机动态切换,
+    // 光靠主动 setVisibility(GONE) 会被改回来。故拦截 setVisibility: 隐藏期间任何想显示时钟的调用都改成 GONE,
+    // 并记下系统真正想要的值以便还原。只在时钟所属类链上 hook(子类覆写时父类 hook 不生效), 从子类一路到 View。
     private static final XC_MethodHook CLOCK_VISIBILITY_HOOK = new XC_MethodHook() {
         @Override
         protected void beforeHookedMethod(MethodHookParam param) {
@@ -339,10 +263,36 @@ public final class StatusBarLyricHooks {
         }
     };
 
+    // 状态栏前景色(深/浅)变化由 DarkIconDispatcher 推给各 DarkReceiver, 时钟是其中之一。
+    // 在它刷色之后把颜色同步给歌词, 是最贴近系统口径的做法 —— 不用自己解析 tint/暗色强度。
+    private static final XC_MethodHook CLOCK_DARK_HOOK = new XC_MethodHook() {
+        @Override
+        protected void afterHookedMethod(MethodHookParam param) {
+            if (param.thisObject != sClockView) return;
+            try {
+                syncLyricTextColor();
+            } catch (Throwable t) {
+                log("statusbar_lyric sync color error: " + t);
+            }
+        }
+    };
+
+    private static void hookClockDarkChanged(View clock) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                    clock.getClass(), "onDarkChanged",
+                    ArrayList.class, float.class, int.class, CLOCK_DARK_HOOK);
+            log("HOOK OK " + clock.getClass().getName() + "#onDarkChanged (statusbar_lyric)");
+        } catch (Throwable t) {
+            log("HOOK FAIL clock#onDarkChanged :: " + Log.getStackTraceString(t));
+        }
+    }
+
     private static void hookClockVisibility(View clock) {
         if (clock == null) return;
         sClockView = clock;
         sClockDesiredVisibility = clock.getVisibility();
+        hookClockDarkChanged(clock);
         Class<?> c = clock.getClass();
         while (c != null && View.class.isAssignableFrom(c)) {
             if (sVisibilityHooked.add(c)) {
@@ -389,10 +339,8 @@ public final class StatusBarLyricHooks {
 
     private static void attachLyricView(FrameLayout root) {
         sStatusBarRoot = root;
-        // 宿主容器: 通知图标所在的 status_bar_start_side_content_for_fake
-        // (LinearLayout, orientation=horizontal, 高 fill_parent)。
-        // 歌词插在 notification_icon_area **之后**, 于是紧跟在通知图标(数字)右边;
-        // 用**与同排子 View 相同**的布局参数(fill_parent 高 + center_vertical), 垂直位置与时钟一致。
+    // 宿主容器: 通知图标所在的 status_bar_start_side_content_for_fake(LinearLayout, 高 fill_parent)。
+    // 歌词插在 notification_icon_area **之后**, 紧跟通知图标(数字)右边, 垂直位置与时钟一致。
         View clock = findSystemUiViewById(root, "clock");
         View icons = findSystemUiViewById(root, "notification_icon_area");
         View hostRaw = findSystemUiViewById(root, "status_bar_start_side_content_for_fake");
@@ -441,10 +389,8 @@ public final class StatusBarLyricHooks {
         container.addView(sIncomingView, new FrameLayout.LayoutParams(childLp));
         sIncomingView.setVisibility(View.INVISIBLE);
 
-        // 挂在 notification_icon_area 之后(同排兄弟里紧随其后):
-        // layout_height=fill_parent + layout_gravity=center_vertical —— 与同排子 View 同一套参数,
-        // 再靠 TextView 的 gravity="start|center" 在盒子内居中,
-        // 垂直位置与时钟**逐像素一致**, 无需任何测量/translationY 校正(手动校正必然引入偏差)。
+    // 挂在 notification_icon_area 之后。用与同排子 View 相同的参数(fill_parent 高 + center_vertical),
+    // 再靠 TextView 的 gravity="start|center" 在盒子内居中, 垂直位置与时钟一致, 无需测量/translationY 校正。
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT);
         lp.gravity = Gravity.CENTER_VERTICAL;
@@ -477,14 +423,9 @@ public final class StatusBarLyricHooks {
                 TypedValue.COMPLEX_UNIT_DIP, dp, ctx.getResources().getDisplayMetrics());
     }
 
-    /**
-     * 下拉通知栏 / 展开控制中心期间隐藏歌词, 收起后恢复。
-     *
-     * 触发点与 QsHooks 隐藏控制中心图标簇**完全相同**(同一个 onFractionChanged 回调),
-     * 因此与图标簇是同一瞬间消失。这里只动自己的歌词容器:
-     * 不碰时钟的强制隐藏状态、也不还原通知图标模式, 免得下拉过程中状态反复横跳。
-     * 隐藏不清除 sCurrentText, 收起后能立刻把当前这句接着显示/滚动, 不重播切换动画。
-     */
+    // 下拉通知栏 / 展开控制中心期间隐藏歌词, 收起后恢复。触发点与 QsHooks 隐藏控制中心图标簇**完全相同**
+    // (同一个 onFractionChanged 回调), 故与图标簇同一瞬间消失。这里只动自己的歌词容器, 不碰时钟的强制
+    // 隐藏状态、也不还原通知图标模式, 免得下拉过程中状态反复横跳。隐藏不清除 sCurrentText, 收起后直接续滚。
     private static void setLyricHiddenForPanel(boolean hidden) {
         FrameLayout container = sLyricView;
         if (container == null) return;
@@ -503,25 +444,9 @@ public final class StatusBarLyricHooks {
         }
     }
 
-    /**
-     * 测量歌词容器的左边缘与可用宽度(到挖孔/流体云为止), 并缓存。
-     *
-     * 歌词容器是 notification_icon_area 的下一个兄弟, 因此起点要算**它自己的左边缘**:
-     * 宿主左边缘 + 排在它前面的兄弟宽度(含左右 margin)。不能直接量容器自己 ——
-     * 歌词隐藏时它是 GONE, getLocationOnScreen 不更新。
-     *
-     * 右边界取下列三者中最小者:
-     *   1. 左半容器 @id/status_bar_start_side_container 的右边缘(默认终点);
-     *   2. 挖孔占位视图 @id/cutout_space_view 的左边缘;
-     *   3. 流体云的左边缘 —— 流体云(CapsulePluginContainer @id/seeding_card_container)是
-     *      fill_parent 且 translationZ=1.0, 覆盖在状态栏最上层, 会盖住歌词。
-     *      它自身左边缘为 0 不可用, 需递归找其**内部实际可见内容**的最小左边缘。
-     *
-     * 【为什么不用 clock 定位】clock 会被本功能隐藏(GONE), 隐藏后 getLocationOnScreen 返回 0,
-     * 用它算左边缘会得到 0 —— 正是之前位置错误的原因。
-     *
-     * 流体云会动态出现/消失, 故每次 tick(250ms)都重算; 宽度未变则不写 LayoutParams, 避免多余重排。
-     */
+    // 测量歌词容器的左边缘与可用宽度(到挖孔/流体云为止)并缓存。容器是 notification_icon_area 的下一个兄弟,
+    // 故起点 = 宿主左边缘 + 前面兄弟宽度(含 margin); 不能直接量容器自己(隐藏时 GONE, 坐标不更新)。右边界取三者
+    // 最小: 左半容器右边缘、挖孔 cutout_space_view 左边缘、流体云左边缘。不能用 clock 定位(隐藏后坐标返回 0)。
     private static void updateLyricWidth(View root, View host, FrameLayout container) {
         try {
             int[] rootLoc = new int[2];
@@ -595,6 +520,24 @@ public final class StatusBarLyricHooks {
         }
     }
 
+    // 速率倍率随西文(ASCII)字符占比线性插值: 全 ASCII -> SCROLL_SPEED_ASCII_FACTOR 倍, 全非 ASCII -> 1 倍。
+    // 西文字符窄、单位像素信息量低, 同速率下读起来偏慢; 中文等全角字符宽, 需保持基准速率。
+    // 空白不计入占比统计, 免得英文句子里的空格把倍率顶上去。
+    private static float scrollSpeedFactor(CharSequence text) {
+        if (text == null) return 1f;
+        int total = 0;
+        int ascii = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (Character.isWhitespace(c)) continue;
+            total++;
+            if (c < 128) ascii++;
+        }
+        if (total == 0) return 1f;
+        float ratio = (float) ascii / total;
+        return 1f + (SCROLL_SPEED_ASCII_FACTOR - 1f) * ratio;
+    }
+
     /** 某个 View 的左边缘(相对状态栏根布局)。 */
     private static int leftOf(View v, int rootLeft) {
         int[] loc = new int[2];
@@ -602,14 +545,9 @@ public final class StatusBarLyricHooks {
         return loc[0] - rootLeft;
     }
 
-    /**
-     * 递归找容器内实际可见内容的最小左边缘(相对根布局)。
-     *
-     * 用于流体云: CapsulePluginContainer 是 fill_parent 且铺满整个状态栏,
-     * 真正的内容只占其中一小段, 所以**不能**在第一个有宽度的子 View 上就停 ——
-     * 外层容器自己有宽度, 但它的 left 是 0, 必须一路下钻到真正绘制内容的那一层。
-     * 因此这里对每个 ViewGroup 都继续递归, 取全局最小且大于 minValid 的 left。
-     */
+    // 递归找容器内实际可见内容的最小左边缘(相对根布局)。用于流体云: CapsulePluginContainer 铺满状态栏
+    // 但内容只占一小段, 所以**不能**在第一个有宽度的子 View 上就停(外层容器 left 恒为 0), 必须一路下钻。
+    // 故对每个 ViewGroup 都继续递归, 取全局最小且大于 minValid 的 left。
     private static int findLeftmostVisibleChildLeft(View group, int rootLeft, int minValid) {
         if (!(group instanceof android.view.ViewGroup)) return Integer.MAX_VALUE;
         android.view.ViewGroup vg = (android.view.ViewGroup) group;
@@ -642,22 +580,48 @@ public final class StatusBarLyricHooks {
             TextView ctv = (TextView) clock;
             tv.setTextSize(TypedValue.COMPLEX_UNIT_PX, ctv.getTextSize());
             tv.setTextColor(ctv.getTextColors());
-            tv.setTypeface(ctv.getTypeface());
+            tv.setTypeface(mediumTypeface(ctv.getTypeface()));
         } else {
             tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
             tv.setTextColor(Color.WHITE);
+            tv.setTypeface(mediumTypeface(null));
         }
         return tv;
     }
 
-    /**
-     * 把字幕 TextView 的宽度设成**整句文本的真实宽度**, 让它完整承载歌词、自身不被裁切。
-     *
-     * 关键: 裁切只能发生在歌词容器(窗口)上, 被平移的必须是完整未被裁切的文本。
-     * 若 TextView 宽度 = 容器宽度, 文本会先在 TextView 里被截断, 再整体平移,
-     * 看到的就是"半个字/半句在窗口里滑", 右边还露出空白 —— 之前错误表现的原因。
-     * 宽度用 EXACTLY 显式指定, 否则 FrameLayout 会按 AT_MOST 把它压回容器宽度。
-     */
+    // 歌词用 medium 字重: 时钟是 semibold, 直接抄会偏粗。优先按字重 500 从原字体族派生(API 28+, 保留
+    // 厂商字体族); 低版本回退到系统 sans-serif-medium。italic 一律关掉, 歌词不需要斜体。
+    private static Typeface mediumTypeface(Typeface base) {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                return Typeface.create(base == null ? Typeface.DEFAULT : base,
+                        MEDIUM_WEIGHT, false);
+            }
+        } catch (Throwable t) {
+            log("statusbar_lyric medium typeface fallback: " + t);
+        }
+        return Typeface.create("sans-serif-medium", Typeface.NORMAL);
+    }
+
+    // 歌词颜色跟随状态栏前景色(深浅): 时钟作为 DarkReceiver 会经 StatClock#onDarkChanged 被系统刷色,
+    // 这里把它刷新后的最终颜色同步过来, 保证切壁纸/进浅色应用时歌词与时钟同色。
+    private static void syncLyricTextColor() {
+        View clock = sClockView;
+        if (!(clock instanceof TextView)) return;
+        ColorStateList colors = ((TextView) clock).getTextColors();
+        if (colors == null) return;
+        // tick 每 250ms 也会调一次, 先比对再赋值, 避免无谓的 invalidate。
+        if (sOutgoingView != null && !colors.equals(sOutgoingView.getTextColors())) {
+            sOutgoingView.setTextColor(colors);
+        }
+        if (sIncomingView != null && !colors.equals(sIncomingView.getTextColors())) {
+            sIncomingView.setTextColor(colors);
+        }
+    }
+
+    // 把字幕 TextView 的宽度设成**整句文本的真实宽度**, 让它完整承载歌词、自身不被裁切。
+    // 裁切只能发生在歌词容器上, 被平移的必须是完整文本; 若 TextView 宽度 = 容器宽度, 文本会先被
+    // 截断再整体平移, 就会看到"半个字/半句在窗口里滑"。宽度须 EXACTLY, 否则会被 AT_MOST 压回容器宽度。
     private static void applyTextWidth(TextView tv, CharSequence text) {
         if (tv == null) return;
         int w = 0;
@@ -871,6 +835,8 @@ public final class StatusBarLyricHooks {
                             // 时钟可见性会被系统动态改, 通知图标模式也可能被系统回滚。
                             setHiddenForLyric(true);
                             setNotificationNumberMode(true);
+                            // 兜底同步颜色: 时钟可能经 onDarkChanged 之外的路径刷色。
+                            syncLyricTextColor();
                             showLyric(t2);
                         });
                     }
@@ -890,10 +856,8 @@ public final class StatusBarLyricHooks {
         sTicking = false;
     }
 
-    /**
-     * 估算当前播放位置: PlaybackState 的 position 是上次更新的快照,
-     * 需要按 speed 与经过时间外推, 否则歌词会滞后。
-     */
+    // 估算当前播放位置: PlaybackState 的 position 是上次更新的快照,
+    // 需按 speed 与经过时间外推, 否则歌词会滞后。
     private static long estimatePosition(PlaybackState st) {
         long pos = st.getPosition();
         if (pos < 0) pos = 0;
@@ -918,14 +882,9 @@ public final class StatusBarLyricHooks {
         return result;
     }
 
-    /**
-     * 解析歌词原文, 兼容两种格式(逻辑与 SystemUI 的 LyricParser 一致):
-     * <ul>
-     *   <li>LRC: "[mm:ss.xx]歌词", 时间 = 分*60000 + 秒*1000 + 厘秒*10</li>
-     *   <li>JSON: 每行 {"t":毫秒, "c":[{"tx":"文本"}, ...]}, c 内 tx 拼接成整句</li>
-     * </ul>
-     * 解析后按时间升序排序。
-     */
+    // 解析歌词原文, 兼容两种格式(与 SystemUI 的 LyricParser 一致), 解析后按时间升序排序:
+    // LRC "[mm:ss.xx]歌词"(时间 = 分*60000 + 秒*1000 + 厘秒*10);
+    // JSON 每行 {"t":毫秒, "c":[{"tx":"文本"}, ...]}, c 内 tx 拼接成整句。
     private static List<Line> parseLyric(String raw) {
         List<Line> out = new ArrayList<>();
         if (raw == null) return out;
@@ -1094,10 +1053,8 @@ public final class StatusBarLyricHooks {
         set.start();
     }
 
-    /**
-     * 立即完成"角色交换": incoming 变为当前显示, outgoing 变为备用并复位。
-     * 与动画结束回调共用, 保证动画被打断时状态也一致。
-     */
+    // 立即完成"角色交换": incoming 变为当前显示, outgoing 变为备用并复位。
+    // 与动画结束回调共用, 保证动画被打断时状态也一致。
     private static void finishSwitchNow() {
         TextView outgoing = sOutgoingView;
         TextView incoming = sIncomingView;
@@ -1123,13 +1080,9 @@ public final class StatusBarLyricHooks {
         tv.setTranslationX(0f);
     }
 
-    /**
-     * 歌词超长时, 单向往左滚动到尽头后停下(不来回、不重复), 直到切换到下一行。
-     * 只在新文本首次显示 / 切换动画结束时调用一次; 相同文本不会重复触发(见 showLyric 的拦截)。
-     *
-     * 被平移的是**完整承载整句**的 TextView(见 {@link #applyTextWidth}), 它比容器宽多少
-     * 就滚多少; 容器是固定的裁切窗口, 不参与平移。
-     */
+    // 歌词超长时单向往左滚到尽头停下(不来回、不重复), 只在新文本首次显示/切换动画结束时调用一次。
+    // 被平移的是**完整承载整句**的 TextView(见 applyTextWidth), 它比容器宽多少就滚多少;
+    // 容器是固定的裁切窗口, 不参与平移。
     private static void startSinglePassScroll(final TextView tv, final CharSequence text) {
         cancelScrollAnimator();
         if (tv == null) return;
@@ -1147,10 +1100,8 @@ public final class StatusBarLyricHooks {
         });
     }
 
-    /**
-     * 这句歌词的横向滚动终点(translationX, 非正数; 0 表示装得下不用滚)。
-     * 终点 = 可用宽度 - 文本宽度, 其中可用宽度是**裁切窗口的宽度**, 不是 TextView 自己的宽度。
-     */
+    // 这句歌词的横向滚动终点(translationX, 非正数; 0 表示装得下不用滚)。
+    // 终点 = 可用宽度 - 文本宽度, 其中可用宽度是**裁切窗口的宽度**, 不是 TextView 自己的宽度。
     private static float computeScrollTarget(TextView tv, CharSequence text) {
         if (tv == null) return 0f;
         float textWidth = tv.getPaint().measureText(text == null ? "" : text.toString());
@@ -1158,16 +1109,15 @@ public final class StatusBarLyricHooks {
         return Math.min(0f, available - textWidth);
     }
 
-    /**
-     * 从 from 单向滚到 to 后停下(不来回、不重复)。withDelay=true 时带起始停顿。
-     * 时长按**固定速率** ({@link #SCROLL_SPEED_PX_PER_MS}) 由距离算出, 与歌词长度无关。
-     */
+    // 从 from 单向滚到 to 后停下(不来回、不重复), withDelay=true 时带起始停顿。
+    // 时长按固定速率 SCROLL_SPEED_PX_PER_MS 由距离算出, 与歌词长度无关。
     private static void animateScrollTo(final TextView tv, float from, float to,
                                         boolean withDelay) {
         cancelScrollAnimator();
         tv.setTranslationX(from);
         // 时长 = 距离 / 速率。下限 1ms 只防除零, 不用 min 时长去破坏匀速。
-        long duration = Math.max(1L, (long) (Math.abs(to - from) / SCROLL_SPEED_PX_PER_MS));
+        float speed = SCROLL_SPEED_PX_PER_MS * scrollSpeedFactor(sCurrentText);
+        long duration = Math.max(1L, (long) (Math.abs(to - from) / speed));
         android.animation.ValueAnimator anim = android.animation.ValueAnimator.ofFloat(from, to);
         anim.setDuration(duration);
         if (withDelay) anim.setStartDelay(SCROLL_START_DELAY_MS);
@@ -1185,16 +1135,9 @@ public final class StatusBarLyricHooks {
         sScrollAnimator = anim;
     }
 
-    /**
-     * 可用宽度变窄(流体云出现)后, 让已经滚到位的歌词**接着往下滚**。
-     *
-     * 流体云可能在整句滚完之后才出现: 右边界被它收窄, 之前滚到的位置就不够用了,
-     * 歌词的尾巴会一直被挡在右边界外看不见。这里检测终点变化, 从**当前位置**继续滚到新终点,
-     * 保证整句仍然能被完整读完。
-     *
-     * 只在终点变得更靠左(宽度变窄)时才续滚; 宽度变宽时保持不动, 免得来回抖。
-     * 续滚不加起始停顿 —— 它是被打断的滚动的延续, 不是新的一句。
-     */
+    // 可用宽度变窄(流体云出现)后让已滚到位的歌词**接着往下滚**: 流体云可能在整句滚完后才出现,
+    // 右边界被它收窄后原终点不够用, 尾巴会一直被挡住。故检测终点变化后从当前位置续滚到新终点。
+    // 只在终点变窄时续滚(变宽则不动, 免得来回抖); 续滚不加起始停顿 —— 它是被打断滚动的延续。
     private static void syncScrollToAvailableWidth() {
         FrameLayout container = sLyricView;
         TextView tv = sOutgoingView;
@@ -1244,13 +1187,9 @@ public final class StatusBarLyricHooks {
         if (sIncomingView != null) sIncomingView.setText(null);
     }
 
-    /**
-     * 把通知图标区切成"只显示数字"(歌词显示期间), 关闭时还原成系统设置里的真实模式。
-     *
-     * 直接改仓库里的 notificationShowMode(MutableStateFlow): 它是 NotificationIconAreaType
-     * 的输入, 改它等价于改设置, 但不动 Settings、不需要重启动画流程。
-     * 注意儿童模式/专注模式下仓库仍会输出 NOTIFICATION_NOT_SHOW, 这是系统行为, 保留。
-     */
+    // 把通知图标区切成"只显示数字"(歌词显示期间), 关闭时还原成设置里的真实模式。直接改仓库里的
+    // notificationShowMode(MutableStateFlow) —— 它是 NotificationIconAreaType 的输入, 改它等价于改设置。
+    // 儿童模式/专注模式下仓库仍输出 NOTIFICATION_NOT_SHOW, 是系统行为, 保留。
     private static void setNotificationNumberMode(boolean on) {
         Object repo = sIconAreaRepository;
         if (repo == null) return;

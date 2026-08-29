@@ -24,10 +24,9 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  * system_server(android) 作用域的全部 hook：小窗贴边挂机、横屏小窗保持比例。
  */
 public final class SystemServerHooks {
-    // 悬浮小窗贴边挂机(system_server)。贴边松手后系统经 exitFlexibleTask -> Task.moveTaskToBack
-    // 把任务切后台缩成边缘迷你条; 正常"拖到非边缘松手"走 finishMovingTask, 不经此路径。
-    // 做法: beforeHook 中调系统已有的 updateFocusWhenExitFlexibleTask 聚焦小窗下方任务, 但绝不
-    // 拦截原生退出提交 —— 否则原生 ToFloat 收尾被截断, 窗口会卡在拖拽位置而不变成图标。
+// 悬浮小窗贴边挂机(system_server): 贴边松手后经 exitFlexibleTask -> Task.moveTaskToBack 切后台。
+// 调系统的 updateFocusWhenExitFlexibleTask 聚焦小窗下方任务, 但绝不拦截原生退出提交 ——
+// 否则原生 ToFloat 收尾被截断, 窗口会卡在拖拽位置而不变成图标。
     public static void hookFloatWindowEdgeHangSystemServer(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             final Class<?> ftc = XposedHelpers.findClass(
@@ -62,10 +61,9 @@ public final class SystemServerHooks {
         }
     }
 
-    // 横屏应用小窗保持比例: 系统 fillFlexibleTaskInfo 对横屏应用硬编码 ratio=0.5625f(9:16)。
-    // 本功能让小窗 宽:高 = 屏幕 高:宽, 即 高/宽 = 1 / getFlexibleTaskFullScreenRatio(屏高, 屏宽)。
-    // afterHook fillFlexibleTaskInfo 改 ratio 并按系统同款公式重算 scale 与 launchBounds(保持系统
-    // 选定的高度与居中); afterHook getFlexibleTaskAvailableRatioByActivity 把目标比例加入可选列表。
+// 横屏应用小窗保持比例: 系统 fillFlexibleTaskInfo 对横屏应用硬编码 ratio=0.5625f(9:16)。
+// afterHook fillFlexibleTaskInfo 改 ratio 并按系统同款公式重算 scale 与 launchBounds;
+// afterHook getFlexibleTaskAvailableRatioByActivity 把目标比例加入可选列表。
     public static void hookFloatWindowLandscapeKeepRatio(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             final Class<?> ftc = XposedHelpers.findClass(

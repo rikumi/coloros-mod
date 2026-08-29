@@ -124,11 +124,9 @@ public final class GestureHooks {
         }
     }
 
-    // 避免手势区域点击穿透: 手势导航下 NavigationBarExImpl.updateInsetsTouchability 把导航栏
-    // 窗口的 touchableRegion 限制为白条区域, 手势带其余部分的事件不派发给该窗口, 直接透传。
-    // 1) 把 touchableRegion 设为「mBack 热区顶部 -> 窗口底部」这一段(导航栏窗口实测高 179px,
-    //    设成整窗口会挡住底部整条); 2) 同段内放全宽透明拦截层消费触摸。
-    // 手势识别在 input monitor 层(SideGestureDetector)不受影响。
+    // 避免手势区域点击穿透: 手势导航下 NavigationBarExImpl.updateInsetsTouchability 把导航栏窗口的
+    // touchableRegion 限制为白条区域, 手势带其余部分的事件直接透传。故把 touchableRegion 设为
+    // 「mBack 热区顶部 -> 窗口底部」这一段(设成整窗口会挡住底部整条), 并在同段内放全宽透明拦截层。
     public static void hookGestureTouchThrough(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             // InternalInsetsInfo 为 @hide 类, 编译期不可见, 用反射访问。
@@ -311,12 +309,9 @@ public final class GestureHooks {
         return null;
     }
 
-    // 取 mBack 热区顶部 -> 窗口底部这一段: 返回热区顶部在 host 坐标系中的 y。
-    // 口径与 MBackSurface 一致(以白条绘制中心垂直居中, 上下各 padding 留白):
-    // 白条中心 y = host 高 - mHandleBottom - mHeight/2 - 画布上移量,
-    // 热区顶部 = 白条中心 - (mHeight + 2*padding)/2。
-    // 不能用 getLocationInWindow: OplusNavigationHandle 铺满整个导航栏窗口,
-    // 其 top 相对 host 恒为 0, 会退化成"整条导航栏"。
+    // 取 mBack 热区顶部 -> 窗口底部这一段: 返回热区顶部在 host 坐标系中的 y, 口径与 MBackSurface 一致。
+    // 白条中心 y = host 高 - mHandleBottom - mHeight/2 - 画布上移量, 热区顶部 = 白条中心 - (mHeight + 2*padding)/2。
+    // 不能用 getLocationInWindow: OplusNavigationHandle 铺满整个导航栏窗口, 其 top 相对 host 恒为 0。
     static int computeGestureBandTop(android.view.View host, int barHeight) {
         float density = readDensity();
         int padding = Math.round(getMBackBandPaddingDp() * density);
@@ -358,10 +353,9 @@ public final class GestureHooks {
         }
     }
 
-    // 防穿透拦截层严格跟随 gesture_touch_through_enabled 运行期取值, 与 mBack 无关:
-    // 开则创建/更新, 关则立即从视图树移除(否则会残留到下次 SystemUI 重启)。
-    // 通知中心/控制中心展开时一律不生效: 面板窗口本身已接管触摸,
-    // 继续吞掉手势带事件只会让面板底部区域点不动。
+    // 防穿透拦截层严格跟随 gesture_touch_through_enabled 运行期取值, 与 mBack 无关: 开则创建/更新,
+    // 关则立即从视图树移除(否则残留到下次 SystemUI 重启)。通知/控制中心展开时一律不生效: 面板窗口
+    // 已接管触摸, 继续吞掉手势带事件只会让面板底部区域点不动。
     static boolean isGestureBlockActive(android.view.View view) {
         return readBool(KEY_GESTURE_TOUCH_THROUGH_ENABLED, false) && !isShadeExpanded(view);
     }
@@ -462,10 +456,9 @@ public final class GestureHooks {
         }
     }
 
-    // 判断 DOWN 事件是否落在白条水平范围(含 8dp 留白), 与 MBackSurface 宽度口径一致。
-    // 依据反编译: 系统原生用 ev.getX()(input monitor 转发, 即屏幕坐标) 与实例字段
-    // viewScreenLeft(onLayout 时赋值, 屏幕坐标) 比较判定 inGestureXRange。
-    // 这里复刻该口径并放宽 padding。白条外(两侧区域)不触发 mBack, 放行 handle 原逻辑。
+    // 判断 DOWN 是否落在白条水平范围(含 8dp 留白), 与 MBackSurface 宽度口径一致。依据反编译: 系统
+    // 用 ev.getX()(屏幕坐标)与实例字段 viewScreenLeft 比较判定 inGestureXRange, 这里复刻该口径并放宽 padding。
+    // 白条外(两侧区域)不触发 mBack, 放行 handle 原逻辑。
     static boolean isInMBackBarRange(android.view.View handle,
             android.view.MotionEvent ev) {
         try {
@@ -653,11 +646,9 @@ public final class GestureHooks {
             }
         };
 
-        // MBackSurface 完全跟随白条实际绘制位置：与白条中心严格垂直居中，
-        // 尺寸 = 白条尺寸 + 上下左右各 getMBackBandPaddingDp() 留白。
-        // 白条在 OplusNavigationHandle 内的绘制区域为
-        // [viewHeight - mHandleBottom - mHeight, viewHeight - mHandleBottom]（见反编译 onDraw），
-        // 防烧屏通过 setTranslationY 平移整个 View，getLocationInWindow 经矩阵映射已含该位移。
+        // MBackSurface 完全跟随白条实际绘制位置: 与白条中心严格垂直居中, 尺寸 = 白条尺寸 + 四周各 padding。
+        // 白条在 OplusNavigationHandle 内的绘制区域为 [viewHeight - mHandleBottom - mHeight, viewHeight - mHandleBottom];
+        // 防烧屏靠 setTranslationY 平移整个 View, getLocationInWindow 经矩阵映射已含该位移。
 
         void update() {
             if (getParent() != host) return;

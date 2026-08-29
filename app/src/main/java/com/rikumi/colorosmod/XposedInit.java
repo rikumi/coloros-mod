@@ -82,14 +82,12 @@ public class XposedInit implements IXposedHookLoadPackage {
     // labelDesc(TextSwitcher, R.id.tile_label_desc), 由 updateLabelDescText 经 TextSwitcherExtKt
     // .setContent 写入; 这里在每次 setContent 之后强制单行 + 行尾省略号。
     public static final String KEY_QS_TILE_NAME_ELLIPSIS_ENABLED = "qs_tile_name_ellipsis_enabled";
-    // Feature 17 — 流体云出现时不隐藏电量百分比 (com.android.systemui):
-    // 系统在流体云胶囊出现时会把 BatteryStyleModel.capsuleShowing=true,
-    // 进而令 PercentOutIcon.isVisible=false, 隐藏状态栏电量百分比数字。
+    // Feature 17 — 流体云出现时不隐藏电量百分比:
+    // 系统在流体云胶囊出现时会令 PercentOutIcon.isVisible=false, 隐藏电量百分比数字。
     // hook BatteryViewBinder.bind$updatePercentOutView, 强制 isVisible=true。
     public static final String KEY_FLUID_CLOUD_KEEP_PERCENT_ENABLED = "fluid_cloud_keep_percent_enabled";
-    // 悬浮小窗贴边挂机: 拖到边缘松手时系统把窗口缩成边缘竖条并把任务切后台, 这里在 to-float
-    // 结束后 moveToFront 拉回前台; 不能在提交中途拦截 —— 此时窗口已 hide 但任务仍前台, 会触发
-    // "Application does not have a focused window" -> Input dispatching timed out -> ANR。
+    // 悬浮小窗贴边挂机: 拖到边缘松手时系统把窗口缩成边缘竖条并把任务切后台, 这里在 to-float 结束后
+    // moveToFront 拉回前台; 不能在提交中途拦截 —— 会触发 "Input dispatching timed out" ANR。
     // 需把模块作用域加入 "android"(system_server), 旧版 SystemUI 内 hook 路径已废弃。
     public static final String KEY_FLOAT_WINDOW_EDGE_HANG_ENABLED = "float_window_edge_hang_enabled";
     // 横屏应用小窗保持比例: 系统对横屏应用硬编码 ratio=0.5625f(9:16), 与设备真实比例不符,
@@ -120,10 +118,9 @@ public class XposedInit implements IXposedHookLoadPackage {
     // 去掉后只剩背景填充色与描边(纯色), 按下时的缩放/变色反馈不受影响。
     public static final String KEY_KEYGUARD_NO_LIGHT_EFFECT_ENABLED =
             "keyguard_no_light_effect_enabled";
-    // 自定义密码界面背景亮度(com.android.systemui): 密码界面(bouncer)的背景 = 模糊壁纸 + 平台混色。
-    // 混色 top 层为 LUMINOSITY(mode 5) + #99262626, 会把亮度归一化到 RGB 0x26(38), 相当于给模糊
-    // 加了"最低亮度" —— 即使壁纸是纯黑也会抬出 (26,26,26) 的灰底, 表现为一层去不掉的遮罩。
-    // 实测确认它并非真正的遮罩 view(三块 scrim 的 alpha 均为 0), 改这个 MixColor 才是正解。
+    // 自定义密码界面背景亮度: bouncer 背景 = 模糊壁纸 + 平台混色, 混色 top 为 LUMINOSITY+#99262626,
+    // 把亮度归一化到 RGB 0x26, 相当于给模糊加"最低亮度", 表现为一层去不掉的遮罩。
+    // 实测它并非遮罩 view(三块 scrim alpha 均为 0), 改这个 MixColor 才是正解。
     public static final String KEY_KEYGUARD_BOUNCER_BRIGHTNESS_ENABLED =
             "keyguard_bouncer_brightness_enabled";
     // 亮度滑条键(0-5, 默认 0): 0=全黑(去掉系统抬的最低亮度), 5=系统默认 lumin(0x26=38)。
@@ -146,22 +143,15 @@ public class XposedInit implements IXposedHookLoadPackage {
             "keyguard_notification_offset_dp";
     public static final int KEYGUARD_NOTIFICATION_OFFSET_DP_DEFAULT = 20;
     public static final int KEYGUARD_NOTIFICATION_OFFSET_DP_MAX = 40;
-    // 输入密码界面支持侧滑或下滑返回(com.android.systemui): 开启后密码界面允许键盘区下滑手势穿透到
-    // bouncer 容器以收起返回锁屏, 放行系统侧滑返回手势; 并把"上滑使用指纹解锁"提示改为"下滑返回指纹解锁"。
-    // 支持魅族状态栏歌词(com.android.systemui): 歌词数据源是 ColorOS 自己的媒体接口,
-    // 与 Flyme 协议无关 —— MediaSessionManager#getActiveSessions -> MediaController#getMetadata()
-    // -> metadata.getString("lyricInfo") 拿到完整歌词原文, 再按 PlaybackState 外推进度定位当前行。
-    // 因此**不需要**注入音乐软件进程, 也**不需要**伪装魅族机型, xposedscope 里没有任何音乐软件。
-    // 详见 StatusBarLyricHooks。
+    // 输入密码界面支持侧滑或下滑返回: 允许键盘区下滑手势穿透到 bouncer 容器收起返回锁屏,
+    // 放行系统侧滑返回手势; 并把"上滑使用指纹解锁"提示改为"下滑返回指纹解锁"。
+    // 状态栏歌词: 数据源是 ColorOS 媒体接口的 metadata.lyricInfo, 无需注入音乐软件/伪装机型。
     public static final String KEY_STATUSBAR_LYRIC_ENABLED = "statusbar_lyric_enabled";
 
     public static final String KEY_KEYGUARD_BOUNCER_SWIPE_BACK_ENABLED = "keyguard_bouncer_swipe_back_enabled";
-    // 密码支持滑动输入(com.android.systemui): 开启后密码数字键盘支持滑动连续输入。
-    // 手指进入某数字键"中间 2/3 半径"的圆形区域即视为按下该键: 立即输入该字符并显示按下态;
-    // 手指离开该键的范围时取消按下态(不重复输入)。实现见
-    // SystemUiHooks#hookKeyguardSlideInput —— 接管 COUINumericKeyboard 的
-    // handleActionDown / handleActionMove / handleActionUp(float, float, int) 三个私有方法,
-    // 把系统"矩形命中 + 抬起才输入"改为"圆形命中 + 进入即输入"。
+    // 密码支持滑动输入: 手指进入某数字键"中间 2/3 半径"的圆形区域即视为按下该键, 立即输入并
+    // 显示按下态; 离开该键范围则取消(不重复输入)。见 SystemUiHooks#hookKeyguardSlideInput ——
+    // 接管 COUINumericKeyboard 的 handleActionDown/Move/Up, 改"矩形命中+抬起才输入"为"圆形命中+进入即输入"。
     public static final String KEY_KEYGUARD_SLIDE_INPUT_ENABLED = "keyguard_slide_input_enabled";
 
     // 跨进程读取开关用的应用 Context(被 hook 进程自身)与 ContentProvider 通道所需的字段。
@@ -201,8 +191,7 @@ public class XposedInit implements IXposedHookLoadPackage {
         Log.e(TAG, msg);
     }
 
-    // 真实错误日志: Log.e 立即输出, 文件写入异步执行, 避免阻塞 Launcher/SystemUI 主线程。
-    // 仅输出到 logcat, 不写文件, 避免 IO 卡顿。
+    // 仅输出到 logcat(Log.e), 不写文件, 避免 IO 卡顿。
     // 注意: 这里必须是 Log.e —— 曾因被清空实现导致所有 HOOK OK/FAIL 与异常静默丢失,
     // 无法判断 hook 是否命中, 直接造成多轮盲改。禁止再把方法体清空。
     public static void log(String msg) {
@@ -234,11 +223,9 @@ public class XposedInit implements IXposedHookLoadPackage {
         // 无需在音乐软件进程注入, 也无需伪装机型(见 StatusBarLyricHooks 类注释)。
     }
 
-    // 读取桌面隐藏应用入口文件夹的自定义名称, 与安全中心内部
-    // com.oplus.safecenter.privacy.utils.k#b 逻辑一致:
-    //   content://com.android.launcher.OplusFavoritesProvider/desktopappedit, column=title,
-    //   selection="componentName=?", arg="com.oplus.safecenter_<AppHideLauncherActivity>_<userId>"。
-    // 查不到或为空时返回 null(调用方保持原标题"应用隐藏")。
+    // 读取桌面隐藏应用入口文件夹的自定义名称, 与安全中心 com.oplus.safecenter.privacy.utils.k#b 一致:
+    // content://com.android.launcher.OplusFavoritesProvider/desktopappedit, column=title,
+    // selection="componentName=?", arg="com.oplus.safecenter_<AppHideLauncherActivity>_<userId>"。
     public static String readAppHideFolderName(android.content.Context context) {
         try {
             android.net.Uri uri = android.net.Uri.parse(

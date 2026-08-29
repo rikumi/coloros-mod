@@ -24,11 +24,9 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  * 设置(com.android.settings) 作用域的全部 hook：首页图标风格(紧凑/列表)。
  */
 public final class SettingsHooks {
-    /**
-     * 设置首页图标样式：复用 Settings/Oplus 已有的 COUIRoundImageView 绘制路径。
-     * Oplus 首页来自 top_level_settings_oplus.xml，不经过 DashboardFeatureProviderImpl；
-     * COUIPreference 的 couiIconStyle=0 是圆形，=1 是不规则圆角图标。
-     */
+// 设置首页图标样式: 复用 Settings/Oplus 已有的 COUIRoundImageView 绘制路径。
+// Oplus 首页来自 top_level_settings_oplus.xml, 不经过 DashboardFeatureProviderImpl;
+// COUIPreference 的 couiIconStyle=0 是圆形, =1 是不规则圆角图标。
     public static void hookSettingsHomeIconStyle(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             final Class<?> oplusTopLevelClass = XposedHelpers.findClass(
@@ -90,10 +88,9 @@ public final class SettingsHooks {
         }
     }
 
-    // 隐藏应用免验证打开的更直接入口: 安全中心会让本进程启动 ConfirmNumberPrivacy(或指纹变体
-    // ConfirmBiometricInfo) 作为校验闸门, 校验成功时它本就会 setResult(-1) 交回安全中心的
-    // AppHideNewCheckActivity.onActivityResult -> e0() 打开隐藏应用界面(不读取 challenge)。
-    // 因此这里在 onCreate 后立刻 setResult(-1)+finish() 即可。不依赖 com.oplus.safecenter 作用域。
+// 隐藏应用免验证的更直接入口: 安全中心会让本进程启动 ConfirmNumberPrivacy(或指纹变体
+// ConfirmBiometricInfo) 作为校验闸门, 成功时它本就会 setResult(-1) 交回安全中心。
+// 因此 onCreate 后立刻 setResult(-1)+finish() 即可, 不依赖 com.oplus.safecenter 作用域。
     public static void hookSettings(final XC_LoadPackage.LoadPackageParam lpparam) {
         log(">>> matched com.android.settings");
         hookSettingsHomeIconStyle(lpparam);

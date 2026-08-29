@@ -28,29 +28,9 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  * 密码输入界面相关的 SystemUI hook: 控件光效、背景亮度、滑动输入、纯色背景绘制。
  */
 public final class PasswordInputHooks {
-    // ---------------------------------------------------------------------------------------------
-    // 取消解锁界面控件光效
-    //
-    // COUI 给锁屏密码控件叠了三类"非纯色"绘制, 全部在 SystemUI 进程内完成, 与主题/壁纸无关:
-    //   1. 径向渐变光晕: lockview.LightEffectHelper#drawLightEffect, RadialGradient + BlendMode.LIGHTEN;
-    //      PIN/密码键盘按键在 COUINumericKeyboard#drawLightEffect 调用, SIM 确定按钮在
-    //      COUILockScreenPwdInputLayout#dispatchDraw 内联展开(受 mLightEffectAlpha > 0 控制)。
-    //   2. 内阴影: InnerShadowHelper 生成的 Bitmap, 输入控件与按键各有一张。
-    //   3. 高光描边: COUINumericKeyboard#drawInnerBorder 中 cell.mInnerLightAlpha > 0 时
-    //      用 mBorderLineHighLightAlpha + BlendMode.LUMINOSITY 再描一圈。
-    //   另: 已输入圆点的光晕是 COUISimpleLock#drawGlowEffect 画的 mGlowEffectDrawable;
-    //       圆点的缩放动画在 COUISimpleLock#drawFilledRectangleWithScale(唯一对圆点做
-    //       canvas.scale 的地方), 缩放值取 mCircleScales[index](spring 输出, 上限 1.2f)。
-    // 去掉这些后, 控件只剩纯色背景 + 纯色圆点; 按下时的缩放/变色反馈(
-    // COUIPressFeedbackHelper / drawPressCircle)完全保留, 不是光效。
-    //
-    // 涉及控件(均已在设备上用 uiautomator 布局树核对):
-    //   PIN/密码键盘按键 ... com.oplus.keyguard.security.widget.NumericKeyboardWidget extends COUINumericKeyboard
-    //   已输入圆点 ......... com.oplus.keyguard.security.widget.PinSimpleLockInputWidget extends COUISimpleLock
-    //   SIM 输入框 ......... com.coui.appcompat.input.COUILockScreenPwdInputView
-    //   SIM 确定按钮 ....... com.coui.appcompat.input.COUILockScreenPwdInputLayout#dispatchDraw(mNextIcon)
-    // 两个 Widget 子类均未覆写绘制方法, 私有方法 hook 父类即可生效。
-    // ---------------------------------------------------------------------------------------------
+    // 取消解锁界面控件光效。COUI 给锁屏密码控件叠了三类"非纯色"绘制(与主题/壁纸无关): 1) 径向渐变光晕
+    // LightEffectHelper#drawLightEffect(LIGHTEN); 2) InnerShadowHelper 生成的内阴影 Bitmap; 3) 高光描边
+    // drawInnerBorder(LUMINOSITY)。另: 已输入圆点的光晕是 drawGlowEffect, 缩放动画取 mCircleScales[index](上限 1.2f)。
     private static final String CLS_NUMERIC_KEYBOARD =
             "com.coui.appcompat.lockview.COUINumericKeyboard";
     private static final String CLS_NUMERIC_KEYBOARD_CELL =
@@ -121,10 +101,9 @@ public final class PasswordInputHooks {
             log("HOOK FAIL COUINumericKeyboard#drawInnerShadowLayer :: " + Log.getStackTraceString(t));
         }
 
-        // 2) 按键边框: 整段跳过。drawInnerBorder 里先画 mInnerLightAlpha 触发的高光描边
-        //    (LUMINOSITY), 再无条件画一道 mBorderLineColor 常规描边, 两者都不要。
-        //    侧边键(删除/确定)走 drawSide 时也会调这里, 但它传的 alpha 是 0.0f, 常规描边
-        //    alpha = mBorderLineAlpha * 0 本就不可见, 一并跳过不影响。
+    // 2) 按键边框: 整段跳过。drawInnerBorder 里先画 mInnerLightAlpha 触发的高光描边(LUMINOSITY), 再无条件
+    //    画一道 mBorderLineColor 常规描边, 两者都不要。侧边键走 drawSide 时也会调这里, 但它传的 alpha 是
+    //    0.0f, 常规描边 alpha = mBorderLineAlpha * 0 本就不可见, 一并跳过不影响。
         try {
             XposedHelpers.findAndHookMethod(
                     CLS_NUMERIC_KEYBOARD, lpparam.classLoader, "drawInnerBorder",
@@ -144,39 +123,9 @@ public final class PasswordInputHooks {
         }
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // 自定义密码界面背景亮度
-    //
-    // 现象: 本机壁纸纯黑 (0,0,0), 锁屏渲染为纯黑, 而密码界面(bouncer)渲染为均匀的 (26,26,26)。
-    //
-    // 真正来源(设备属性 + dexdump 双重确认):
-    //   ScrimControllerExImp#refreshBehindDrawable() 决定背后 scrim 用哪种 drawable:
-    //     if (!isWallpaperBlurDisable() && ScrimUtil.isLowGaussianLevel(context)) -> WallpaperBlurDrawable
-    //     else                                                                    -> AutoBlurDrawable
-    //   设备属性 persist.sys.oplus.anim_level = 1, 而 isLowGaussianLevel() 要求 ANIM_LEVEL >= 3,
-    //   故本机返回 false -> 走 **AutoBlurDrawable** 分支。
-    //   => 之前 hook WallpaperBlurDrawable#draw 完全无效: 该类在本机根本没被实例化。
-    //
-    //   AutoBlurDrawable 分支下混色来自 getPanelPlatformMixConfig():
-    //     ScrimControllerExImp line 1315:
-    //       new BlurConfig(panelBlurRadius, 0, null, true, getPanelPlatformMixConfig(), ...)
-    //     bouncer 时 getPanelPlatformMixConfig() 返回
-    //       NotifiAndQsPlatformBlurExKt.panelBouncerMixConfig(z)
-    //         = new BlurMixConfig.BlurMixSingle(BOUNCER_MIX_COLOR)
-    //       BOUNCER_MIX_COLOR = new MixColor(5 /* LUMINOSITY */, #99262626, #66A6A6A6)
-    //   LUMINOSITY(mode 5) 把亮度归一化到 top 层 RGB(0x26 = 38), 即给模糊壁纸加了一个"最低亮度",
-    //   所以纯黑壁纸也被抬成 (26,26,26)。
-    //
-    // 实现(必须避开 final 字段写入):
-    //   dexdump 确认 BlurMixSingle.mixColor 为 PRIVATE FINAL, MixColor 的 mode/topLayerColor/
-    //   bottomLayerColor 均为 PUBLIC FINAL。对 final 字段反射写入会被 ART 内联而失效
-    //   (上一版改 mixColor / topLayerColor 无效即因此)。
-    //   故直接 hook panelBouncerMixConfig(boolean) 的 afterHook, 用新对象整体替换返回值。
-    //   该方法只在 bouncer 时被调用, 天然只作用于密码界面, 无需额外维护 bouncer 状态。
-    //
-    //   新 top 层 RGB = 系统 RGB(0x26) * (brightness / 5): 5=系统默认, 0=纯黑(去掉最低亮度)。
-    //   按比例缩放而非硬编码目标亮度, 对深浅色壁纸与不同 alpha 都成立。
-    // ---------------------------------------------------------------------------------------------
+    // 自定义密码界面背景亮度。壁纸纯黑时锁屏为纯黑, 而 bouncer 为均匀的 (26,26,26)。来源: 设备属性
+    // persist.sys.oplus.anim_level=1 而 isLowGaussianLevel() 要求 >=3, 故本机走 **AutoBlurDrawable** 分支
+    // (之前 hook WallpaperBlurDrawable#draw 无效 —— 该类在本机根本没被实例化)。
     private static final String CLS_PANEL_BLUR_EX_KT =
             "com.oplusos.systemui.common.util.NotifiAndQsPlatformBlurExKt";
     // LUMINOSITY 混色模式(mode 5)。
@@ -229,35 +178,9 @@ public final class PasswordInputHooks {
         }
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // 密码支持滑动输入
-    //
-    // 系统原生行为(COUINumericKeyboard, 签名均经 dexdump 核对):
-    //   checkForNewHit(FF) -> getRowHit/getColumnHit: 按 **矩形**(cell 宽高 + mAdditionalPressableArea)命中。
-    //   handleActionDown(FFI): cell.pointerId = pointerId, 显示按下态, **不输入**。
-    //   handleActionUp(FFI):   仅当命中的 cell.pointerId == 该 pointerId 才 callback(输入), 再取消按下态。
-    //   handleActionMove(FFI): 一旦移出原 cell 就 handleActionCancel(pointerId) 取消按下态。
-    //   => 原生是"按下与抬起落在同一键才输入", 滑动经过其它键不会输入。
-    //
-    // 本功能改为"进入即输入", 接管上述三个私有方法(均为 (FFI)V):
-    //   DOWN: 圆形命中某数字键 -> 显示按下态 + 立即输入。
-    //   MOVE: 命中键变化       -> 取消旧键按下态, 新键显示按下态 + 立即输入。
-    //         移出所有数字键   -> 取消按下态。
-    //   UP:   仅取消按下态(字符在进入时已输入, 抬起不再重复输入)。
-    //
-    // 命中区域 = 以按键中心为圆心、"按键圆半径 * 2/3" 为半径的圆。按键圆半径取
-    // mNumberBackgroundRadius * cell.mButtonScale(与 refreshNumberPaths / drawInnerShadowLayer
-    // 绘制按键背景圆时所用的半径一致), 故 2/3 即需求所说的"中间 2/3 半径范围"。
-    //
-    // 只认数字键: callback(i) 中 0-8 -> 数字 1-9, 10 -> 数字 0, 9 -> 左键, 11 -> 右键;
-    // 排除 9 / 11, 保留删除 / 确定等左右键的点击语义, 避免滑动误触。
-    //
-    // 按下态对两种 mPressEffectStyle 均兼容: 0 -> initShowAnimator/initFadeAnimator(传统圆圈),
-    // 1 -> executeLightEffectAnimator(cell, boolean)(光效)。若同时开启"取消解锁界面控件光效",
-    // 绘制已被替换为按 cell.pointerId != -1 判定的纯色底, 只要正确维护 pointerId 即显示按下态。
-    // ---------------------------------------------------------------------------------------------
-    // CLS_NUMERIC_KEYBOARD 复用上方已声明的同名常量。
-    // 滑动输入的有效命中区域: 按键圆半径的 2/3。
+    // 密码支持滑动输入。系统原生是"抬起与按下同键才输入", 本功能改为"进入即输入": DOWN 圆形命中即按下并输入,
+    // MOVE 换键时取消旧键、新键输入, 移出则取消, UP 仅取消按下态。命中区域 = 以按键中心为圆心、"按键圆半径*2/3"
+    // 为半径的圆; 只认数字键(0-8 -> 1-9、10 -> 0), 排除 9/11 侧键以保留删除/确定的点击语义。
     private static final float SLIDE_HIT_RADIUS_RATIO = 2.0f / 3.0f;
     // 运行时键盘实例是子类 NumericKeyboardWidget, 但被反射调用的方法都声明在父类
     // COUINumericKeyboard, 故缓存父类 Class 用于 getDeclaredMethod(见 invokeExact)。
@@ -361,19 +284,9 @@ public final class PasswordInputHooks {
         invalidate(kb);
     }
 
-    /**
-     * 圆形命中测试: 直接遍历 sCells(字段类型 [[Lcom/.../COUINumericKeyboard$Cell;, dexdump 确认),
-     * 找出中心与 (x, y) 距离不超过"按键圆半径 * 2/3"的数字键。
-     *
-     * 刻意完全不通过反射调用任何键盘实例方法:
-     *  - getTouchIndex(Cell) 是 private, 且存在无参重载, 反射易失败;
-     *  - checkForNewHit 虽为 public, 但定义在父类 COUINumericKeyboard, callMethod 在子类实例上
-     *    按 (Float,Float) 自动装箱查找会抛 NoSuchMethodError(实测) —— 这是"点击和滑动双双失效"的根因。
-     * 中心坐标改为按系统公式直接计算(与 getCenterXForColumn/getCenterYForRow 实现一致):
-     *   cx = paddingLeft + mCellWidth/2 + col * (mCellWidth + mHorizontalSpacing)
-     *   cy = paddingTop  + mCellHeight/2 + row * (mCellHeight + mVerticalSpacing)
-     * 索引按 row*3+column(与系统 private getTouchIndex(Cell) 实现一致)。
-     */
+    // 圆形命中测试: 遍历 sCells 找中心与 (x,y) 距离不超过"按键圆半径*2/3"的数字键。刻意不反射调用键盘实例方法:
+    // getTouchIndex 是 private 且有无参重载; checkForNewHit 定义在父类, 装箱查找会抛 NoSuchMethodError。
+    // 中心按系统公式算(paddingLeft + mCellWidth/2 + col*(mCellWidth+spacing)), 索引按 row*3+column。
     private static Object findSlideHitCell(Object kb, float x, float y) {
         try {
             Object[][] sCells = (Object[][]) XposedHelpers.getObjectField(kb, "sCells");
@@ -419,11 +332,8 @@ public final class PasswordInputHooks {
         return (idx >= 0 && idx <= 8) || idx == 10;
     }
 
-    /**
-     * 左键(索引 9, 删除) / 右键(索引 11, 确定) 标记为侧键。
-     * 这里用 row*3+column 的原始位置判断, 而非系统的 getTouchIndex(): 后者在侧键样式为空时会
-     * 返回 -1, 但我们仍需要把该位置识别为侧键以便交还原生处理。
-     */
+    // 左键(索引 9, 删除) / 右键(索引 11, 确定) 标记为侧键。这里用 row*3+column 的原始位置判断, 而非系统的
+    // getTouchIndex(): 后者在侧键样式为空时返回 -1, 但我们仍需把该位置识别为侧键以便交还原生处理。
     private static boolean isSideKeyCell(Object cell) {
         if (cell == null) return false;
         int idx = slideTouchIndex(cell);
@@ -461,23 +371,9 @@ public final class PasswordInputHooks {
         return null;
     }
 
-    /**
-     * 用精确签名调用键盘实例方法。
-     *
-     * 不可用 XposedHelpers.callMethod: 它会把基础类型参数自动装箱后再匹配, 而运行时实例是子类
-     * NumericKeyboardWidget, 实测抛 NoSuchMethodError(如
-     * "checkForNewHit[class java.lang.Float, class java.lang.Float]")。
-     * callback(int)、executeLightEffectAnimator(Cell, boolean) 都带基础类型参数,
-     * 必须显式按 int.class / boolean.class 查找。
-     * Cell 类型直接取 cell.getClass(), 无需预先解析内部类。
-     */
-    /**
-     * 在父类 COUINumericKeyboard 上按精确签名调用实例方法, 返回其返回值。
-     *
-     * 必须在**声明这些方法的类**上查找: XposedHelpers.findMethodExact 不搜索父类, 在子类实例
-     * (NumericKeyboardWidget).getClass() 上查会抛 NoSuchMethodError(实测)。
-     * getDeclaredMethod + setAccessible 可调用父类方法(含 private)。
-     */
+    // 用精确签名调用键盘实例方法。不可用 XposedHelpers.callMethod: 它会把基础类型参数装箱后再匹配, 而运行时实例是
+    // 子类 NumericKeyboardWidget, 实测抛 NoSuchMethodError; callback(int)、executeLightEffectAnimator(Cell, boolean)
+    // 必须显式按 int.class/boolean.class 查。调父类方法须在声明类上 getDeclaredMethod(findMethodExact 不搜索父类)。
     private static Object invokeKeyboard(Object target, String name,
             Class<?>[] paramTypes, Object... args) {
         if (sKeyboardClass == null) return null;
@@ -642,13 +538,9 @@ public final class PasswordInputHooks {
     private static int sBorderColorInput = Integer.MIN_VALUE;
     private static int sBorderColorLayout = Integer.MIN_VALUE;
 
-    /**
-     * SIM 卡界面输入框(COUILockScreenPwdInputView)与确定按钮(COUILockScreenPwdInputLayout)的边框:
-     * 边框由 mBorderPaint 以 mBorderLineColor 描边绘制。开启时把颜色置全透明并强制下次重绘重建
-     * paint(读最新色) -> 不可见; 关闭时还原系统原色, 门控即时生效。
-     * 注意 COUILockScreenPwdInputLayout 的 mBorderLineColor 为 final, 反射写入运行时仍生效
-     * (值来自资源, 非编译期常量, 绘制时按字段值读取)。
-     */
+    // SIM 卡界面输入框(COUILockScreenPwdInputView)与确定按钮(COUILockScreenPwdInputLayout)的边框由 mBorderPaint
+    // 以 mBorderLineColor 描边。开启时把颜色置全透明并强制重建 paint -> 不可见; 关闭时还原, 门控即时生效。
+    // 注意 COUILockScreenPwdInputLayout 的 mBorderLineColor 为 final, 但反射写入运行时仍生效(值来自资源非编译期常量)。
     private static void setBorderMode(Object view, String colorField, boolean isLayout, boolean enabled) {
         try {
             int cached = isLayout ? sBorderColorLayout : sBorderColorInput;
@@ -755,26 +647,9 @@ public final class PasswordInputHooks {
         }
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // 纯色背景
-    //
-    // 新界面(mScenesMode==1 / mPressEffectStyle==1)下这些控件都没有背景色:
-    //   - COUILockScreenPwdInputLayout 构造里: mNextIcon.setBackgroundColor(0) + mInputView.setBackgroundColor(0),
-    //     因为内阴影 + 光晕会提供视觉; 传统代码路径(ScenesMode!=1)才给 coui_input_lock_screen_pwd_view_bg_color_desktop
-    //     (#33ffffff) 或 R.attr.couiColorCard。
-    //   - COUINumericKeyboard: 背景由 mDrawDelegate.getCustomKeyboardPaint() 提供, 但 SystemUI 里
-    //     没有任何 setKeyboardDrawDelegate 调用者 -> delegate 为 null, 传统路径的 mNumberBackgroundColor
-    //     也不会走(pressEffectStyle==1)。
-    // 所以去掉光效后必须补一层纯色。取色顺序:
-    //   1) 系统/传统代码为该控件配置的**完全不透明实色**背景(半透明的一律不用, 见下);
-    //   2) 取不到 -> 常态 10% 白, 按下 20% 白。
-    //
-    // 为什么只认完全不透明: 键盘的 mNumberBackgroundColor 实际解析得到 #33ffffff(20% 白,
-    // 来自 ?numericKeyboardStyle -> LauncherNumericKeyboardStyle -> kgd_color_numeric_keyboard
-    // _setting_background_color), 如果"非透明就用它", 按下态会被这个恒定值吃掉而永远不变化 ——
-    // 这正是上一版"按下不变色"的原因。该色同时在 pressEffectStyle==1 下根本不会被系统使用,
-    // 所以这里按"系统没给有效背景"处理, 走兜底。
-    // ---------------------------------------------------------------------------------------------
+    // 纯色背景。新界面(mPressEffectStyle==1)下这些控件没有背景色, 故去掉光效后必须补一层:
+    // 取系统配置的**完全不透明实色**, 取不到则常态 10% 白、按下 20% 白。只认不透明是因为键盘的
+    // mNumberBackgroundColor 实际为 #33ffffff(20% 白), 用它按下态就恒不变(上一版"按下不变色"的原因)。
     private static final int SOLID_BG_NORMAL = 0x1AFFFFFF;   // 10% 白
     private static final int SOLID_BG_PRESSED = 0x33FFFFFF;  // 20% 白
 
@@ -823,15 +698,9 @@ public final class PasswordInputHooks {
         return (color >>> 24) == 0xFF;
     }
 
-    /**
-     * 密码按键的纯色背景。
-     *
-     * hook 点是 drawInnerShadowLayer(Canvas, float cx, float cy, Cell, int tx, int ty, float alpha),
-     * 系统自己在这方法里就是按 (cx+tx, cy+ty) 定位、按 mNumberBackgroundRadius*mButtonScale 取半径、
-     * 按 alpha*255 取透明度, 所以这里全部沿用入参, 不做任何二次推算:
-     * 圆心/进退出位移/淡入淡出 alpha 均由系统给出, 动画天然同步; 9/11 号侧边键走 drawSide,
-     * 那里自带 drawBackground(mSideBackgroundColor), 不会进这个方法, 无需处理。
-     */
+    // 密码按键的纯色背景。hook 点 drawInnerShadowLayer(Canvas, float cx, float cy, Cell, int tx, int ty, float alpha):
+    // 系统自己在该方法里按 (cx+tx, cy+ty) 定位、按 mNumberBackgroundRadius*mButtonScale 取半径、按 alpha*255
+    // 取透明度, 故全部沿用入参不做二次推算, 动画天然同步; 9/11 侧边键走 drawSide, 不进此方法。
     private static void drawKeySolidBackground(XC_MethodHook.MethodHookParam param) {
         Object keyboard = param.thisObject;
         Canvas canvas = (Canvas) param.args[0];
@@ -894,14 +763,9 @@ public final class PasswordInputHooks {
         canvas.drawPath(path, fillPaint(resolveSolidBgColor(view, false)));
     }
 
-    /**
-     * SIM 确定按钮: 圆形背景, 圆心与半径的计算与系统 dispatchDraw(147-155 行)完全一致。
-     *
-     * 按下判定不能用 nextIcon.isPressed(): mNextIcon 是个 ImageView, 系统从不对它 setPressed,
-     * 触摸由 layout 自己处理, 所以 isPressed() 恒为 false。
-     * 改用 mLightEffectAlpha —— 它由按下动画拉起、抬起后回落为 0, 是本控件唯一的按下态信号
-     * (调用方随后才把它清零以去掉光晕, 所以这里读到的是原始值)。
-     */
+    // SIM 确定按钮: 圆形背景, 圆心与半径的计算与系统 dispatchDraw(147-155 行)完全一致。
+    // 按下判定不能用 nextIcon.isPressed(): mNextIcon 是 ImageView 且系统从不对它 setPressed, 恒 false。
+    // 改用 mLightEffectAlpha —— 它由按下动画拉起、抬起回落为 0, 是本控件唯一的按下态信号。
     private static void drawNextIconSolidBackground(Object layout, Canvas canvas) {
         android.view.View nextIcon = (android.view.View)
                 XposedHelpers.getObjectField(layout, "mNextIcon");

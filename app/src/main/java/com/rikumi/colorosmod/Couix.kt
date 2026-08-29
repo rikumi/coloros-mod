@@ -87,10 +87,8 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.TextStyles
 import top.yukonga.miuix.kmp.theme.defaultTextStyles
 
-/**
- * couix —— 对 miuix 的轻度 ColorOS 化封装。
- * 不直接改动 miuix 库本身，而是用一组包装 Composable 调整尺寸/间距/文字/圆角。
- */
+// couix —— 对 miuix 的轻度 ColorOS 化封装。不直接改动 miuix 库本身,
+// 而是用一组包装 Composable 调整尺寸/间距/文字/圆角。
 
 // 开关目标尺寸（miuix 默认 49x28dp -> 缩小到约 36x22dp）。
 private val COUIX_SWITCH_W = 36.dp
@@ -197,11 +195,8 @@ private fun couixTopBarTitleStyle(): TextStyle =
         fontWeight = FontWeight.Bold,
     )
 
-/**
- * 标题栏外框: 首页大标题与子页面标题共用, 统一状态栏 inset、垂直内边距与底部分割线,
- * 从而保证两种页面的标题栏高度完全相同。startPadding 因首页无返回按钮而不同,
- * 但只影响水平位置, 不影响高度。
- */
+// 标题栏外框: 首页大标题与子页面标题共用, 统一状态栏 inset、垂直内边距与底部分割线,
+// 从而保证两种页面的标题栏高度完全相同。startPadding 因首页无返回按钮而不同, 但只影响水平位置。
 @Composable
 private fun CouixTopBarFrame(
     startPadding: Dp,
@@ -226,12 +221,8 @@ private fun CouixTopBarFrame(
     }
 }
 
-/**
- * 自绘页面大标题：miuix TopAppBar 的大标题用固定样式（无法外部覆盖字重），
- * 这里用 BasicText 直接绘制，仅加粗，并自行处理状态栏 inset
- * 与右侧 actions（如重启按钮）的布局。
- * 高度与字号与 [CouixTopAppBar] 保持一致。
- */
+// 自绘页面大标题: miuix TopAppBar 的大标题用固定样式(无法外部覆盖字重), 这里用 BasicText 直接
+// 绘制, 仅加粗, 并自行处理状态栏 inset 与右侧 actions 的布局。高度与字号与 CouixTopAppBar 一致。
 @Composable
 fun CouixLargeTitle(
     title: String,
@@ -261,10 +252,8 @@ fun CouixLargeTitle(
     }
 }
 
-/**
- * 依据列表滚动状态计算标题栏分割线进度:
- * 首项仍在屏幕内时按真实滚动偏移延长, 首项离开后保持通栏。
- */
+// 依据列表滚动状态计算标题栏分割线进度:
+// 首项仍在屏幕内时按真实滚动偏移延长, 首项离开后保持通栏。
 @Composable
 internal fun couixTopBarDividerProgress(listState: LazyListState): Float {
     val density = LocalDensity.current
@@ -297,10 +286,8 @@ internal fun BoxScope.CouixTopBarDivider(progress: Float) {
     }
 }
 
-/**
- * 子页面标题栏: 左侧返回按钮 + 小标题, 右侧 actions（如重启菜单），
- * 底部同样带随列表滚动延长的分割线。
- */
+// 子页面标题栏: 左侧返回按钮 + 小标题, 右侧 actions(如重启菜单),
+// 底部同样带随列表滚动延长的分割线。
 @Composable
 fun CouixTopAppBar(
     title: String,
@@ -326,10 +313,7 @@ fun CouixTopAppBar(
     }
 }
 
-/**
- * 分组卡片容器: 与 CouixGroup 同款（更小圆角、略弱底色）,
- * 供首页分类列表等自定义内容复用。
- */
+// 分组卡片容器: 与 CouixGroup 同款(更小圆角、略弱底色), 供首页分类列表等自定义内容复用。
 @Composable
 internal fun CouixCard(
     modifier: Modifier = Modifier,
@@ -350,10 +334,8 @@ internal fun CouixCard(
     )
 }
 
-/**
- * 首页分类入口行: 左侧线条图标(与标题同色, 无底色), 中间标题, 右侧前进箭头。
- * 配置了 subtitle 时不占第二行, 而是显示在前进箭头左侧、右对齐。
- */
+// 首页分类入口行: 左侧线条图标(与标题同色, 无底色), 中间标题, 右侧前进箭头。
+// 配置了 subtitle 时不占第二行, 而是显示在前进箭头左侧、右对齐。
 @Composable
 internal fun CouixCategoryRow(
     icon: ImageVector,
@@ -415,11 +397,8 @@ private fun couixSwitchTick(): () -> Unit {
     return { view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) }
 }
 
-/**
- * 自绘开关：miuix Switch 内部硬编码 49x28 布局（绘制坐标绑定该尺寸），
- * 无法从外部整体缩放且不溢出。这里改用 Canvas 直接按目标尺寸绘制轨道+滑块，
- * 尺寸精确、不溢出，并带滑块位移动画。
- */
+// 自绘开关: miuix Switch 内部硬编码 49x28 布局(绘制坐标绑定该尺寸), 无法从外部整体缩放且不溢出。
+// 这里改用 Canvas 直接按目标尺寸绘制轨道+滑块, 尺寸精确、不溢出, 并带滑块位移动画。
 @Composable
 fun CouixSwitch(
     checked: Boolean,
@@ -453,10 +432,8 @@ fun CouixSwitch(
     }
 }
 
-/**
- * 单行开关偏好：整行可点击切换，右侧为缩小后的 couix 开关。
- * 文字沿用 miuix 主题（已通过 couixTextStyles 全局缩小）。
- */
+// 单行开关偏好: 整行可点击切换, 右侧为缩小后的 couix 开关。
+// 文字沿用 miuix 主题(已通过 couixTextStyles 全局缩小)。
 @Composable
 fun CouixSwitchPreference(
     checked: Boolean,
@@ -610,10 +587,8 @@ internal fun CouixSelectGroup(
     }
 }
 
-/**
- * 下拉弹层里的单项：左侧文字（选中态用主题色），右侧细线勾图标；
- * 项与项之间由调用方用 [CouixDropdownDivider] 插入分割线。
- */
+// 下拉弹层里的单项: 左侧文字(选中态用主题色), 右侧细线勾图标;
+// 项与项之间由调用方用 CouixDropdownDivider 插入分割线。
 @Composable
 private fun CouixDropdownItem(
     text: String,
@@ -643,10 +618,8 @@ private fun CouixDropdownItem(
     }
 }
 
-/**
- * 细线风格勾选图标（对齐 ColorOS 原生下拉）：用两段圆头描边线段绘制，
- * 描边色由调用方传入（选中态主题色），非填充式。
- */
+// 细线风格勾选图标(对齐 ColorOS 原生下拉): 用两段圆头描边线段绘制,
+// 描边色由调用方传入(选中态主题色), 非填充式。
 @Composable
 private fun CouixCheckMark(
     color: Color,
@@ -799,11 +772,9 @@ private fun CouixSelectRow(
 }
 }
 
-/**
- * 顶部"启用模块"主开关卡片：与 CouixGroup 相同样式, 仅一个开关项。
- * checked 与 title 由调用方(基于全部功能是否任一开启)决定; subtitle 非空时紧贴 title 显示,
- * title/subtitle 放在左侧 Column(weight=1f), 右侧为开关, 文字自然水平避让开关不会延伸到其下方。
- */
+// 顶部"启用模块"主开关卡片: 与 CouixGroup 相同样式, 仅一个开关项。checked 与 title 由调用方
+// (基于全部功能是否任一开启)决定; subtitle 非空时紧贴 title 显示。title/subtitle 放在左侧
+// Column(weight=1f), 右侧为开关, 文字自然水平避让开关而不会延伸到其下方。
 @Composable
 fun CouixMasterToggle(
     checked: Boolean,
@@ -918,11 +889,8 @@ fun CouixSlider(
     }
 }
 
-/**
- * 右上角动作按钮: 点击弹出下拉菜单。
- * 使用 Compose Popup 承载自定义下拉项，保持与设置 group 一致的自然圆角与主题样式。
- * 每个菜单项可附带 confirmTitle/confirmText, 点击后先弹确认框再执行, 用于软重启这类较重操作。
- */
+// 右上角动作按钮: 点击弹出下拉菜单。用 Compose Popup 承载自定义下拉项, 保持与设置 group 一致的样式。
+// 每个菜单项可附带 confirmTitle/confirmText, 点击后先弹确认框再执行, 用于软重启这类较重操作。
 data class ActionMenuItem(
     val label: String,
     val onClick: () -> Unit,
@@ -1046,10 +1014,8 @@ fun CouixActionMenu(
     }
 }
 
-/**
- * 极简单确认弹窗(自绘, 用 androidx.compose.ui.window.Dialog 提供遮罩与居中)。
- * 仅用于"软重启"等较重、需二次确认的动作。
- */
+// 极简单确认弹窗(自绘, 用 androidx.compose.ui.window.Dialog 提供遮罩与居中)。
+// 仅用于"软重启"等较重、需二次确认的动作。
 @Composable
 fun CouixConfirmDialog(
     title: String,

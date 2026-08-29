@@ -28,11 +28,9 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  * 通知(分组副标题、通知内边距)相关的 SystemUI hook。
  */
 public final class NotificationHooks {
-    // 通知面板分组副标题: 布局由 SectionHeaderView 驱动, 其内部 TextView(@id/header_label) 原始
-    // textSize=24sp, 被包在 FrameLayout(@id/content, paddingTop=12dp) 中。hook onFinishInflate(after):
-    //   - 缩小字体至 fontSizePx(16sp);
-    //   - content 的 paddingTop 减少 offsetPx(8dp) 让文字上移 —— 不能用 translationY, 否则文字顶端
-    //     越过 content 上边界被 clipChildren 裁切(这正是之前"上半部分被裁切"的原因)。
+// 通知面板分组副标题: 布局由 SectionHeaderView 驱动, 内部 TextView(@id/header_label) 原始 24sp。
+// hook onFinishInflate(after): 缩小字体至 fontSizePx(16sp), 并把 content 的 paddingTop 减少
+// offsetPx(8dp) 让文字上移 —— 不能用 translationY, 否则文字顶端越界被 clipChildren 裁切。
     public static void hookNotificationSubtitle(final XC_LoadPackage.LoadPackageParam lpparam,
                                                  final float density) {
         try {
@@ -97,11 +95,9 @@ public final class NotificationHooks {
 
     static volatile int sNotifPadPx = 0;
 
-    // 非静默(未被最小化, mIsMinimized==false)通知: 给其通知子视图(contracted/expanded/headsUp/
-    // singleLine)的上下内边距各加 padPx。直接改子视图 padding 才能被
-    // NotificationContentView#getViewHeight 计入高度(它取子视图自身 getHeight, 不含自身 padding),
-    // 从而整张卡片增高、内部上下留白增加; 静默(最小化)通知还原原始 padding。
-    // 在 onNotificationUpdated(after) 中施加, 以首次记录的原始 padding 为基准叠加, 保证幂等。
+// 非静默通知: 给子视图(contracted/expanded/headsUp/singleLine)上下各加 padPx 内边距。
+// 直接改子视图 padding 才能被 NotificationContentView#getViewHeight 计入高度, 从而整卡增高。
+// 在 onNotificationUpdated(after) 中以首次记录的原始 padding 为基准叠加, 保证幂等。
     public static void hookNotificationPadding(final XC_LoadPackage.LoadPackageParam lpparam,
                                                 final float density) {
         try {

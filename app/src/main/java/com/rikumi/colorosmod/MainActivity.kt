@@ -104,13 +104,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/**
- * 单个设置项: key 用于持久化与 Xposed 读取, label 取自原 strings.xml 中的名称。
- * sliderKey 非空时, 开关打开后下方显示滑条: 范围 0..sliderMax(整数步进), 默认 sliderDefault,
- * sliderUnit 为值后缀(如 dp/sp/%)。sliderMin/sliderMax 为整数范围，0 即系统默认(不改变)。
- * dividerBefore 为 true 时, 该项与它前面的项之间插入分隔: 列表中以 divider 为界拆成
- * 多个 group(两段各占一张卡片, 中间留出 group 间距), 而非卡片内的一条细线。
- */
+// 单个设置项: key 用于持久化与 Xposed 读取, label 取自原 strings.xml 中的名称。sliderKey 非空时
+// 开关打开后下方显示滑条(范围 0..sliderMax 整数步进, 默认 sliderDefault, sliderUnit 为值后缀)。
+// dividerBefore 为 true 时该项与前面项之间插入分隔: 列表以 divider 为界拆成多个 group(各占一张卡片)。
 internal data class SwitchItem(
     val key: String,
     val label: String,
@@ -123,13 +119,9 @@ internal data class SwitchItem(
     val dividerBefore: Boolean = false,
 )
 
-/**
- * 下拉选项设置项。
- * options 为静态选项; dynamicOptions 非空时在进入页面后于 IO 线程重新拉取选项(如"新应用
- * 添加到"需要读桌面文件夹名), 拉取失败则沿用 options。
- * valueKey 非空时, 选中项除存下标外还会把选项文本写到 valueKey —— 选项会随桌面文件夹增删
- * 而变化, 只存下标会在删除某个文件夹后错位到另一个文件夹, 存文本则能自然回落到第 0 项。
- */
+// 下拉选项设置项。options 为静态选项; dynamicOptions 非空时进入页面后于 IO 线程重拉(如"新应用添加到"
+// 需读桌面文件夹名), 失败则沿用 options。valueKey 非空时选中项除存下标外还把选项文本写到 valueKey ——
+// 选项会随桌面文件夹增删变化, 只存下标会在删文件夹后错位, 存文本则能自然回落到第 0 项。
 internal data class SelectItem(
     val key: String,
     val label: String,
@@ -197,12 +189,8 @@ private val LOCKSCREEN = listOf(
     SwitchItem("keyguard_slide_input_enabled", "密码支持滑动输入"),
 )
 
-/**
- * 首页的一个分类入口: id 用于页面栈定位, title 为首页/子页面标题,
- * icon 取 miuix 扩展图标, items 为该分类承载的全部设置项。
- * subtitle 配置了则显示在首页入口行的右侧，不单独占第二行。
- * hint 配置了则作为该分类子页面设置项 group 的 header 补充说明。
- */
+// 首页的一个分类入口: id 用于页面栈定位, title 为首页/子页面标题, icon 取 miuix 扩展图标。
+// subtitle 配置后显示在首页入口行右侧(不单独占第二行); hint 作为该分类子页面 group 的 header 说明。
 private data class Category(
     val id: String,
     val title: String,
@@ -228,20 +216,16 @@ private val CATEGORY_GROUPS: List<List<Category>> = listOf(
 )
 private val CATEGORIES = CATEGORY_GROUPS.flatten()
 
-/**
- * 主开关切换后、落盘前的临时视觉覆盖。
- * scope = null 表示首页的全局主开关(覆盖所有分类), 否则只覆盖该 categoryId 的分类。
- */
+// 主开关切换后、落盘前的临时视觉覆盖。
+// scope = null 表示首页的全局主开关(覆盖所有分类), 否则只覆盖该 categoryId 的分类。
 private data class MasterOverride(val scope: String?, val value: Boolean)
 
 /** 该覆盖是否作用于指定 scope(null = 首页全局): 全局覆盖对所有分类生效。 */
 private fun MasterOverride?.valueFor(scope: String?): Boolean? =
     this?.takeIf { it.scope == null || it.scope == scope }?.value
 
-/**
- * 按 dividerBefore 把设置项切成连续的若干段, 每段渲染为一张独立卡片。
- * 首项若标记了 divider 也不会产生空段。
- */
+// 按 dividerBefore 把设置项切成连续的若干段, 每段渲染为一张独立卡片。
+// 首项若标记了 divider 也不会产生空段。
 private fun List<SwitchItem>.splitByDivider(): List<List<SwitchItem>> {
     if (isEmpty()) return emptyList()
     val result = mutableListOf<MutableList<SwitchItem>>()
@@ -273,11 +257,8 @@ private const val MASTER_TOGGLE_ANIM_MS = 350L
 private const val PAGE_TRANSITION_MS = 300
 private val PAGE_TRANSITION_EASING: Easing = CubicBezierEasing(0.25f, 0.1f, 0.25f, 1f)
 
-/**
- * 模块设置根界面: 首页为全局一键启用 + 分类入口, 点击进入对应子页面。
- * 首页主开关作用于全部功能, 子页面主开关只作用于该分类;
- * 两者的覆盖状态与 prefs 版本号提升到此处, 保证各页面共享同一份开关状态。
- */
+// 模块设置根界面: 首页为全局一键启用 + 分类入口, 点击进入对应子页面。首页主开关作用于全部功能,
+// 子页面主开关只作用于该分类; 两者的覆盖状态与 prefs 版本号提升到此处, 保证各页面共享同一份状态。
 @Composable
 fun SettingsScreen() {
     val ctx = LocalContext.current
@@ -416,10 +397,8 @@ private fun HomeScreen(
     }
 }
 
-/**
- * 子页面的"一键启用"主开关: 文案与绘制集中在此一处配置, 各分类子页面复用;
- * 只控制当前分类内的设置项, 不带副标题（滑块说明在该页第二个 group 的 header 上）。
- */
+// 子页面的"一键启用"主开关: 文案与绘制集中在此一处配置, 各分类子页面复用;
+// 只控制当前分类内的设置项, 不带副标题(滑块说明在该页第二个 group 的 header 上)。
 @Composable
 private fun CategoryMasterToggle(
     checked: Boolean,
@@ -558,17 +537,9 @@ private fun RestartMenu(ctx: Context) {
 }
 
 
-/**
- * 读取桌面上全部文件夹名, 供"新应用添加到"下拉使用。
- *
- * 桌面数据库为 /data/user_de/0/com.android.launcher/databases/launcher.db(4x4 布局为
- * launcher_4x4.db), 条目表按桌面模式分为 singledesktopitems / _draw / _simple; 文件夹的
- * itemType = 3(LauncherSettings.Favorites.ITEM_TYPE_FOLDER), 堆栈为 105。三张表都查一遍
- * 并按 _id 排序、去重, 即可覆盖各种桌面模式; 备份表(xxx_bakup)不参与。
- *
- * 只读: 连同 -wal/-shm 一起拷到本应用 cache 后以 OPEN_READONLY 打开, 让 SQLite 自己合并
- * WAL, 不改动桌面数据。无 root 时返回空列表(下拉只剩"桌面")。
- */
+// 读取桌面上全部文件夹名, 供"新应用添加到"下拉使用。桌面数据库为 launcher.db(4x4 布局为
+// launcher_4x4.db), 条目表按桌面模式分三张, 文件夹 itemType=3、堆栈 105; 三张表都查并按 _id 去重。
+// 只读: 连同 -wal/-shm 拷到本应用 cache 后以 OPEN_READONLY 打开, 让 SQLite 自己合并 WAL。
 private fun desktopFolderNames(ctx: Context): List<String> {
     val db = File(ctx.cacheDir, "launcher_folders.db")
     val src = "/data/user_de/0/com.android.launcher/databases/launcher.db"
@@ -664,10 +635,9 @@ private fun softRebootSystem(ctx: Context) {
     }
 }
 
-// 读取 ColorOS 主题色(强调色)。SystemUI 在 OpUtils#getThemeAccentColor 里 resolve
-// R.attr.couiColorPrimary 并落盘到 Settings.Secure["sysui_type_accent_color"]("#RRGGBB"),
-// 直接读该 key 即可(与 Android 莫奈动态色 system_accent1_* 是两套独立体系)。
-// 兜底: 退而读 theme_customization_overlay_packages JSON 里的 accent_color / system_palette。
+// 读取 ColorOS 主题色。SystemUI 在 OpUtils#getThemeAccentColor 里 resolve R.attr.couiColorPrimary
+// 并落盘到 Settings.Secure["sysui_type_accent_color"], 直接读该 key 即可(与莫奈动态色是两套体系)。
+// 兜底退而读 theme_customization_overlay_packages JSON 里的 accent_color / system_palette。
 private fun colorOSAccentColor(context: Context, fallback: Long): Color {
     return try {
         // 首选: SystemUI 计算并缓存的 ColorOS 主题色。
@@ -682,10 +652,8 @@ private fun colorOSAccentColor(context: Context, fallback: Long): Color {
     }
 }
 
-/**
- * 兜底: 从 theme_customization_overlay_packages JSON 里取 monet 强调色(通常与上面的
- * couiColorPrimary 一致)。返回可直接交给 Color.parseColor 的 "#RRGGBB"/"#AARRGGBB" 字符串。
- */
+// 兜底: 从 theme_customization_overlay_packages JSON 里取 monet 强调色(通常与 couiColorPrimary 一致)。
+// 返回可直接交给 Color.parseColor 的 "#RRGGBB"/"#AARRGGBB" 字符串。
 private fun colorOSMonetAccent(context: Context): String? {
     return try {
         val raw = Settings.Secure.getString(context.contentResolver, "theme_customization_overlay_packages")
@@ -700,10 +668,8 @@ private fun colorOSMonetAccent(context: Context): String? {
     }
 }
 
-/**
- * 以 root 执行一段 shell 命令, 返回其 stdout(无 root / su 不存在 / 命令出错时返回 null)。
- * 全程静默: 任何异常都被吞掉, 绝不向上抛, 保证首次安装无权限时不崩溃。
- */
+// 以 root 执行 shell 命令并返回 stdout(无 root / su 不存在 / 出错时返回 null)。
+// 全程静默: 任何异常都吞掉、绝不向上抛, 保证首次安装无权限时不崩溃。
 private fun runRoot(command: String): String? {
     return runCatching {
         val p = Runtime.getRuntime().exec("su")
@@ -745,11 +711,7 @@ private fun isModuleEnabledInLsposed(ctx: Context, pkg: String): Boolean {
     }.getOrDefault(false)
 }
 
-/**
- * 启动时后台自检环境:
- * - 无 root        -> 兼容运行, 不弹提示(刷新按钮点击时已有"未授予 root 权限"提示)。
- * - 有 root 但模块未在 LSPosed 启用 -> toast 提示去启用。
- */
+// 启动时后台自检环境: 无 root 则兼容运行不弹提示; 有 root 但模块未在 LSPosed 启用则 toast 提示。
 private fun checkEnvironment(activity: MainActivity) {
     Thread {
         val hasRoot = hasRootAccess()

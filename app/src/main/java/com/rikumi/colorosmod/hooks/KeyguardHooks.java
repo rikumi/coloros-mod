@@ -28,13 +28,9 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  * 锁屏 / 解锁界面(bouncer)交互相关的 SystemUI hook。
  */
 public final class KeyguardHooks {
-    // 解锁时关机无需校验密码。系统"关机校验密码"开关存在 Settings.Secure
-    // oplus_shutdown_need_verification_password, 由设置的 ShutdownVerificationPasswordSwitchController 写入。
-    // 电源菜单里关机/重启的凭据校验(BiometricPrompt, allowedAuthenticators=DEVICE_CREDENTIAL)只有一个闸门:
-    // ShutdownBiometricPrompt.isEnable(Context) —— 返回 true 才弹校验, false 则直接执行关机/重启。
-    //   ShutdownViewControl -> AuthenticationListener.handleAuthentication(onSuccess, onError)
-    //   -> ShutdownBiometricPrompt.isEnable(mContext) (OplusGlobalActionsDialog / ...SubDisplay 两处)
-    // 因此设备已解锁时把该返回值改成 false 即可跳过校验; 锁屏/未解锁时保持系统原生行为。
+    // 解锁时关机无需校验密码。电源菜单的凭据校验只有一个闸门: ShutdownBiometricPrompt.isEnable(Context)
+    // —— 返回 true 才弹校验, false 则直接执行关机/重启。
+    // 故设备已解锁时把返回值改成 false 即可跳过; 锁屏/未解锁时保持系统原生行为。
     public static void hookUnlockedShutdownNoVerify(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             XposedHelpers.findAndHookMethod(
@@ -75,37 +71,9 @@ public final class KeyguardHooks {
         }
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // 锁屏通知区域下移
-    //
-    // 锁屏上通知区(NotificationStackScrollLayout 的 top padding)的顶部位置有且仅有三个来源:
-    //   1. 静止 / 拖拽 / 收起态:
-    //      com.android.systemui.shade.NotificationPanelViewController
-    //        #getKeyguardNotificationStaticPadding()
-    //      非锁屏时直接返回 0(内部 isKeyguardShowing() 为假); 否则返回
-    //      KeyguardClockPositionAlgorithm.Result.stackScrollerPadding + 通知堆叠拖拽量。
-    //   2. 锁屏通知中心展开态:
-    //      com.oplus.systemui.notification.lockscreen.stack
-    //        .OplusLockscreenShadeTransitionControllerExImpl#getNtfTopPaddingInLockscreenNtfCenter()
-    //      (= 资源 stacked_notification_shade_margin_top, 96dp)
-    //   3. 锁屏通知中心收起动画态: 同一 Impl 类的 #getNtfTopPaddingInLockscreen()。
-    //      该值由 1 在每次请求时用 setNtfTopPaddingInLockscreen(result.stackScrollerPadding)
-    //      写入, 存的是未经本 hook 处理的原始值, 与 1 的返回值是两条独立的数据流。
-    //
-    // 三者最终都汇入 NotificationStackScrollLayout#updateTopPadding -> AmbientState.topPadding,
-    // 由堆栈算法决定首个通知的 y; getKeyguardNotificationStaticPadding 同时还参与
-    // KeyguardNotificationStackedRuler 里 "topPadding - staticPadding" 这类差值计算。
-    // 因此三处叠加同一个偏移量: 既让通知区整体下移, 又保证所有内部差值与动画起止值不变。
-    //
-    // dexdump 核对:
-    //   classes2.dex: Lcom/android/systemui/shade/NotificationPanelViewController;
-    //                   .getKeyguardNotificationStaticPadding:()I  (PUBLIC)
-    //                   .isKeyguardShowing:()Z                     (PUBLIC FINAL)
-    //   classes3.dex: Lcom/oplus/systemui/notification/lockscreen/stack/
-    //                   OplusLockscreenShadeTransitionControllerExImpl;
-    //                   .getNtfTopPaddingInLockscreen:()I          (PUBLIC)
-    //                   .getNtfTopPaddingInLockscreenNtfCenter:()I (PUBLIC)
-    // ---------------------------------------------------------------------------------------------
+    // 锁屏通知区域下移。通知区顶部位置有三处来源: NotificationPanelViewController#getKeyguardNotification
+    // StaticPadding、OplusLockscreenShadeTransitionControllerExImpl#getNtfTopPaddingInLockscreen(NtfCenter)。
+    // 三者汇入 updateTopPadding 且参与内部差值计算, 故叠加同一偏移量以保持差值与动画起止值不变。
     private static final String CLS_NOTIFICATION_PANEL_VC =
             "com.android.systemui.shade.NotificationPanelViewController";
     private static final String CLS_LOCKSCREEN_SHADE_TRANSITION_EX_IMPL =
@@ -186,50 +154,9 @@ public final class KeyguardHooks {
         }
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // 输入密码界面支持侧滑或下滑返回
-    //
-    // 需求: 开启后, 在锁屏密码/PIN 界面(bouncer)允许手势返回锁屏。反编译核对(com.android.systemui):
-    //
-    //   返回入口: bouncer 显示时 StatusBarKeyguardViewManager 经 PrimaryBouncerExpansionCallback 调
-    //     registerOnBackInvokedCallback(0, mOnBackInvokedCallback), 该 callback 的 onBackInvokedCompat()
-    //     直接调 StatusBarKeyguardViewManager#onBackPressed()。这就是系统 back 收起 bouncer 的入口,
-    //     下面两个手势最终都收敛到它。
-    //
-    //   1) 侧滑: 设备 hide_navigationbar_enable=3(侧滑模式), EdgeBackGestureHandler#onInputEvent$1 因此走
-    //      mSideGestureDetector.onMotionEventImpl(ev) —— 真实实现是
-    //      com.oplus.systemui.navigationbar.gesture.sidegesture.SideGestureDetector
-    //      (com.android.systemui.navigationbar.SideGestureDetectorEx 只是空壳基类, hook 它无效;
-    //       EdgeBackGestureHandler#isHandlingGestures() 只是 mIsEnabled/mIsBackGestureAllowed 的只读
-    //      getter, 不参与逐点判定, 之前 hook 它所以无效)。
-    //      onMotionEventImpl 的按下判定链为:
-    //        mAllowGesture = !mDisabledForQuickstep && mIsBackGestureAllowed && !z14 && z15
-    //      z14 = (mSysUiFlags & 64) != 0(64 = SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING), 命中时日志输出
-    //      "back gesture disabled by sysui flags" —— 这就是系统屏蔽侧滑的确切位置。
-    //      另外 shouldRespondToGesture() 要求 !mNavBarHidden || mAllowGestureIgnoringBarVisibility,
-    //      后者由 mSysUiFlags 的 bit17(131072) 决定。
-    //      => 开启且 bouncer 显示时, 在 onMotionEventImpl 执行期间临时清 bit64、置 bit17,
-    //         让系统侧滑手势走完, 由 BackAnimation 派发到上面注册的 OnBackInvokedCallback。
-    //
-    //   2) 下滑: 两种键盘是**不同的类**, 必须各 hook 一个:
-    //      - PIN/数字密码界面: com.oplus.keyguard.security.widget.NumericKeyboardWidget
-    //        extends com.coui.appcompat.lockview.COUINumericKeyboard(View, 自定义网格绘制)。
-    //        ⚠️ 首版只 hook 了 SecurityKeyboardView, 而它仅用于**字母**密码界面
-    //        (AlphabetKeyboardWidget 内部持有), PIN 界面根本不加载它, 所以下滑全程无效果。
-    //        网格为 4 行 x 3 列, 索引 = row*3+col, 命中判定用私有 checkForNewHit(x, y) 取 Cell:
-    //          callback(i): 0..8 -> onClickNumber(i+1); 10 -> onClickNumber(0);
-    //                      9 -> onClickLeft(0 左侧键); 11 -> onClickRight(0 右侧/删除键)
-    //        => 允许下滑的起点: 没命中(null)、9(左侧键)、11(右侧/删除键); 数字键 0..8/10 不拦截。
-    //           这正好覆盖需求里的"0 两侧的不可见按键(或删除按钮可见态)"。
-    //      - 字母密码界面: com.oplus.securitykeyboardui.SecurityKeyboardView(自定义 View)。
-    //      两者 onTouchEvent 都会把触摸全部消费。之前让 onTouchEvent 在下滑时返 false 无效 ——
-    //      一旦它在 ACTION_DOWN 消费了事件, 后续 MOVE 就固定发给它, 父容器拿不到这些点无法判定 fling。
-    //      故改为自行识别下滑后直接调 onBackPressed()。
-    //
-    //   3) 提示文案: OplusKeyguardInputViewController#displayDefaultSecurityMessage 经由
-    //      KeyguardMessageAreaController#setOplusBouncerMessage(int, String, boolean) 显示; 开启且文案含
-    //      "上滑…指纹解锁"时, 运行时替换为"下滑返回指纹解锁"。
-    // ---------------------------------------------------------------------------------------------
+    // 输入密码界面支持侧滑/下滑返回, 两者最终都收敛到 StatusBarKeyguardViewManager#onBackPressed。
+    // 侧滑: bouncer 显示时临时清 SideGestureDetector 的 mSysUiFlags bit64、置 bit17 以放行手势。
+    // 下滑: PIN(COUINumericKeyboard)与字母(SecurityKeyboardView)两类各 hook 一个, 自识别下滑后回调。
     private static final String CLS_SECURITY_KEYBOARD_VIEW =
             "com.oplus.securitykeyboardui.SecurityKeyboardView";
     private static final String CLS_COUI_NUMERIC_KEYBOARD =
@@ -446,17 +373,9 @@ public final class KeyguardHooks {
         }
     }
 
-    /**
-     * 键盘下滑触发阈值(px), 必须随起手位置自适应。
-     *
-     * ⚠️ 固定阈值不可行: "0 两侧按钮"与删除键位于键盘**最底行**, 紧贴屏幕底部。从那里往下到屏幕
-     * 边缘通常只剩几十 px, 固定 48dp(约 144px) 时手指滑出屏幕也达不到, 手势永远不触发 ——
-     * 这正是前几版"侧滑生效但 0 两侧下滑无反应"的原因。
-     *
-     * 手指一旦成为该 View 的触摸目标, 滑出 View 边界仍会持续收到 MOVE 事件, 但超出屏幕就收不到了,
-     * 因此可用滑动距离 = 起始点到屏幕底部的距离。取该距离的 60% 为阈值(上限 48dp), 保证任何位置
-     * 起手都滑得到; 起手越低阈值越小, 但仍是明确的向下拖拽动作。
-     */
+    // 键盘下滑触发阈值(px), 必须随起手位置自适应: "0 两侧按钮"与删除键在键盘最底行、紧贴屏幕底部,
+    // 固定 48dp 时手指滑出屏幕也达不到(前几版 0 两侧下滑无反应的原因)。滑出 View 仍收到 MOVE、超出屏幕
+    // 则收不到, 故可用距离 = 起始点到屏幕底部; 取其 60% 为阈值(上限 48dp), 保证任何位置起手都滑得到。
     private static float bouncerSwipeThresholdPx(View v, float startY) {
         DisplayMetrics dm = v.getResources().getDisplayMetrics();
         int[] loc = new int[2];
@@ -465,18 +384,10 @@ public final class KeyguardHooks {
         return Math.min(48.0f * dm.density, toScreenBottom * 0.6f);
     }
 
-    /**
-     * PIN/数字键盘下滑起点是否允许触发返回。
-     *
-     * 4 行 x 3 列网格, 索引 = row*3+col。COUINumericKeyboard#callback(i) 的分工:
-     * 0..8 -> 数字 1-9, 10 -> 数字 0, 9 -> 左侧键, 11 -> 右侧键(删除)。
-     * 因此只允许: 没命中任何键(null)、9(0 左侧键)、11(0 右侧/删除键);
-     * 落在数字键上(0..8, 10)时不拦截, 交给键盘正常输入。
-     * checkForNewHit 是私有方法, XposedHelpers.callMethod 会自动 setAccessible。
-     */
+    // PIN/数字键盘下滑起点: 4 行 x 3 列网格, 索引 = row*3+col, callback(i) 中 0..8->数字 1-9、10->0、
+    // 9/11->左右侧键(11=删除); 只允许未命中、9、11 触发, 落在数字键上交给键盘。checkForNewHit 是私有方法。
+        // 主判定用私有方法 checkForNewHit(FF); 反射失败会恒 false 致功能静默失效, 故另加几何兜底。
     private static boolean isNumericKeyboardSwipeStartAllowed(Object keyboardView, MotionEvent ev) {
-        // 主判定: 私有方法 checkForNewHit(FF)。它一旦反射失败会抛异常 -> 恒 false -> 整个功能静默
-        // 失效, 故另加一层纯几何兜底。
         boolean byCell = false;
         try {
             Object cell = XposedHelpers.callMethod(
@@ -508,14 +419,9 @@ public final class KeyguardHooks {
         return byCell;
     }
 
-    /**
-     * 键盘下滑起点是否允许触发返回。
-     *
-     * 注意不能用 "getKeyIndices 返回 -1" 作为唯一依据: 该方法仅当落点落在特殊符号竖列
-     * (x <= mSpecialKeyWidth 的窄条) 内才返回 -1, 0 两侧的按钮 / 删除键 / 空隙都返回**有效索引**,
-     * 首版据此误把这些区域全排除了, 导致 0 两侧下滑无效。
-     * 改为取 mKeys[idx].codes[0]: 只排除数字键 '0'-'9', 其余(特殊符号、删除键 -5、按键空隙)均允许。
-     */
+    // 键盘下滑起点是否允许触发返回。不能用 "getKeyIndices 返回 -1" 作唯一依据: 它仅当落点在特殊符号
+    // 竖列(x <= mSpecialKeyWidth)内才返回 -1, 0 两侧按钮/删除键/空隙都返回有效索引, 首版据此误排除了它们。
+    // 改为取 mKeys[idx].codes[0]: 只排除数字键 '0'-'9', 其余(特殊符号、删除键 -5、空隙)均允许。
     private static boolean isKeyboardSwipeStartAllowed(Object keyboardView, MotionEvent ev) {
         try {
             Object idxObj = XposedHelpers.callMethod(

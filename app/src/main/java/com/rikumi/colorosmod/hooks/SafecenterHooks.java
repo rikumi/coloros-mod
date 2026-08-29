@@ -120,11 +120,9 @@ public final class SafecenterHooks {
         }
     }
 
-    // 安全中心特殊处理: 修改"隐藏应用"对电话本的处理。
-    // 1) PMSHideAppListUtil#t 对 com.android.contacts 返回 true -> 只写隐藏应用列表并清除整包
-    //    PMS 禁用, 联系人进入隐藏应用但拨号保持可用。
-    // 2) OplusPmsHiddeManager#isApplicationOplusHiddenAsUser 对 com.android.contacts 返回 true,
-    //    使安全中心 UI 回读时显示为已隐藏。
+// 安全中心特殊处理: 修改"隐藏应用"对电话本的处理。
+// 1) PMSHideAppListUtil#t 对 com.android.contacts 返回 true -> 只写隐藏列表并清除整包 PMS 禁用。
+// 2) OplusPmsHiddeManager#isApplicationOplusHiddenAsUser 返回 true, 使安全中心 UI 回读为已隐藏。
     public static void hookSafecenterHideContacts(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             Class<?> utilClass = XposedHelpers.findClass(

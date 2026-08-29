@@ -28,11 +28,9 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  * 控制中心(Quick Settings)相关的 SystemUI hook。
  */
 public final class QsHooks {
-    /**
-     * 经典(合并)控制中心: 隐藏运营商名。OplusQuickStatusBarHeader#onFinishInflate 中
-     * R.id.qs_carrier_text (位于 qs_clock_container 内) / R.id.carrier_group 显示运营商名, 直接 GONE。
-     * (用户使用经典模式, 不再 hook 分离模式的 SeparateQSFakeStatusController, 以免与经典模式叠加。)
-     */
+    // 经典(合并)控制中心: 隐藏运营商名。OplusQuickStatusBarHeader#onFinishInflate 中
+    // R.id.qs_carrier_text(位于 qs_clock_container 内) / R.id.carrier_group 显示运营商名, 直接 GONE。
+    // 不再 hook 分离模式的 SeparateQSFakeStatusController, 以免与经典模式叠加。
     public static void hookQsHideCarrier(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             XposedHelpers.findAndHookMethod(
@@ -78,10 +76,9 @@ public final class QsHooks {
         }
     }
 
-    // 控制中心顶栏间距(经典/合并模式)。
-    //  - 右侧状态图标簇 quick_qs_status_icons: 在 OplusQSFakeStatusController 的展开进度回调中
-    //    原地渐隐, 避免先执行系统原生位移动画再消失。
-    //  - 页脚 OplusQSFooterImpl#mSettingsContainer: 让日期/设置按钮小幅下沉。
+    // 控制中心顶栏间距(经典/合并模式): 右侧状态图标簇 quick_qs_status_icons 在
+    // OplusQSFakeStatusController 展开进度回调中原地渐隐(避免先执行原生位移动画);
+    // 页脚 OplusQSFooterImpl#mSettingsContainer 让日期/设置按钮小幅下沉。
     public static void hookQsTopMargin(final XC_LoadPackage.LoadPackageParam lpparam,
                                         final int footerPx) {
         // 真正执行顶部图标簇位移动画的是 OplusQSFakeStatusController 的展开进度监听器，
@@ -144,11 +141,8 @@ public final class QsHooks {
         }
     }
 
-    /**
-     * 展开回调中原生会同时移动两个不同的节点：
-     * mStatusIconsView 是状态栏节点，quickStatus 是 QS 顶栏节点；二者不是同一个 View。
-     * 因此在 fraction 第一次大于 0 时直接 INVISIBLE，在原生 translation 执行前彻底阻止移动动画可见。
-     */
+    // 展开回调中原生会同时移动两个不同节点: mStatusIconsView(状态栏) 与 quickStatus(QS 顶栏)。
+    // 因此在 fraction 第一次大于 0 时直接 INVISIBLE, 在原生 translation 执行前阻止移动动画可见。
     static void applyQsStatusClusterFade(Object fractionListener, float expansionFraction) {
         Object controller = XposedHelpers.getObjectField(fractionListener, "this$0");
         boolean enabled = readBool(KEY_QS_TOPMARGIN_ENABLED, false);
@@ -190,11 +184,9 @@ public final class QsHooks {
         }
     }
 
-    // 合并(经典)控制中心背景压暗。承载背景的是"背后 scrim"。为什么"纯黑背景反而变灰"(根因不在本模块):
-    // behind scrim 的平台混色默认 top=LUMINOSITY+#99333333、bottom=OVERLAY+#80999999 —— LUMINOSITY 把
-    // 亮度归一化到 ~0.2(黑底提亮成灰), 且这层混色在 SurfaceFlinger 的 AGSL shader 里合成、位于窗口
-    // 内容之下, 任何半透明黑叠加都去不掉这层灰。故 hook getPanelPlatformMixConfig 把 top 改为
-    // LUMINOSITY+近黑、bottom OVERLAY 置 0, 仅替换 backgroundShaderParam(不动 PANEL_*_MIX_COLOR)。
+    // 合并控制中心背景压暗, 承载背景的是"背后 scrim"。为什么"纯黑背景反而变灰": behind scrim 默认
+    // top=LUMINOSITY+#99333333 把亮度归一化到 ~0.2, 且该混色在 AGSL shader 里合成、位于窗口内容之下。
+    // 故 hook getPanelPlatformMixConfig 改 top 为 LUMINOSITY+近黑、bottom OVERLAY 置 0。
     public static void hookQsBackgroundDim(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             try {
@@ -211,11 +203,9 @@ public final class QsHooks {
                                     if (!cfg.getClass().getName().contains("BlurMixSingleWithShader")) return;
                                     Object bg = XposedHelpers.getObjectField(cfg, "backgroundShaderParam");
                                     if (bg == null) return;
-                                    // top=LUMINOSITY(5) 把亮度归一化到该层 RGB 的亮度; bottom=OVERLAY(2) 关闭。
+                                    // top=LUMINOSITY(5) 把亮度归一化到该层 RGB 亮度; bottom=OVERLAY(2) 关闭。
                                     // alpha=0x99(与系统默认同强度)使结果亮度直接等于 top 层 RGB 亮度。
-                                    // 亮度由滑条 qs_scrim_brightness(0-20, 默认 10)控制:
-                                    //   0=全黑(RGB 0), 20=系统默认 lumin(0x33=51, 即不压暗), 10≈50% lumin。
-                                    // LUMINOSITY 仍保留底层模糊色相/纹理。
+                                    // 亮度由滑条 qs_scrim_brightness 控制: 0=全黑, 20=系统默认(不压暗), 10≈50%。
                                     int brightness = readInt(KEY_QS_SCRIM_BRIGHTNESS, QS_SCRIM_BRIGHTNESS_DEFAULT);
                                     brightness = Math.max(0, Math.min(20, brightness));
                                     int gray = Math.round(brightness * QS_SCRIM_LUMIN_MAX / 20f);
@@ -240,15 +230,11 @@ public final class QsHooks {
 
     // 控制中心 WLAN/蓝牙 名称单行省略。WLAN 的 SSID 写在主标题 labelTitle(R.id.tile_label),
     // 由 handleTileStateChange 经 TextSwitcherExtKt.setContent 写入; 蓝牙设备名写在副标题
-    // labelDesc(R.id.tile_label_desc), 由 updateLabelDescText 写入。在这两个方法之后对两个
-    // TextSwitcher 下的所有 TextView 强制单行 + 行尾省略号。幂等。
-    // (本类没有 updateLabelText, 标题是在 handleTileStateChange 内直接设置的。)
+    // labelDesc(R.id.tile_label_desc), 由 updateLabelDescText 写入。在这两个方法之后对 TextView 强制单行+省略号。
     public static void hookQsTileNameEllipsis(final XC_LoadPackage.LoadPackageParam lpparam) {
-        // WLAN/BT 等可伸缩磁贴(2x1)实现 updateLabelText / updateLabelDescText, 字段名一致。
+        // WLAN/BT 等可伸缩磁贴(2x1)字段名一致; 本类没有 updateLabelText(标题在 handleTileStateChange 里直接写)。
         final String cls = "com.oplus.systemui.plugins.qs.customize.view.tile.OplusQSResizeableTileViewTwoXOne";
-        // WLAN 的 SSID 写在主标题 labelTitle, 由 handleTileStateChange(QSTile.State) 直接设置;
-        // 蓝牙设备名/副标题写在 labelDesc, 由 updateLabelDescText(QSTile.State) 设置。
-        // 注意: 本类没有 updateLabelText 方法(标题在 handleTileStateChange 里直接写), 故 hook 这两个入口。
+        // WLAN 的 SSID 写在主标题 labelTitle(handleTileStateChange 设置), 蓝牙设备名写在副标题 labelDesc。
         final String[] methods = { "handleTileStateChange", "updateLabelDescText" };
         final String[] labelFields = { "labelTitle", "labelDesc" };
         for (final String m : methods) {

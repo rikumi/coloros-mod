@@ -69,17 +69,14 @@ public final class LauncherHooks {
 
     static volatile Object sNormalState;
 
-    // 缩小桌面图标长按菜单。该菜单尺寸由布局与主题属性决定, 不在运行时经 Resources.getDimension*
-    // 解析(实测长按时无相关 dimen 被读取), 故资源钩子无效; 改为监听菜单根容器
-    // deep_shortcuts_container 的 onAttachedToWindow, 对内部卡片容器做整体 scaleX/scaleY。
-    // 缓存 popup 容器类, 避免重复查找
+    // 缩小桌面图标长按菜单。该菜单尺寸由布局与主题属性决定, 不在运行时经 Resources.getDimension* 解析
+    // (实测长按时无相关 dimen 被读取), 故资源钩子无效; 改为监听菜单根容器 deep_shortcuts_container 的
+    // onAttachedToWindow, 对内部卡片容器做整体 scaleX/scaleY。
     static volatile Class<?> sPopupContainerClass = null;
 
-    // 缩小桌面图标长按菜单:
-    // 直接对 OplusPopupContainerWithArrow 内部的卡片容器(mAllPopupShortcutContainer)做整体
-    // scaleX/scaleY 变换。该容器承载卡片背景与所有菜单项(图标/文字/行高/内边距都画在它里面),
-    // 而 popup 的打开动画只缩放外层容器, 不会触碰它, 所以变换恒定生效、不被布局重写覆盖。
-    // 轴心设在箭头一侧, 缩放后箭头仍精确指向图标。
+    // 缩小桌面图标长按菜单: 对 OplusPopupContainerWithArrow 内部的卡片容器(mAllPopupShortcutContainer)
+    // 做整体 scaleX/scaleY。该容器承载卡片背景与所有菜单项, 而 popup 打开动画只缩放外层容器、不触碰它,
+    // 所以变换恒定生效。轴心设在箭头一侧, 缩放后箭头仍精确指向图标。
     public static void hookPopupMenuDimens(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             final Class<?> popupClass = XposedHelpers.findClass(
@@ -130,10 +127,9 @@ public final class LauncherHooks {
         int w = target.getWidth();
         int h = target.getHeight();
 
-        // 轴心 = 箭头位置。直接用 launcher 自带的 calculatePivotX() 得到"外层容器坐标系"下箭头的 x,
-        // 再换算到被缩放的内层卡片坐标系(用屏幕坐标差, 对任意嵌套都鲁棒), 保证无论左/右/居中弹出,
-        // 菜单都精确围绕箭头缩放, 不会整体偏移。
-        // 垂直方向: 弹出在图标上方(mIsAboveIcon)→箭头在卡片底边→pivotY=h; 否则在顶边→0。
+    // 轴心 = 箭头位置。用 launcher 自带的 calculatePivotX() 得外层坐标系下箭头 x, 再用屏幕坐标差换算到
+    // 被缩放的内层卡片坐标系(对任意嵌套都鲁棒), 保证左/右/居中弹出时菜单都围绕箭头缩放而不整体偏移。
+    // 垂直方向: 弹出在图标上方(mIsAboveIcon)则箭头在卡片底边 -> pivotY=h, 否则在顶边 -> 0。
         boolean above = false;
         float pivotX = w / 2.0f;
         float pivotY = h / 2.0f;
@@ -351,10 +347,9 @@ public final class LauncherHooks {
             log("HOOK FAIL launcher queryIntentActivities: " + t);
         }
 
-        // Feature 11b — 修改系统隐藏行为在桌面的呈现: 当用户在安全中心"隐藏应用"里勾选电话本时,
-        // 安全中心侧已改为只把 com.android.contacts 加入隐藏列表、不整包禁用(见 hookSafecenterHideContacts),
-        // 故拨号保持可用。此处仅在桌面显示层做组件级特例: 拨号(DialtactsActivityAlias)始终显示,
-        // 电话本(PeopleActivityAlias)随包隐藏状态由系统判定(被隐藏则不显示)。即"只藏电话本图标、露拨号"。
+    // Feature 11b — 修改系统隐藏行为在桌面的呈现: 安全中心侧已改为只把 contacts 加入隐藏列表、不整包禁用
+    // (见 hookSafecenterHideContacts), 拨号保持可用。此处仅做组件级特例: 拨号(DialtactsActivityAlias)始终显示,
+    // 电话本(PeopleActivityAlias)随包隐藏状态由系统判定, 即"只藏电话本图标、露拨号"。
         try {
             Class<?> filterClass = XposedHelpers.findClass(
                     "com.android.launcher3.OplusAppFilter", lpparam.classLoader);
@@ -476,11 +471,8 @@ public final class LauncherHooks {
         }
     }
 
-    /**
-     * 判断桌面是否处于 NORMAL(正常)状态。DragLayer 的 context 即 Launcher 实例,
-     * 通过 {@code Launcher#isInState(LauncherState.NORMAL)} 判定。
-     * 反射结果做缓存; 任何异常(无法确定状态)均保守返回 false, 即不响应手势。
-     */
+    // 判断桌面是否处于 NORMAL 状态。DragLayer 的 context 即 Launcher 实例, 通过
+    // Launcher#isInState(LauncherState.NORMAL) 判定。反射结果做缓存; 任何异常均保守返回 false(不响应手势)。
     static boolean isLauncherInNormalState(android.content.Context ctx) {
         try {
             if (sLauncherClass == null) {
@@ -529,10 +521,9 @@ public final class LauncherHooks {
         }
     }
 
-    // 调整桌面文件夹展开/收起动画持续时间。ColorOS 有两条路径, 只 hook Resources.getInteger 不够:
-    // 普通动画用 spring 物理动画(时长由 spring response 决定), light 动画用 ObjectAnimator +
-    // setDuration(常量 150/400ms)。故分别覆盖 spring response、getAnimDuration、
-    // getLightFolderContentAnimation, 并保留 Resources.getInteger 覆盖 workspace 背景动画与基类时长。
+    // 调整桌面文件夹展开/收起动画持续时间。ColorOS 有两条路径, 只 hook Resources.getInteger 不够: 普通
+    // 动画用 spring 物理动画(时长由 response 决定), light 动画用 ObjectAnimator + setDuration(150/400ms)。
+    // 故分别覆盖 spring response、getAnimDuration、getLightFolderContentAnimation, 并保留 getInteger 覆盖。
     public static void hookFolderAnimDuration(final XC_LoadPackage.LoadPackageParam lpparam) {
         hookFolderSpringDuration(lpparam);
         hookFolderLightDuration(lpparam);
@@ -829,11 +820,9 @@ public final class LauncherHooks {
         }
     }
 
-    // 多任务(quickstep)显示被系统隐藏的应用: 系统"隐藏应用"经 OplusPrivacyManager.isHiddenPkg
-    // 判定, 最近任务在 OplusRecentTasksFilter.filterTaskInfo 据此剔除隐藏任务, OplusRecentsViewImpl
-    // 在 shouldAddStubTaskView / onGestureAnimationStart 据此跳过 stub 卡片与手势概览。
-    // 这里加 beforeHook: 调用方位于 com.android.quickstep 多任务渲染/手势路径时返回 false。
-    // 应用锁走独立 API(isAppLocked 等), 不调 isHiddenPkg, 不受影响。
+    // 多任务(quickstep)显示被系统隐藏的应用: 系统"隐藏应用"经 OplusPrivacyManager.isHiddenPkg 判定,
+    // 最近任务在 OplusRecentTasksFilter.filterTaskInfo 据此剔除隐藏任务, OplusRecentsViewImpl 据此跳过 stub。
+    // 这里加 beforeHook: 调用方位于 com.android.quickstep 多任务渲染/手势路径时返回 false。应用锁不受影响。
     static final java.util.concurrent.atomic.AtomicInteger sRecentsBypassLogCount =
             new java.util.concurrent.atomic.AtomicInteger(0);
 
@@ -933,11 +922,8 @@ public final class LauncherHooks {
         return false;
     }
 
-    /**
-     * 系统布局会把 hotseat 高度变化按 workspaceTopPercentage 分摊到 Workspace 顶部 padding：
-     * hotseat 缩短 x 像素时，页面实际向 Dock 移动的距离只有 x * (1 - percentage)。
-     * 这里反推 hotseat 缩短量，使设置中的 dp 值对应真实页面到 Dock 的间距变化。
-     */
+    // 系统布局把 hotseat 高度变化按 workspaceTopPercentage 分摊到 Workspace 顶部 padding, hotseat 缩短
+    // x 像素时页面实际只移动 x*(1-percentage)。这里反推缩短量, 使设置中的 dp 值对应真实页面到 Dock 的间距变化。
     public static void hookIndicatorHotseatSize(final XC_LoadPackage.LoadPackageParam lpparam,
                                                   final float density) {
         try {
@@ -976,11 +962,8 @@ public final class LauncherHooks {
         }
     }
 
-    /**
-     * 通用像素增量 hook: delta 在运行时按 dpKey 对应的滑条值(默认 dpDef)计算,
-     * sign 为 +1 叠加 / -1 缩减; 开关(gateKey)关闭则返回原值。
-     * 与 hookPx 的区别是增量值不在注入时固定, App 内拖滑条即时生效。
-     */
+    // 通用像素增量 hook: delta 在运行时按 dpKey 滑条值(默认 dpDef)计算, sign 为 +1 叠加 / -1 缩减;
+    // 开关(gateKey)关闭则返回原值。与 hookPx 的区别是增量值不在注入时固定, App 内拖滑条即时生效。
     public static void hookPxRuntime(XC_LoadPackage.LoadPackageParam lpparam,
                                       String className, String methodName, final float density,
                                       final String gateKey, final String dpKey, final int dpDef,
@@ -1008,27 +991,9 @@ public final class LauncherHooks {
     private static final float POPUP_DYNAMIC_BLUR_MAX_RADIUS = 80f;
 
 
-    /**
-     * Feature 25 — 长按菜单背景动态模糊 + Feature 24 — 自定义背景亮度。
-     *
-     * 系统做法: 长按图标时把"预烘焙的静态模糊壁纸 + dragLayer 截图(半径 4)"装进 PopupBlurView,
-     * 再对整块 View 做 ALPHA 0->1 的渐显(330ms)。即模糊量恒定, 只有不透明度在变。
-     *
-     * 动态模糊(三处配合, 缺一不可):
-     * 1) WallpaperBlur#getBlurredWallpaper 把半径改成 0 并作废缓存 —— 缓存里是系统预烘焙的模糊
-     *    壁纸, 缓存命中时原方法直接把缓存 bitmap 交给回调、根本不再模糊, 所以必须让它重算。
-     * 2) PopupBlurHelper#blurBitmap 把 dragLayer 截图(DRAG_LAYER_BLUR_RADIUS 4.0)的半径改成 0,
-     *    否则图标层在动画起点就已经是模糊的。
-     * 3) PopupBlurView#createBlurAnim 换成半径动画: 对 PopupBlurView 整体施加 RenderEffect 高斯
-     *    模糊, 半径 0 -> 80 渐进, View 全程 alpha=1(否则又变回透明度渐显)。
-     *    返回值必须是 ObjectAnimator: OplusPopupContainerWithArrow#onCreateCloseAnimation 用
-     *    ObjectAnimator 变量接收, 传 ValueAnimator 会 ClassCastException, 所以用
-     *    ObjectAnimator + Property 驱动自定义 target。
-     *
-     * 亮度(改的是系统自己的混合链路, 与模糊正交、可独立开关): 壁纸层用 blendMode=1(ONLY_MASK)
-     * 混入 popup_blur_blend_color, 直接在 blurBitmap 入参上缩放那层颜色即可(见
-     * {@link #applyPopupBlendBrightness}); 前提是缓存必须作废, 否则压根不走 blurBitmap。
-     */
+    // Feature 25 动态模糊 + Feature 24 背景亮度。系统把"预烘焙模糊壁纸 + dragLayer 截图(半径 4)"装进
+    // PopupBlurView 后只做 ALPHA 渐显, 模糊量恒定。动态模糊需三处配合(详见各 hook 处): WallpaperBlur
+    // #getBlurredWallpaper 半径改 0 并作废缓存(命中缓存时不再模糊)、PopupBlurHelper#blurBitmap 半径改 0。
     public static void hookPopupBgBlur(final XC_LoadPackage.LoadPackageParam lpparam) {
         hookPopupBgBlurSource(lpparam);
         hookPopupWallpaperBlurRadius(lpparam);
@@ -1073,10 +1038,8 @@ public final class LauncherHooks {
         }
     }
 
-    /**
-     * dragLayer 截图(半径 4.0)置 0, 图标层交给动态模糊; 壁纸层则缩放混入色以调整背景亮度。
-     * 两个功能都落在这里 —— 这是壁纸与截图两条路径唯一的公共入口。
-     */
+    // dragLayer 截图(半径 4.0)置 0, 图标层交给动态模糊; 壁纸层缩放混入色以调整背景亮度。
+    // 两个功能都落在这里 —— 这是壁纸与截图两条路径唯一的公共入口。
     private static void hookPopupBgBlurSource(final XC_LoadPackage.LoadPackageParam lpparam) {
         XC_MethodHook hook = new XC_MethodHook() {
             @Override
@@ -1204,16 +1167,9 @@ public final class LauncherHooks {
         view.setRenderEffect(effect);
     }
 
-    /**
-     * 长按背景亮度: 壁纸层以 blendMode=1(ONLY_MASK) 混入 popup_blur_blend_color, 混入结果
-     * out = wp * (1 - a) + blendRGB * a, 那层 blendRGB 就是系统硬加的"最低亮度"(纯黑壁纸也被
-     * 抬到约 (8.5, 11.5, 15.7))。把 blendRGB 缩放到 k 倍即可线性抵消它:
-     * out_k = out + (k - 1) * a * blendRGB。
-     *
-     * 直接缩放系统混入色、走系统自己的混合链路, 而不是在外面叠 RenderEffect 颜色滤镜:
-     * 前者与动态模糊完全正交(模糊只是把这份已修正的画面糊开), 后者依赖合成顺序且实测无效。
-     * dragLayer 截图那层 blendMode=-1(不混入), 靠 blendMode 判定即可自动跳过。
-     */
+    // 长按背景亮度: 壁纸层以 blendMode=1(ONLY_MASK) 混入 popup_blur_blend_color, 结果
+    // out = wp*(1-a) + blendRGB*a, blendRGB 即系统硬加的"最低亮度"。把 blendRGB 缩放到 k 倍即可线性抵消。
+    // 走系统自己的混合链路(与模糊正交), 而非外叠颜色滤镜 —— 后者依赖合成顺序且实测无效。
     private static void applyPopupBlendBrightness(Object[] args) {
         float k = popupBgBrightnessScale();
         if (k >= 1f) return;

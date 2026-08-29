@@ -4,16 +4,9 @@ import static com.rikumi.colorosmod.XposedInit.*;
 
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-/**
- * SystemUI(com.android.systemui) 作用域的 hook 入口。
- *
- * 本类只做转发: 各功能按类别拆分到同包下的独立文件, 由这里统一注入。
- *   {@link QsHooks}              —— 控制中心(运营商名、顶栏间距、背景压暗、磁贴名称省略)
- *   {@link NotificationHooks}    —— 通知(分组副标题、通知内边距)
- *   {@link StatusBarHooks}       —— 状态栏(流体云出现时保留电量百分比)
- *   {@link KeyguardHooks}        —— 锁屏/解锁界面(关机免校验、通知下移、侧滑/下滑返回)
- *   {@link PasswordInputHooks}   —— 密码输入(控件光效、背景亮度、滑动输入、纯色背景绘制)
- */
+// SystemUI(com.android.systemui) 作用域的 hook 入口, 只做转发。
+// 各功能按类别拆分到同包独立文件: QsHooks / NotificationHooks / StatusBarHooks /
+// KeyguardHooks / PasswordInputHooks / StatusBarLyricHooks。
 public final class SystemUiHooks {
 
     public static void hookSystemUi(final XC_LoadPackage.LoadPackageParam lpparam) {
