@@ -262,7 +262,7 @@ private val PAGE_TRANSITION_EASING: Easing = CubicBezierEasing(0.25f, 0.1f, 0.25
 @Composable
 fun SettingsScreen() {
     val ctx = LocalContext.current
-    val prefs = remember { ctx.getSharedPreferences("settings", Context.MODE_PRIVATE) }
+    val prefs = remember { ctx.settingsPrefs() }
 
     val scope = rememberCoroutineScope()
     // version 变化时强制重读 prefs 同步所有开关状态。
@@ -576,34 +576,42 @@ private fun desktopFolderNames(ctx: Context): List<String> {
     }.getOrDefault(emptyList())
 }
 
+// 设置存到设备加密(DE)存储: 开机到首次解锁前 SystemUI 就在读设置, 而 CE 存储此时尚未挂载,
+// 读到的是空设置(表现为"重启后模块失效, 重启作用域才恢复")。DE 存储在锁定态即可读写。
+internal fun Context.settingsPrefs(): SharedPreferences {
+    val de = createDeviceProtectedStorageContext()
+        .getSharedPreferences("settings", Context.MODE_PRIVATE)
+    if (de.all.isEmpty()) migrateLegacyPrefs(this, de)
+    return de
+}
+
+// 旧版本把设置写在 CE 存储, 升级后首次读取时搬一次, 避免用户设置丢失。
+private fun migrateLegacyPrefs(ctx: Context, de: SharedPreferences) {
+    val legacy = runCatching { ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).all }
+        .getOrDefault(emptyMap())
+    if (legacy.isEmpty()) return
+    val e = de.edit()
+    for ((k, v) in legacy) {
+        when (v) {
+            is Boolean -> e.putBoolean(k, v)
+            is Int -> e.putInt(k, v)
+            is Long -> e.putLong(k, v)
+            is Float -> e.putFloat(k, v)
+            is String -> e.putString(k, v)
+            is Set<*> -> @Suppress("UNCHECKED_CAST") e.putStringSet(k, v as Set<String>)
+        }
+    }
+    e.commit()
+}
+
 internal fun setBool(ctx: Context, key: String, value: Boolean) {
-    ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
-        .edit().putBoolean(key, value).commit()
-    makePrefsWorldReadable(ctx)
+    ctx.settingsPrefs().edit().putBoolean(key, value).commit()
 }
 
 internal fun setInt(ctx: Context, key: String, value: Int) {
-    ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
-        .edit().putInt(key, value).commit()
-    makePrefsWorldReadable(ctx)
+    ctx.settingsPrefs().edit().putInt(key, value).commit()
 }
 
-
-
-private fun makePrefsWorldReadable(ctx: Context) {
-    runCatching {
-        val f = File("/data/data/${ctx.packageName}/shared_prefs/settings.xml")
-        if (f.exists()) {
-            Runtime.getRuntime().exec("su").also { p ->
-                val os = DataOutputStream(p.outputStream)
-                os.writeBytes("chmod 644 ${f.absolutePath}\n")
-                os.writeBytes("exit\n")
-                os.flush()
-                p.waitFor()
-            }
-        }
-    }
-}
 
 private fun restartScope(ctx: Context) {
     runCatching {

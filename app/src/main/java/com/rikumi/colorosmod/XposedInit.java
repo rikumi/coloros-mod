@@ -22,7 +22,6 @@ import com.rikumi.colorosmod.hooks.SystemUiHooks;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XSharedPreferences;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
@@ -163,6 +162,109 @@ public class XposedInit implements IXposedHookLoadPackage {
     public static final java.util.concurrent.ConcurrentHashMap<String, Object[]> sCache =
             new java.util.concurrent.ConcurrentHashMap<String, Object[]>(); // key -> {Long ts, Boolean val}
 
+    // ---- 后台设置预热 ----
+    // 开机早期(模块 App 尚未被拉起 / 仍处于锁定态)同步查询拿不到值, 而部分 hook 只在初始化时读一次
+    // (手势条高度在导航栏创建时读取一次), 默认值一旦被固化, 解锁后也不会纠正 —— 即"重启后失效,
+    // 重启作用域才恢复"。故注入后立刻起后台线程周期性全量拉取: 首成功前每 SETTINGS_RETRY_MS 重试,
+    // 之后每 SETTINGS_REFRESH_MS(与原 CACHE_TTL_MS 同口径)刷新, 改设置仍在 5s 内生效。
+    public static final String SETTINGS_ALL_KEY = "__all__";
+    private static final Object sLoadLock = new Object();
+    private static volatile java.util.Map<String, Integer> sSnapshot =
+            java.util.Collections.emptyMap();
+    private static volatile boolean sLoaderStarted = false;
+    private static volatile boolean sSettingsLoaded = false;
+    private static volatile boolean sFirstWaitDone = false;
+    private static final long SETTINGS_REFRESH_MS = CACHE_TTL_MS;
+    private static final long SETTINGS_RETRY_MS = 500;
+    // 首个 readBool/readInt 到达时后台预热可能还没完成, 最多等这么久; 整个进程只等一次。
+    private static final long FIRST_LOAD_WAIT_MS = 5000;
+
+    public static void startSettingsLoader() {
+        synchronized (sLoadLock) {
+            if (sLoaderStarted) return;
+            sLoaderStarted = true;
+        }
+        Thread t = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                while (true) {
+                    long sleep;
+                    try {
+                        java.util.Map<String, Integer> all = fetchAllSettings();
+                        if (all != null) {
+                            boolean first = !sSettingsLoaded;
+                            sSnapshot = all;
+                            if (first) {
+                                synchronized (sLoadLock) {
+                                    sSettingsLoaded = true;
+                                    sLoadLock.notifyAll();
+                                }
+                                log("settings loaded: " + all.size() + " keys");
+                            }
+                            sleep = SETTINGS_REFRESH_MS;
+                        } else {
+                            sleep = sSettingsLoaded ? SETTINGS_REFRESH_MS : SETTINGS_RETRY_MS;
+                        }
+                    } catch (Throwable ignored) {
+                        sleep = SETTINGS_REFRESH_MS;
+                    }
+                    try {
+                        Thread.sleep(sleep);
+                    } catch (InterruptedException e) {
+                        return;
+                    }
+                }
+            }
+        }, "ColorOSMod-Settings");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    // 一次性取回全部设置; 取不到(模块 App 未运行等)返回 null。
+    private static java.util.Map<String, Integer> fetchAllSettings() {
+        try {
+            if (sAppContext == null) {
+                sAppContext = currentApplication();
+            }
+            if (sAppContext == null) return null;
+            ContentResolver cr = sAppContext.getContentResolver();
+            Uri uri = Uri.parse("content://" + SETTINGS_AUTHORITY + "/" + SETTINGS_ALL_KEY);
+            Cursor c = cr.query(uri, null, null, null, null);
+            if (c == null) return null;
+            try {
+                int ki = c.getColumnIndex("k");
+                int vi = c.getColumnIndex("v");
+                if (ki < 0 || vi < 0) return null;
+                java.util.Map<String, Integer> out = new java.util.HashMap<String, Integer>();
+                while (c.moveToNext()) out.put(c.getString(ki), c.getInt(vi));
+                return out;
+            } finally {
+                c.close();
+            }
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    // 预热未完成时的有限等待: 只在进程内首次读取时发生, 且无论是否等到都不再等第二次。
+    private static void ensureFirstLoad() {
+        if (sSettingsLoaded || sFirstWaitDone) return;
+        synchronized (sLoadLock) {
+            if (sSettingsLoaded || sFirstWaitDone) return;
+            long deadline = System.currentTimeMillis() + FIRST_LOAD_WAIT_MS;
+            try {
+                while (!sSettingsLoaded) {
+                    long left = deadline - System.currentTimeMillis();
+                    if (left <= 0) break;
+                    sLoadLock.wait(left);
+                }
+            } catch (InterruptedException ignored) {
+            } finally {
+                sFirstWaitDone = true;
+            }
+        }
+    }
+
     public static final int ICON_GAP_DP = 4;
     public static final int INDICATOR_REDUCE_DP = 16; // requested page-to-Dock gap reduction in dp
     public static final int QS_FOOTER_MARGIN_DP = 8; // smaller top gap for footer (date/settings) so it sinks a little
@@ -201,6 +303,9 @@ public class XposedInit implements IXposedHookLoadPackage {
     @Override
     public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lpparam) {
         log("handleLoadPackage pkg=" + lpparam.packageName);
+        // 后台预热模块设置(见 startSettingsLoader 注释): 尽早开始, 让首次 readBool 通常已有值,
+        // 避免开机早期把默认值固化下来。
+        startSettingsLoader();
         // 缓存被 hook 进程自身的 Application Context, 供 readBool 通过 ContentResolver 跨进程查询设置。
         if (sAppContext == null) {
             sAppContext = currentApplication();
@@ -256,56 +361,36 @@ public class XposedInit implements IXposedHookLoadPackage {
     }
 
     // 跨进程读取开关, 走 Binder(ContentProvider) 通道, 不受 SELinux 对 app_data_file 的限制。
-    // 顺序: 缓存(TTL 内直接返回) -> ContentProvider 取真实值 -> 粘性缓存 -> XSharedPreferences -> def。
     public static boolean readBool(String key, boolean def) {
-        // 1) 新鲜缓存(有效期内)直接返回, 避免每次交互都走 IPC 造成卡顿
-        Object[] cached = sCache.get(key);
-        if (cached != null && System.currentTimeMillis() - (Long) cached[0] < CACHE_TTL_MS) {
-            return (Boolean) cached[1];
-        }
-        // 2) ContentProvider 通道
-        try {
-            if (sAppContext == null) {
-                sAppContext = currentApplication();
-            }
-            if (sAppContext != null) {
-                ContentResolver cr = sAppContext.getContentResolver();
-                Uri uri = Uri.parse("content://" + SETTINGS_AUTHORITY + "/" + key);
-                Cursor c = cr.query(uri, null, null, null, null);
-                if (c != null) {
-                    try {
-                        if (c.moveToFirst() && c.getColumnCount() > 0) {
-                            int v = c.getInt(0);
-                            boolean result = v == 1;
-                            sCache.put(key, new Object[]{System.currentTimeMillis(), result});
-                            return result;
-                        }
-                    } finally {
-                        c.close();
-                    }
-                }
-            }
-        } catch (Throwable ignored) {
-        }
-        // 3) Provider 取不到(模块 App 未运行等): 回退到上一次成功取到的值(粘性, 即使已过期),
-        //    保证设置一旦被写入就会"记住", 不受 App 被杀/重启影响; 仅从未取到过才用默认或 XSP。
-        if (cached != null) {
-            return (Boolean) cached[1];
-        }
-        try {
-            XSharedPreferences pref = new XSharedPreferences(MODULE_PACKAGE, PREF_NAME);
-            return pref.getBoolean(key, def);
-        } catch (Throwable ignored) {
-        }
+        Object v = settingsValue(key);
+        if (v instanceof Number) return ((Number) v).intValue() == 1;
         return def;
     }
 
-    // 跨进程读取 int 设置(如滑条值), 通道与 readBool 相同: 缓存 -> ContentProvider -> 粘性缓存 -> 默认。
-    // Provider 对不存在的键返回空游标, 此时回落到 def。
+    // 跨进程读取 int 设置(如滑条值), 通道与 readBool 相同; Provider 里不存在的键回落到 def。
     public static int readInt(String key, int def) {
+        Object v = settingsValue(key);
+        if (v instanceof Number) return ((Number) v).intValue();
+        return def;
+    }
+
+    // 取值顺序: 后台预热的全量快照(零 IPC) -> (首次)有限等待预热 -> 同步 Provider 查询 -> 粘性缓存 -> 无。
+    private static Object settingsValue(String key) {
+        Integer v = sSnapshot.get(key);
+        if (v != null) return v;
+        // 已加载过全量快照仍没有该键: 说明确实没写过, 直接回落到调用方的默认值, 不必再走 IPC。
+        if (sSettingsLoaded) return null;
+        ensureFirstLoad();
+        v = sSnapshot.get(key);
+        if (v != null) return v;
+        return queryProviderSync(key);
+    }
+
+    // 同步 Provider 查询(旧通道), 仅在后台预热不可达时兜底; 结果按 TTL 写入 sCache 作粘性缓存。
+    private static Object queryProviderSync(String key) {
         Object[] cached = sCache.get(key);
         if (cached != null && System.currentTimeMillis() - (Long) cached[0] < CACHE_TTL_MS) {
-            return (Integer) cached[1];
+            return cached[1];
         }
         try {
             if (sAppContext == null) {
@@ -329,10 +414,9 @@ public class XposedInit implements IXposedHookLoadPackage {
             }
         } catch (Throwable ignored) {
         }
-        if (cached != null) {
-            return (Integer) cached[1];
-        }
-        return def;
+        // Provider 取不到(模块 App 未运行等): 回退上一次成功取到的值(粘性, 即使已过期),
+        // 保证设置一旦被写入就会"记住", 不受 App 被杀/重启影响。
+        return cached != null ? cached[1] : null;
     }
 
     public static float readDensity() {

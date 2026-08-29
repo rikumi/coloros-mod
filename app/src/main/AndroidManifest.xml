@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
+        android:directBootAware="true"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -40,10 +41,13 @@
             </intent-filter>
         </activity-alias>
 
-        <!-- 跨进程暴露模块设置给被 hook 的进程读取(Binder 通道, 绕开 SELinux 对 app_data_file 的限制) -->
+        <!-- 跨进程暴露模块设置给被 hook 的进程读取(Binder 通道, 绕开 SELinux 对 app_data_file 的限制)。
+             directBootAware: 开机到首次解锁前(锁定态)SystemUI 就要读设置, 非 directBootAware 的
+             进程在该阶段无法被拉起, 查询会失败 —— 设置改存 DE 存储后必须同时声明此属性。 -->
         <provider
             android:name=".SettingsProvider"
             android:authorities="com.rikumi.colorosmod.settings"
+            android:directBootAware="true"
             android:exported="true" />
 
         <!-- LSPosed / Xposed module declaration -->

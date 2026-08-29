@@ -1689,3 +1689,38 @@ public static final class FlymeFlags {              // 字段名必须与 Flyme 
 `out_k = out + (k-1)*a*blendRGB`，即对最终 bitmap 叠加常量偏移，用 `ColorMatrix` 的
 offset 项 + `ColorMatrixColorFilter` 一次 drawBitmap 完成（k=0 为负偏移，自动 clamp 到 0）。
 不原地改像素：新建 bitmap + 新 BitmapDrawable（复制 bounds），避免污染壁纸模糊缓存。
+
+## 25. 修复「重启后模块失效，重启作用域才恢复」（2026-08-29）
+
+**现象**：重启后所有功能回到默认，App 里点「重启作用域」（杀 systemui/launcher）后全部恢复。
+
+**根因（两层）**：
+
+1. **设置存在 CE 存储，开机锁定态读不到。** 模块 prefs 在 `/data/user/0/com.rikumi.colorosmod/shared_prefs/`（CE），
+   开机到首次解锁前（Direct Boot）该目录未挂载；而 SystemUI 正是在锁定态启动的。此时
+   `SettingsProvider` 被拉起也只读到空 prefs，而部分 hook **只在初始化时读一次**
+   （如手势条高度在 `NavigationBar#getBarLayoutParams` 里读一次即固化到窗口 LayoutParams），
+   解锁后不会重读，于是"重启后失效，重启作用域（解锁后重建）才恢复"。
+2. **读取通道是一次性同步 IPC，失败即回落默认值。** 早期模块 App 尚未被拉起时查询失败，
+   返回值被当作最终值。
+
+**修法（三处）**：
+
+1. **设置改存设备加密（DE）存储**：`MainActivity.settingsPrefs()` 用
+   `createDeviceProtectedStorageContext().getSharedPreferences("settings", MODE_PRIVATE)`；
+   `SettingsProvider.prefs()` 同样走 DE 存储。旧 CE 设置由 `migrateLegacyPrefs()` 在
+   DE 为空时搬一次（bool/int/long/float/String/Set 全类型）。
+   已删除 `makePrefsWorldReadable()`（CE 文件不再是数据源，chmod 无意义）。
+2. **`AndroidManifest.xml`**：`<application>` 与 `<provider>` 均加 `android:directBootAware="true"`，
+   否则锁定态 AMS 不允许拉起模块进程，DE 存储也读不到。
+3. **`XposedInit` 后台设置预热**：注入时 `startSettingsLoader()` 起守护线程，
+   `content://com.rikumi.colorosmod.settings/__all__`（新增，返回两列 `k`/`v` 的全量设置）
+   ——首成功前每 500ms 重试，成功后每 5s 刷新（与原 `CACHE_TTL_MS` 同口径，改设置仍 5s 内生效）。
+   `readBool/readInt` 改为优先读内存快照（**零 IPC**，不再阻塞主线程），
+   首次读取若预热未完成最多等 `FIRST_LOAD_WAIT_MS = 5000`（每进程只等一次，超时后不再等），
+   仍取不到才回退旧的同步查询 `queryProviderSync()`（保留 TTL + 粘性缓存）。
+   `XSharedPreferences` 回退已删除（SELinux 下从不可读，且它读的是已废弃的 CE 文件）。
+
+**验证**：`./gradlew :app:assembleDebug` 通过。装完后需用户在 LSPosed/App 里重载作用域；
+最终验证必须整机重启（红线：禁止 Agent 私自重启，需用户自己操作并确认）。
+可用 `adb shell content query --uri content://com.rikumi.colorosmod.settings/__all__` 确认全量接口。
