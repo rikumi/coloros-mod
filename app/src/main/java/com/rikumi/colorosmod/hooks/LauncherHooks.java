@@ -2,13 +2,20 @@ package com.rikumi.colorosmod.hooks;
 
 import static com.rikumi.colorosmod.XposedInit.*;
 
+import android.animation.ObjectAnimator;
 import android.content.ContentResolver;
+import android.content.Context;
 import android.database.Cursor;
+import android.hardware.HardwareBuffer;
 import android.net.Uri;
+import android.os.Build;
 import android.util.Log;
+import android.util.Property;
 
-import android.graphics.Canvas;
+import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.graphics.RenderEffect;
+import android.graphics.Shader;
 import android.text.TextUtils;
 import android.view.View;
 import android.widget.TextView;
@@ -203,6 +210,11 @@ public final class LauncherHooks {
 
         // Feature 12 — 缩小长按菜单: 在 launcher 进程内拦截 Resources.getDimension*, 对菜单 dimen 缩放。
         hookPopupMenuDimens(lpparam);
+
+        // Feature 24/25 — 桌面长按菜单背景: 动态模糊 + 自定义背景亮度。
+        // 始终注入, 运行时按各自开关门控。
+        hookPopupBgBlur(lpparam);
+
 
         // Feature 1 — 图标间距: 始终注入, 运行时按 KEY_ICON_GAP_ENABLED 门控(关闭返回原值),
         // 间距值由 KEY_ICON_GAP_DP(0-8dp, 默认 4dp) 在运行时读取, App 内拖滑条即时生效。
@@ -990,5 +1002,241 @@ public final class LauncherHooks {
         } catch (Throwable t) {
             log("HOOK FAIL " + className + "#" + methodName + " :: " + Log.getStackTraceString(t));
         }
+    }
+
+    // 动态模糊的最大半径(px), 与系统 PopupScrimView.BLUR_RADIUS / WorkSpaceScrimView 高斯上限一致。
+    private static final float POPUP_DYNAMIC_BLUR_MAX_RADIUS = 80f;
+
+
+    /**
+     * Feature 25 — 长按菜单背景动态模糊 + Feature 24 — 自定义背景亮度。
+     *
+     * 系统做法: 长按图标时把"预烘焙的静态模糊壁纸 + dragLayer 截图(半径 4)"装进 PopupBlurView,
+     * 再对整块 View 做 ALPHA 0->1 的渐显(330ms)。即模糊量恒定, 只有不透明度在变。
+     *
+     * 动态模糊(三处配合, 缺一不可):
+     * 1) WallpaperBlur#getBlurredWallpaper 把半径改成 0 并作废缓存 —— 缓存里是系统预烘焙的模糊
+     *    壁纸, 缓存命中时原方法直接把缓存 bitmap 交给回调、根本不再模糊, 所以必须让它重算。
+     * 2) PopupBlurHelper#blurBitmap 把 dragLayer 截图(DRAG_LAYER_BLUR_RADIUS 4.0)的半径改成 0,
+     *    否则图标层在动画起点就已经是模糊的。
+     * 3) PopupBlurView#createBlurAnim 换成半径动画: 对 PopupBlurView 整体施加 RenderEffect 高斯
+     *    模糊, 半径 0 -> 80 渐进, View 全程 alpha=1(否则又变回透明度渐显)。
+     *    返回值必须是 ObjectAnimator: OplusPopupContainerWithArrow#onCreateCloseAnimation 用
+     *    ObjectAnimator 变量接收, 传 ValueAnimator 会 ClassCastException, 所以用
+     *    ObjectAnimator + Property 驱动自定义 target。
+     *
+     * 亮度(改的是系统自己的混合链路, 与模糊正交、可独立开关): 壁纸层用 blendMode=1(ONLY_MASK)
+     * 混入 popup_blur_blend_color, 直接在 blurBitmap 入参上缩放那层颜色即可(见
+     * {@link #applyPopupBlendBrightness}); 前提是缓存必须作废, 否则压根不走 blurBitmap。
+     */
+    public static void hookPopupBgBlur(final XC_LoadPackage.LoadPackageParam lpparam) {
+        hookPopupBgBlurSource(lpparam);
+        hookPopupWallpaperBlurRadius(lpparam);
+        hookPopupBlurAnim(lpparam);
+    }
+
+    /** 壁纸: 动态模糊时半径置 0; 两者任一开启都要作废预烘焙缓存, 让 blurBitmap 每次都跑。 */
+    private static void hookPopupWallpaperBlurRadius(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> launcherClass = XposedHelpers.findClass(
+                    "com.android.launcher.Launcher", lpparam.classLoader);
+            Class<?> callbackClass = XposedHelpers.findClass(
+                    "com.android.launcher3.popup.EffectResultCallbackImp", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher.wallpaper.WallpaperBlur", lpparam.classLoader,
+                    "getBlurredWallpaper", launcherClass, float.class, callbackClass,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                boolean dynamic = popupDynamicBlurOn();
+                                float k = popupBgBrightnessScale();
+                                if (!dynamic && k >= 1f) return;
+                                if (dynamic) param.args[1] = Float.valueOf(0f);
+                                // 缓存里存的是系统预烘焙的模糊壁纸(且混入的是未调整亮度的颜色),
+                                // 命中时原方法直接返回、完全不走 blurBitmap, 故必须作废。
+                                Object cache = XposedHelpers.getObjectField(
+                                        param.thisObject, "mBlurCache");
+                                if (cache != null) {
+                                    XposedHelpers.callMethod(
+                                            cache, "setIsBlurCacheGenerated", Boolean.FALSE);
+                                }
+                            } catch (Throwable t) {
+                                log("popup wallpaper blur radius error: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK launcher WallpaperBlur#getBlurredWallpaper (popup bg dynamic blur)");
+        } catch (Throwable t) {
+            log("HOOK FAIL launcher WallpaperBlur#getBlurredWallpaper "
+                    + "(popup bg dynamic blur): " + Log.getStackTraceString(t));
+        }
+    }
+
+    /**
+     * dragLayer 截图(半径 4.0)置 0, 图标层交给动态模糊; 壁纸层则缩放混入色以调整背景亮度。
+     * 两个功能都落在这里 —— 这是壁纸与截图两条路径唯一的公共入口。
+     */
+    private static void hookPopupBgBlurSource(final XC_LoadPackage.LoadPackageParam lpparam) {
+        XC_MethodHook hook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                try {
+                    if (popupDynamicBlurOn()) {
+                        float radius = (Float) param.args[1];
+                        if (Math.abs(radius - 4.0f) < 0.001f) {
+                            param.args[1] = Float.valueOf(0f);
+                        }
+                    }
+                    applyPopupBlendBrightness(param.args);
+                } catch (Throwable t) {
+                    log("popup dragLayer blur radius error: " + t);
+                }
+            }
+        };
+        try {
+            Class<?> callbackClass = XposedHelpers.findClass(
+                    "com.android.launcher3.popup.EffectResultCallbackImp", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher3.popup.PopupBlurHelper", lpparam.classLoader,
+                    "blurBitmap", Bitmap.class, float.class, Context.class, callbackClass,
+                    int.class, Color.class, Color.class, float.class, hook);
+            log("HOOK OK launcher PopupBlurHelper#blurBitmap(Bitmap) (popup bg dynamic blur)");
+        } catch (Throwable t) {
+            log("HOOK FAIL launcher PopupBlurHelper#blurBitmap(Bitmap) "
+                    + "(popup bg dynamic blur): " + Log.getStackTraceString(t));
+        }
+        try {
+            Class<?> callbackClass = XposedHelpers.findClass(
+                    "com.android.launcher3.popup.EffectResultCallbackImp", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher3.popup.PopupBlurHelper", lpparam.classLoader,
+                    "blurBitmap", HardwareBuffer.class, float.class, Context.class, callbackClass,
+                    int.class, Color.class, Color.class, float.class, hook);
+            log("HOOK OK launcher PopupBlurHelper#blurBitmap(HardwareBuffer) (popup bg dynamic blur)");
+        } catch (Throwable t) {
+            log("HOOK FAIL launcher PopupBlurHelper#blurBitmap(HardwareBuffer) "
+                    + "(popup bg dynamic blur): " + Log.getStackTraceString(t));
+        }
+    }
+
+    /** 把系统的 ALPHA 渐显换成半径渐增的高斯模糊。 */
+    private static void hookPopupBlurAnim(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher3.popup.PopupBlurView", lpparam.classLoader,
+                    "createBlurAnim", boolean.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!popupDynamicBlurOn()) return;
+                                View view = (View) param.thisObject;
+                                boolean open = Boolean.TRUE.equals(param.args[0]);
+                                PopupBlurTarget target = popupBlurTarget(view);
+                                ObjectAnimator origin = param.getResult() instanceof ObjectAnimator
+                                        ? (ObjectAnimator) param.getResult() : null;
+                                ObjectAnimator anim = ObjectAnimator.ofFloat(target,
+                                        POPUP_BLUR_PROGRESS, target.progress, open ? 1f : 0f);
+                                if (origin != null) {
+                                    anim.setDuration(origin.getDuration());
+                                    if (origin.getInterpolator() != null) {
+                                        anim.setInterpolator(origin.getInterpolator());
+                                    }
+                                }
+                                // 模糊量由半径体现, View 全程可见, 否则又变回透明度渐显。
+                                view.setAlpha(1f);
+                                applyPopupBgEffect(view, target.progress);
+                                param.setResult(anim);
+                            } catch (Throwable t) {
+                                log("popup blur anim error: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK launcher PopupBlurView#createBlurAnim (popup bg dynamic blur)");
+        } catch (Throwable t) {
+            log("HOOK FAIL launcher PopupBlurView#createBlurAnim "
+                    + "(popup bg dynamic blur): " + Log.getStackTraceString(t));
+        }
+    }
+
+    /** createBlurAnim 的驱动目标: 借 ObjectAnimator 的 Property 机制, 避开反射 setter 的兼容问题。 */
+    public static final class PopupBlurTarget {
+        public final View view;
+        public float progress;
+
+        PopupBlurTarget(View view) {
+            this.view = view;
+        }
+    }
+
+    private static final Property<PopupBlurTarget, Float> POPUP_BLUR_PROGRESS =
+            new Property<PopupBlurTarget, Float>(Float.class, "popupBlurProgress") {
+                @Override
+                public Float get(PopupBlurTarget target) {
+                    return target.progress;
+                }
+
+                @Override
+                public void set(PopupBlurTarget target, Float value) {
+                    target.progress = value;
+                    applyPopupBgEffect(target.view, value);
+                }
+            };
+
+    private static PopupBlurTarget popupBlurTarget(View view) {
+        PopupBlurTarget target = (PopupBlurTarget) XposedHelpers.getAdditionalInstanceField(
+                view, "colorosmodPopupBlurTarget");
+        if (target == null) {
+            target = new PopupBlurTarget(view);
+            XposedHelpers.setAdditionalInstanceField(view, "colorosmodPopupBlurTarget", target);
+        }
+        return target;
+    }
+
+    /** 对 PopupBlurView 施加动态高斯模糊; progress=0 时清空效果。 */
+    private static void applyPopupBgEffect(View view, float progress) {
+        if (Build.VERSION.SDK_INT < 31) return;
+        float radius = Math.max(0f, progress) * POPUP_DYNAMIC_BLUR_MAX_RADIUS;
+        RenderEffect effect = radius > 0.01f
+                ? RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP)
+                : null;
+        view.setRenderEffect(effect);
+    }
+
+    /**
+     * 长按背景亮度: 壁纸层以 blendMode=1(ONLY_MASK) 混入 popup_blur_blend_color, 混入结果
+     * out = wp * (1 - a) + blendRGB * a, 那层 blendRGB 就是系统硬加的"最低亮度"(纯黑壁纸也被
+     * 抬到约 (8.5, 11.5, 15.7))。把 blendRGB 缩放到 k 倍即可线性抵消它:
+     * out_k = out + (k - 1) * a * blendRGB。
+     *
+     * 直接缩放系统混入色、走系统自己的混合链路, 而不是在外面叠 RenderEffect 颜色滤镜:
+     * 前者与动态模糊完全正交(模糊只是把这份已修正的画面糊开), 后者依赖合成顺序且实测无效。
+     * dragLayer 截图那层 blendMode=-1(不混入), 靠 blendMode 判定即可自动跳过。
+     */
+    private static void applyPopupBlendBrightness(Object[] args) {
+        float k = popupBgBrightnessScale();
+        if (k >= 1f) return;
+        if (((Integer) args[4]) != 1) return;
+        Color blend = (Color) args[5];
+        if (blend == null) return;
+        args[5] = Color.valueOf(blend.red() * k, blend.green() * k, blend.blue() * k,
+                blend.alpha());
+    }
+
+    /** 背景亮度系数 k: 1 = 系统默认, 0 = 完全去掉系统抬的最低亮度。开关关闭时为 1。 */
+    private static float popupBgBrightnessScale() {
+        if (!popupBgBrightnessOn()) return 1f;
+        int brightness = Math.max(0, Math.min(DESKTOP_POPUP_BG_BRIGHTNESS_MAX,
+                readInt(KEY_DESKTOP_POPUP_BG_BRIGHTNESS, DESKTOP_POPUP_BG_BRIGHTNESS_DEFAULT)));
+        return brightness / (float) DESKTOP_POPUP_BG_BRIGHTNESS_MAX;
+    }
+
+    private static boolean popupDynamicBlurOn() {
+        return readBool(KEY_POPUP_DYNAMIC_BLUR_ENABLED, false);
+    }
+
+    private static boolean popupBgBrightnessOn() {
+        return readBool(KEY_DESKTOP_POPUP_BG_BRIGHTNESS_ENABLED, false);
     }
 }

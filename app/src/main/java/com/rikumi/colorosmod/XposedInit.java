@@ -16,6 +16,7 @@ import com.rikumi.colorosmod.hooks.GestureHooks;
 import com.rikumi.colorosmod.hooks.LauncherHooks;
 import com.rikumi.colorosmod.hooks.SafecenterHooks;
 import com.rikumi.colorosmod.hooks.SettingsHooks;
+import com.rikumi.colorosmod.hooks.StatusBarLyricHooks;
 import com.rikumi.colorosmod.hooks.SystemServerHooks;
 import com.rikumi.colorosmod.hooks.SystemUiHooks;
 
@@ -127,6 +128,16 @@ public class XposedInit implements IXposedHookLoadPackage {
             "keyguard_bouncer_brightness_enabled";
     // 亮度滑条键(0-5, 默认 0): 0=全黑(去掉系统抬的最低亮度), 5=系统默认 lumin(0x26=38)。
     public static final String KEY_KEYGUARD_BOUNCER_BRIGHTNESS = "keyguard_bouncer_brightness";
+    // 自定义桌面长按背景亮度(com.android.launcher): 长按图标弹出菜单时, 菜单后面的背景是
+    // "模糊壁纸 ONLY_MASK 混入 popup_blur_blend_color(#4d1c2634)" 的结果, 相当于给背景加了
+    // 一层去不掉的"最低亮度"(纯黑壁纸也被抬成约 (8.5,11.5,15.7))。
+    public static final String KEY_DESKTOP_POPUP_BG_BRIGHTNESS_ENABLED =
+            "desktop_popup_bg_brightness_enabled";
+    // 长按菜单背景动态模糊: 把系统的"静态模糊壁纸 + ALPHA 渐显"改成"清晰壁纸 + 高斯模糊半径渐进"。
+    public static final String KEY_POPUP_DYNAMIC_BLUR_ENABLED = "popup_dynamic_blur_enabled";
+
+    // 亮度滑条键(0-10, 默认 0): 0=去掉系统抬的最低亮度, 10=系统默认效果。
+    public static final String KEY_DESKTOP_POPUP_BG_BRIGHTNESS = "desktop_popup_bg_brightness";
     // 锁屏通知区域下移(com.android.systemui): 锁屏上通知区顶部位置有三个来源(见
     // SystemUiHooks#hookKeyguardNotificationOffset), 三处统一叠加同一下移量。
     public static final String KEY_KEYGUARD_NOTIFICATION_OFFSET_ENABLED =
@@ -137,6 +148,13 @@ public class XposedInit implements IXposedHookLoadPackage {
     public static final int KEYGUARD_NOTIFICATION_OFFSET_DP_MAX = 40;
     // 输入密码界面支持侧滑或下滑返回(com.android.systemui): 开启后密码界面允许键盘区下滑手势穿透到
     // bouncer 容器以收起返回锁屏, 放行系统侧滑返回手势; 并把"上滑使用指纹解锁"提示改为"下滑返回指纹解锁"。
+    // 支持魅族状态栏歌词(com.android.systemui): 歌词数据源是 ColorOS 自己的媒体接口,
+    // 与 Flyme 协议无关 —— MediaSessionManager#getActiveSessions -> MediaController#getMetadata()
+    // -> metadata.getString("lyricInfo") 拿到完整歌词原文, 再按 PlaybackState 外推进度定位当前行。
+    // 因此**不需要**注入音乐软件进程, 也**不需要**伪装魅族机型, xposedscope 里没有任何音乐软件。
+    // 详见 StatusBarLyricHooks。
+    public static final String KEY_STATUSBAR_LYRIC_ENABLED = "statusbar_lyric_enabled";
+
     public static final String KEY_KEYGUARD_BOUNCER_SWIPE_BACK_ENABLED = "keyguard_bouncer_swipe_back_enabled";
     // 密码支持滑动输入(com.android.systemui): 开启后密码数字键盘支持滑动连续输入。
     // 手指进入某数字键"中间 2/3 半径"的圆形区域即视为按下该键: 立即输入该字符并显示按下态;
@@ -170,6 +188,11 @@ public class XposedInit implements IXposedHookLoadPackage {
     // 实现按 overColor RGB 的比例缩放, 无需硬编码目标亮度。
     public static final int KEYGUARD_BOUNCER_BRIGHTNESS_DEFAULT = 0;
     public static final int KEYGUARD_BOUNCER_BRIGHTNESS_MAX = 5;
+    // 桌面长按背景亮度: 默认 0(去掉系统给模糊背景加的最低亮度); 上限 10 = 系统默认效果。
+    // 系统用 popup_blur_blend_color(#4d1c2634) 以 ONLY_MASK 混入模糊壁纸, 亮度滑条缩放的是
+    // 这层混合量, 与密码界面背景亮度同一套"缩放系统抬的最低亮度"口径。
+    public static final int DESKTOP_POPUP_BG_BRIGHTNESS_DEFAULT = 0;
+    public static final int DESKTOP_POPUP_BG_BRIGHTNESS_MAX = 10;
 
     // 调试日志: 仅用 Log.e(error 级别), 因为 ColorOS 会丢弃 Log.d/v/i/w 等非 error 日志。
     // 不触碰外部存储, 避免被 hook 的第三方进程(如桌面 com.android.launcher)因无存储权限而
@@ -207,6 +230,8 @@ public class XposedInit implements IXposedHookLoadPackage {
             // system_server: 横屏应用小窗保持比例(com.android.server.wm.FlexibleTaskController)
             SystemServerHooks.hookFloatWindowLandscapeKeepRatio(lpparam);
         }
+        // 状态栏歌词只需在 SystemUI 侧实现: 直接读 MediaSession 的标题,
+        // 无需在音乐软件进程注入, 也无需伪装机型(见 StatusBarLyricHooks 类注释)。
     }
 
     // 读取桌面隐藏应用入口文件夹的自定义名称, 与安全中心内部

@@ -1463,3 +1463,229 @@ callback(i): 0-8 -> 数字 1-9, 10 -> 数字 0, 9 -> 左键, 11 -> 右键
 
 **改功能时去哪个文件**：改通知看 `NotificationHooks`，改锁屏手势/返回看 `KeyguardHooks`，
 改密码键盘（光效/滑动输入/背景）看 `PasswordInputHooks`。
+
+### 24. 状态栏歌词（2026-08-29，最终方案：直接读 MediaSession 歌词接口）
+
+设置项：`statusbar_lyric_enabled`（开关），位于分类「状态栏与通知中心」（原「通知中心」，本次改名）。
+实现文件：`hooks/StatusBarLyricHooks.java`。
+
+**最终方案（已实测验证）**：不伪装机型、不反射 Notification 私有字段、不在音乐软件进程注入。
+直接在 SystemUI 侧读 ColorOS 自己的歌词接口：
+
+```
+MediaSessionManager#getActiveSessions(null)   // 需要 MEDIA_CONTENT_CONTROL(SystemUI 已有)
+  → 找 STATE_PLAYING 的会话
+  → controller.getMetadata()
+  → metadata.getString("lyricInfo")           // ColorOS 歌词接口(JSON)
+  → JSONObject.optString("lyric")             // 歌词原文
+  → parseLyric(raw)                            // 解析 LRC/JSON 时序
+  → findLineAt(estimatePosition(playbackState)) // 按播放进度取当前行
+  → 显示到状态栏 TextView(挂 PhoneStatusBarView)
+```
+
+**ColorOS 歌词接口（已 dexdump 核对 SystemUI 的 OplusMediaDataManagerExImpl#loadLyricInBg 字节码）**：
+```java
+String lyricInfo = metadata.getString("lyricInfo");     // JSON 字符串
+JSONObject j = new JSONObject(lyricInfo);
+j.optString("songName"); j.optString("artist");
+j.optString("lyric");       // 歌词原文(不是当前行, 是完整歌词)
+j.optString("songId");
+```
+
+**歌词格式**（LyricParser 逐行解析，逻辑与 SystemUI 一致）：
+- LRC：`[mm:ss.xx]歌词` → 时间 = 分*60000 + 秒*1000 + 厘秒*10
+- JSON：`{"t":毫秒, "c":[{"tx":"文本"},...]}` → c 数组内 tx 拼接成整句
+
+**控制中心 vs 全屏显示歌名/歌词的区别**：
+不是数据源不同，而是 `displayPolicy` 位掩码不同：
+`isEnabled(i) = lines非空 && (displayPolicy & i) != 0`。
+控制中心 `MediaControlPanelExtImp` 用 `isEnabled(16)`，全屏 `OplusMediaViewPagerAdapter` 用 `isEnabled(32)`。
+部分软件只给了 32(全屏) 而没给 16(控制中心)，于是控制中心仍是歌名。
+本功能直接用原始歌词数据，不受 displayPolicy 限制。
+
+**锁屏音乐卡片也走这套接口**（`com.oplus.systemui.plugins:SystemUIPlugin` 的 `f7/p5.java` 绑定的
+`title_text_a`/`content_text_a`，实测在 `music_viewpager_container` 中显示歌词）。
+歌词数据由 SystemUI 主包 `OplusMediaLyricData` 处理后传给插件，而非插件自己解析——
+这印证了 `lyricInfo` 是系统唯一歌词通路。
+
+**重要实现细节**：
+- 播放位置必须**外推**：`PlaybackState.getPosition()` 是上次更新快照，要
+  `pos + (elapsedRealtime - lastPositionUpdateTime) × speed`，否则歌词滞后。
+- 轮询 250ms 足够跟手且开销极小；用 `sController` 缓存当前会话，切换播放器无需重建轮询。
+- 歌词视图挂在 `PhoneStatusBarView#onAttachedToWindow`（本类自有声明，不扩散到所有 View），
+  复用状态栏时钟的字号/字色/字体以跟随主题；显示歌词时隐藏 `clock` + `notification_icon_area`。
+- 开关必须在运行时（而非注入时）判断，否则初始化时关闭后开启永不生效。
+
+**已废弃的弯路（勿再走）**：
+- 伪装 `Build.BRAND`：实测无效且副作用大（影响 app 机型分支）。
+- 反射 `Notification.FLAG_ALWAYS_SHOW_TICKER`：那是 Flyme 私有字段，ColorOS 没有，
+  反射会抛 NoSuchFieldException，无论怎么 hook 都救不回来。
+- 逐个逆向音乐软件找"判定逻辑"：判定方式不统一且混淆类名随版本变化，维护成本极高。
+
+**协议（关键结论：是通知，不是广播）**。官方 open.flyme.cn/docs?id=239 需登录，抓不到正文；
+从搜索引擎 snippet + 掘金逆向文（moriafly）确认：
+```
+音乐软件每换一句歌词 -> 用同一通知 id 再发一条通知
+  Notification.tickerText = 歌词(由 setTicker(lyrics) 写入)
+  flags |= 0x1000000 (FLAG_ALWAYS_SHOW_TICKER)    // Flyme 私有, "ticker 常驻状态栏"
+  flags |= 0x2000000 (FLAG_ONLY_UPDATE_TICKER)    // 可选, 只更新 ticker
+  extras: ticker_icon(int) / ticker_icon_switch(boolean)
+  另需 FLAG_NO_CLEAR 常驻(软件侧负责)
+```
+**系统侧已无 ticker 链路**：全 SystemUI 源码无 tickerText 消费点（仅 NotificationCompat.Builder 有
+setTicker），但 `Notification.tickerText` 字段仍由 setTicker() 填充，直接读该字段即可。
+
+**本机 hook 点（dexdump 核对，classes2.dex）**：
+- `com.android.systemui.statusbar.phone.PhoneStatusBarView#onAttachedToWindow()` —— 本类自有声明
+  （非继承 View），hook 不会扩散到所有 View。`PhoneStatusBarView extends FrameLayout`，
+  挂歌词 TextView 用 FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT, gravity=START|CENTER_VERTICAL)。
+  时钟 id=`clock`（`com.oplus.systemui.statusbar.widget.StatClock`），通知图标区 id=`notification_icon_area`，
+  均用 `getResources().getIdentifier(name,"id","com.android.systemui")` 取。
+- `com.android.systemui.statusbar.notification.collection.NotifCollection$1`
+  - `onNotificationPosted(StatusBarNotification, RankingMap)V`（新增与更新都走这里）
+  - `onNotificationRemoved(SBN, RankingMap)V` 与 `(SBN, RankingMap, int)V`
+  （该类是 `NotificationListener.NotificationHandler` 的实现，内部 `Assert.isMainThread()`）
+
+**实现要点**：
+- 歌词 TextView 复用状态栏时钟的 textSize / textColors / typeface -> 自动跟随深浅色主题。
+  单行 + `ellipsize=MARQUEE` + `marqueeRepeatLimit(-1)`；换文本时要 `setSelected(false)` 再 `true`
+  才会重新滚动。
+- 显示歌词时隐藏 `clock` + `notification_icon_area`（记录原可见性，结束时还原），避免重叠。
+- TextView 必须 `setClickable(false)`/`setFocusable(false)`，否则会吃掉状态栏下拉手势。
+- 同一条通知后续若不再带 flag（软件恢复成普通媒体通知），要顺手清掉歌词：用 `sLyricKey` 比对。
+
+**音乐软件侧【已证伪并改正】**：原以为要改 `Build.BRAND`，**错**。网易云的判定方式见
+StatusBarLyricHooks 注释：反射读 `android.app.Notification` 的 Flyme 私有字段
+`FLAG_ALWAYS_SHOW_TICKER`。逆向出的完整链路（jadx 反编译 classes3/4/21）：
+
+```
+pj0.b (music_base_lyric_release, 混淆名)  [classes21]
+  static { if (!n3.U()) { FLAG_ALWAYS_SHOW_TICKER=0; ...; return; }
+           FLAG_ALWAYS_SHOW_TICKER = dp.c(Notification.class, null, "FLAG_ALWAYS_SHOW_TICKER"); ... }
+  public static boolean a() { return FLAG_ALWAYS_SHOW_TICKER > 0; }
+
+pj0.a (StatusBarLyricSettingManager)      [classes21]
+  supportStatusBarLyric = pj0.b.a()
+  d() = sp("status_bar_lyric_setting").getBoolean("status_bar_lyric_setting_key", false)
+  c(z) 保存 + 广播 "status_bar_lyric_setting_change"
+
+h82.c (StatusBarLyricController)          [classes4]
+  line64: private boolean supportStatusBarLyricFlag = pj0.b.a();   // 决定是否初始化
+  m(Context){ if(supportStatusBarLyricFlag){ switchOpenCache = pj0.a.a.d(); 注册广播 } }
+
+mu1/k.java (设置项, 字段由服务端下发)      [classes3]
+  "meizuStatusBarLyricSwitchDisplay" -> pj0.a.a.b()   // 是否显示
+  "meizuStatusBarLyricSwitch"        -> pj0.a.a.d()   // 开关值
+```
+
+**⚠️ 关键修正（2026-08-29）：官方接入是"两道关"，缺一不可**
+
+网易云 `pj0.b` 的 static 块：
+```java
+static {
+    if (!n3.U()) { FLAG_ALWAYS_SHOW_TICKER = 0; FLAG_ONLY_UPDATE_TICKER = 0; return; }  // ① 机型关
+    FLAG_ALWAYS_SHOW_TICKER = dp.c(Notification.class, null, "FLAG_ALWAYS_SHOW_TICKER"); // ② 字段关
+    FLAG_ONLY_UPDATE_TICKER = dp.c(Notification.class, null, "FLAG_ONLY_UPDATE_TICKER");
+}
+public static boolean a() { return FLAG_ALWAYS_SHOW_TICKER > 0; }
+```
+而 **`n3.U()` 就是品牌检查**（`com.netease.cloudmusic.utils.n3`，定义在 **classes5.dex**，
+jadx 反编译单 dex 时会把它误放到 `view/n3.java`，路径不可信；用 dexdump 定位最可靠）：
+```java
+public static boolean U() {
+    if (S()) return true;
+    String str = Build.BRAND;
+    if (TextUtils.isEmpty(str)) return false;
+    return str.toLowerCase().equals("meizu");      // ← 就是 Build.BRAND
+}
+```
+=> **只做字段 spoofing 不做机型伪装时，第 ① 关提前 return，`dp.c()` 根本不会被调用，
+字段 spoofing 完全没机会触发**（曾因此误判"字段 spoofing 无效"）。两者必须同时启用。
+
+**最终实现（两道关都过）**：
+1. `hookFlymeNotificationFlags` —— hook `Class#getDeclaredField` / `Class#getField`，
+   在 afterHooked 且 `param.getThrowable() != null` 且 `param.thisObject == Notification.class`
+   且字段名匹配时，`param.setResult(FlymeFlags.class.getDeclaredField(name))`。
+   仅在原生抛 NoSuchFieldException 时介入，真实 Flyme 上不干扰。
+   值必须是真实 0x1000000（软件发通知时要用它置 flags）。
+2. `hookMeizuBrand` —— **延迟到 `Application#attach(Context)`** 再把
+   `Build.BRAND="meizu"` / `MANUFACTURER="Meizu"`。
+
+**⚠️ 为什么必须延迟到 Application.attach（血泪教训）**：
+`readBool` 的 ContentProvider 通道依赖 `currentApplication()`，而 `handleLoadPackage` 阶段它为
+null → 回退 XSharedPreferences → 往往读到 false → **开关判断把伪装挡掉，代码从未执行**。
+`Application.attach` 是应用启动后最早的可注入点，且早于 pj0.b 等类初始化。
+
+两者都对**所有非 android 包**生效（用户勾选谁就对谁生效），排除 system_server（反射极高频）。
+
+**副作用提示**：改 BRAND 会影响 app 机型分支（推送通道、支付渠道等）。只改 BRAND/MANUFACTURER，
+不动 MODEL/FINGERPRINT/DISPLAY；仅对用户在 LSPosed 勾选的包生效。
+
+```java
+public static final class FlymeFlags {              // 字段名必须与 Flyme 私有字段完全同名
+    public static int FLAG_ALWAYS_SHOW_TICKER   = 0x1000000;
+    public static int FLAG_ONLY_UPDATE_TICKER   = 0x2000000;
+}
+// hook Class#getDeclaredField / Class#getField(String)
+// afterHooked: 仅当 param.getThrowable() != null(系统无该字段)
+//              && param.thisObject == Notification.class
+//              && name 匹配  ->  param.setResult(FlymeFlags.class.getDeclaredField(name))
+//              (setResult 会清除 throwable; 真 Flyme 上字段存在则不介入)
+```
+原理：Field 与声明类绑定，应用拿到后 `field.getInt(null)` 读到的就是 FlymeFlags 的值。
+**必须在 afterHooked 判断 throwable 后置入**，避免在真实 Flyme 上干扰原生行为。
+**值必须是真实的 0x1000000**，因为软件发送通知时要用它置 flags，为 0 则 SystemUI 端收不到标志位。
+
+调用位置：`XposedInit#handleLoadPackage` 末尾，对**所有**包调用（仅排除 `android`/system_server：
+音乐软件是独立进程，且 system_server 反射极高频不宜拦截）+ 已知音乐包额外做品牌伪装兜底。
+开关必须在 beforeHooked/afterHooked **运行时**判断（handleLoadPackage 阶段 ContentProvider 不可用，
+只能回退 XSharedPreferences，往往读不到）。
+
+**逆向技巧（踩坑记录）**：
+- macOS 的 grep 是 BSD grep，**不支持 `\|` 做 alternation**！必须用 `grep -E`，
+  否则会静默漏掉全部匹配（曾因此误判"网易云没有状态栏歌词代码"）。
+- **jadx 反编译单个 dex 时包路径不可信**（会把 `utils/n3` 输出成 `view/n3.java`）。
+  定位"某个类定义在哪个 dex"要用脚本解析 dex 的 class_defs（见下），或用 dexdump。
+- **dex header 偏移**: string_ids_off=0x3c, type_ids_off=0x44,
+  **class_defs_size=0x60, class_defs_off=0x64**（我记成 0x78/0x7c 导致全部解析失败）。
+  用 python struct 遍历 class_def_item(32B, 首字段 class_idx -> type_ids -> string) 可精确列出
+  每个 dex 定义了哪些类，比 dexdump 快得多，且能区分"定义"与"引用"。
+- **ColorOS 的 logcat 不可信**：`notification_subtitle applied` 之类的高频日志会迅速填满
+  环形缓冲区，把 HOOK OK 等关键日志挤掉，造成"模块没运行"的假象。
+  重载 SystemUI 后必须在 **3 秒内**抓取才看得到注册日志。
+- jadx 不能直接反编译单个 .dex，要 `zip` 包一层再喂给它（`zip -q /tmp/x.zip classesN.dex`）。
+- 208MB/24 个 dex 的 app，全量反编译太慢；先用 `grep -ac` 在 dex 里定位目标类在哪个 dex，
+  再只反编译那一个 dex，然后用 `grep -rl "特征字符串"` 定位混淆后的类名。
+- 混淆类名（`pj0.b`）随版本变化，已用 try-catch 包裹；升级失效时按上述方法重新定位。
+
+**未验证部分**：其余 5 个音乐软件（QQ/酷狗/酷我/咪咕/汽水）是否只靠 `Build.BRAND` 判断，
+尚未逆向确认（无反编译产物）。它们目前仍走 `hookMeizuBrand` 兜底。
+
+## 桌面长按背景亮度（Feature 24，2026-08-29 实现）
+
+设置项：桌面 → `desktop_popup_bg_brightness_enabled`「自定义桌面长按背景亮度」，
+滑条 `desktop_popup_bg_brightness`（0-10，默认 0，无单位）。0 = 去掉系统抬的最低亮度，
+10 = 系统默认效果。常量在 `XposedInit`，hook 在 `LauncherHooks#hookPopupBgBrightness`。
+
+**逆向结论（com.android.launcher，classes2.dex）**：
+
+- 长按图标菜单 `OplusPopupContainerWithArrow` → `PopupBlurView.Companion#getPopBlurView`
+  → `PopupBlurHelper#loadPopupBlurBg(Launcher, PopupBlurView)`（blur 不可用才走
+  `loadPopupNoBlurBg`，那条路只设 dragLayerDrawable，不设壁纸）。
+- `loadPopupBlurBg` → `LauncherWallpaperManager#getBlurredWallpaper(launcher, 0.7f, callback)`
+  → 回调里 `new BitmapDrawable(res, result.copy(ARGB_8888, true))` + `setBounds(0,0,wPx,hPx)`
+  → `PopupBlurView#setWallpaperDrawable(Drawable)`（public final，`(Landroid/graphics/drawable/Drawable;)V`，
+  PopupBlurView extends FrameLayout）。`dispatchDraw` 先画 mWallpaperDrawable 再画 mDragLayerDrawable。
+- 背景 = 模糊壁纸以 **blendMode=ONLY_MASK** 混入 `popup_blur_blend_color`（**#4d1c2634**）：
+  `col.rgb = mix(col.rgb, blendColor.rgb, blendColor.a)`（a = 0x4d/255 ≈ 0.302）。
+  纯黑壁纸因此被抬到约 (8.5, 11.5, 15.7)，即一层去不掉的"最低亮度"。
+
+**为什么不能直接改 blurBitmap 的 blendColor 参数（关键坑）**：
+`WallpaperBlur#getBlurredWallpaper` 在 `BlurCache` 命中时**直接把缓存 bitmap 交给回调**，
+完全不走 `PopupBlurHelper#blurBitmap`，所以改参数只在首次长按生效；后续长按走缓存。
+唯一汇合点是 `setWallpaperDrawable`，hook 它并替换 args[0]。
+
+**算法**：混入式 `out = wp*(1-a) + blendRGB*a`，缩放 blendRGB 到 k 倍等价于
+`out_k = out + (k-1)*a*blendRGB`，即对最终 bitmap 叠加常量偏移，用 `ColorMatrix` 的
+offset 项 + `ColorMatrixColorFilter` 一次 drawBitmap 完成（k=0 为负偏移，自动 clamp 到 0）。
+不原地改像素：新建 bitmap + 新 BitmapDrawable（复制 bounds），避免污染壁纸模糊缓存。

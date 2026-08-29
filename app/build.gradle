@@ -11,8 +11,8 @@ android {
         applicationId 'com.rikumi.colorosmod'
         minSdk 26
         targetSdk 37
-        versionCode 10004
-        versionName '1.0.4'
+        versionCode 10100
+        versionName '1.1.0'
     }
 
     buildTypes {

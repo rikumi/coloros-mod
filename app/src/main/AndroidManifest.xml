@@ -2,6 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- 开关点击时的短触摸反馈 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -14,11 +17,28 @@
             android:name=".MainActivity"
             android:exported="true"
             android:theme="@style/Theme.ColorOSMod">
+            <!-- LSPosed 启动按钮按 MODULE_SETTINGS 类别解析模块设置入口,
+                 独立于桌面 LAUNCHER 别名, 隐藏图标后仍可从 LSPosed 进入。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="de.robv.android.xposed.category.MODULE_SETTINGS" />
+            </intent-filter>
+        </activity>
+
+        <!-- 桌面图标入口别名: 隐藏桌面图标 = 禁用此别名, LSPosed 仍可直接拉起 MainActivity -->
+        <activity-alias
+            android:name=".MainActivityLauncher"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
 
         <!-- 跨进程暴露模块设置给被 hook 的进程读取(Binder 通道, 绕开 SELinux 对 app_data_file 的限制) -->
         <provider

@@ -1,7 +1,9 @@
 package com.rikumi.colorosmod
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
 import android.os.Bundle
 import android.provider.Settings
@@ -121,21 +123,33 @@ internal data class SwitchItem(
     val dividerBefore: Boolean = false,
 )
 
+/**
+ * 下拉选项设置项。
+ * options 为静态选项; dynamicOptions 非空时在进入页面后于 IO 线程重新拉取选项(如"新应用
+ * 添加到"需要读桌面文件夹名), 拉取失败则沿用 options。
+ * valueKey 非空时, 选中项除存下标外还会把选项文本写到 valueKey —— 选项会随桌面文件夹增删
+ * 而变化, 只存下标会在删除某个文件夹后错位到另一个文件夹, 存文本则能自然回落到第 0 项。
+ */
 internal data class SelectItem(
     val key: String,
     val label: String,
     val options: List<String>,
     val defaultValue: Int = 0,
+    val valueKey: String? = null,
+    val dynamicOptions: ((Context) -> List<String>)? = null,
 )
 
 private val DESKTOP = listOf(
     SwitchItem("icon_gap_enabled", "增加图标与名称间距", sliderKey = "icon_gap_dp", sliderMax = 8, sliderDefault = 4),
     SwitchItem("indicator_enabled", "减小页面与 Dock 间距", sliderKey = "indicator_dp", sliderMax = 32, sliderDefault = 16, sliderUnit = "dp"),
-    SwitchItem("shrink_popup_menu", "缩小图标长按菜单", sliderKey = "popup_scale_percent", sliderMax = 20, sliderDefault = 10, sliderUnit = "%"),
-    SwitchItem("folder_bg_transparent_enabled", "文件夹展开背景透明"),
-    SwitchItem("folder_anim_duration_enabled", "调整文件夹动画持续时间", sliderKey = "folder_anim_duration_ms", sliderMax = 500, sliderDefault = 300, sliderUnit = "ms", sliderMin = 100),
     SwitchItem("edit_mode_bg_transparent_enabled", "取消编辑模式背景遮罩"),
+    SwitchItem("shrink_popup_menu", "缩小图标长按菜单", sliderKey = "popup_scale_percent", sliderMax = 20, sliderDefault = 10, sliderUnit = "%", dividerBefore = true),
+    SwitchItem("popup_dynamic_blur_enabled", "长按菜单背景动态模糊"),
+    SwitchItem("desktop_popup_bg_brightness_enabled", "自定义桌面长按背景亮度", sliderKey = "desktop_popup_bg_brightness", sliderMax = 10, sliderDefault = 0, sliderUnit = ""),
+    SwitchItem("folder_bg_transparent_enabled", "文件夹展开背景透明", dividerBefore = true),
+    SwitchItem("folder_anim_duration_enabled", "调整文件夹动画持续时间", sliderKey = "folder_anim_duration_ms", sliderMax = 500, sliderDefault = 300, sliderUnit = "ms", sliderMin = 100),
 )
+
 private val QS = listOf(
     SwitchItem("qs_scrim_translucent_enabled", "自定义控制/通知中心背景亮度", sliderKey = "qs_scrim_brightness", sliderMax = 20, sliderDefault = 5, sliderUnit = "%"),
     SwitchItem("qs_carrier_enabled", "去除控制中心运营商显示"),
@@ -146,6 +160,7 @@ private val NOTIF = listOf(
     SwitchItem("notification_subtitle_enabled", "缩小通知静默区域副标题", sliderKey = "notification_subtitle_sp", sliderMax = 16, sliderDefault = 8, sliderUnit = "sp"),
     SwitchItem("notification_padding_enabled", "增加通知上下内边距", sliderKey = "notification_padding_dp", sliderMax = 8, sliderDefault = 4),
     SwitchItem("fluid_cloud_keep_percent_enabled", "流体云出现时不隐藏电量百分比"),
+    SwitchItem("statusbar_lyric_enabled", "状态栏显示歌词", "需播放器支持 MediaSession 的 ColorOS 歌词能力", dividerBefore = true),
 )
 private val HIDDEN = listOf(
     SwitchItem("recents_show_hidden_enabled", "多任务显示已隐藏应用"),
@@ -202,7 +217,7 @@ private val CATEGORY_GROUPS: List<List<Category>> = listOf(
     listOf(
         Category("desktop", "桌面", MiuixIcons.GridView, DESKTOP),
         Category("quick_settings", "控制中心", MiuixIcons.Tune, QS),
-        Category("notification", "通知中心", MiuixIcons.Community, NOTIF),
+        Category("notification", "状态栏与通知中心", MiuixIcons.Community, NOTIF),
         Category("lockscreen", "锁屏", MiuixIcons.Lock, LOCKSCREEN),
     ),
     listOf(
@@ -378,6 +393,7 @@ private fun HomeScreen(
                     // 启用后无需再解释, 仅未启用时提示。
                     subtitle = if (masterChecked) null else HOME_MASTER_HINT,
                     onCheckedChange = onMasterChange,
+                    belowContent = { HideLauncherIconRow(ctx) },
                 )
             }
             CATEGORY_GROUPS.forEach { group ->
@@ -482,9 +498,46 @@ private fun CategoryScreen(
                     )
                 }
             }
+
             item { Box(Modifier.height(24.dp)) }
         }
     }
+}
+
+// 隐藏模块桌面图标: 通过禁用 LAUNCHER 别名(.MainActivityLauncher)实现,
+// 状态由 PackageManager 持有(不写入模块 prefs, 不受一键启用影响), 图标隐藏后只能从 LSPosed 进入。
+private fun isLauncherIconHidden(ctx: Context): Boolean {
+    return when (ctx.packageManager.getComponentEnabledSetting(
+        ComponentName(ctx, "${ctx.packageName}.MainActivityLauncher")
+    )) {
+        PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+        PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER -> true
+        else -> false
+    }
+}
+
+private fun setLauncherIconHidden(ctx: Context, hidden: Boolean) {
+    ctx.packageManager.setComponentEnabledSetting(
+        ComponentName(ctx, "${ctx.packageName}.MainActivityLauncher"),
+        if (hidden) PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        else PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+        PackageManager.DONT_KILL_APP,
+    )
+}
+
+/** 首页首个 group 顶部的"隐藏模块桌面图标"开关行。 */
+@Composable
+private fun HideLauncherIconRow(ctx: Context) {
+    var hidden by remember { mutableStateOf(isLauncherIconHidden(ctx)) }
+    CouixSwitchPreference(
+        checked = hidden,
+        onCheckedChange = {
+            hidden = it
+            setLauncherIconHidden(ctx, it)
+        },
+        title = "隐藏模块桌面图标",
+        subtitle = "需在 LSPosed 中关闭强制显示模块图标",
+    )
 }
 
 /** 标题栏右侧的重启菜单（首页与子页面共用）。 */
@@ -505,6 +558,53 @@ private fun RestartMenu(ctx: Context) {
 }
 
 
+/**
+ * 读取桌面上全部文件夹名, 供"新应用添加到"下拉使用。
+ *
+ * 桌面数据库为 /data/user_de/0/com.android.launcher/databases/launcher.db(4x4 布局为
+ * launcher_4x4.db), 条目表按桌面模式分为 singledesktopitems / _draw / _simple; 文件夹的
+ * itemType = 3(LauncherSettings.Favorites.ITEM_TYPE_FOLDER), 堆栈为 105。三张表都查一遍
+ * 并按 _id 排序、去重, 即可覆盖各种桌面模式; 备份表(xxx_bakup)不参与。
+ *
+ * 只读: 连同 -wal/-shm 一起拷到本应用 cache 后以 OPEN_READONLY 打开, 让 SQLite 自己合并
+ * WAL, 不改动桌面数据。无 root 时返回空列表(下拉只剩"桌面")。
+ */
+private fun desktopFolderNames(ctx: Context): List<String> {
+    val db = File(ctx.cacheDir, "launcher_folders.db")
+    val src = "/data/user_de/0/com.android.launcher/databases/launcher.db"
+    val src4x4 = "/data/user_de/0/com.android.launcher/databases/launcher_4x4.db"
+    val cmd = "rm -f \"${db.path}\" \"${db.path}-wal\" \"${db.path}-shm\" 2>/dev/null; " +
+            "cp -f $src \"${db.path}\" 2>/dev/null || cp -f $src4x4 \"${db.path}\" 2>/dev/null; " +
+            "cp -f $src-wal \"${db.path}-wal\" 2>/dev/null; " +
+            "cp -f $src-shm \"${db.path}-shm\" 2>/dev/null; " +
+            "chmod 666 \"${db.path}\" \"${db.path}-wal\" \"${db.path}-shm\" 2>/dev/null"
+    if (runRoot(cmd) == null) return emptyList()
+    return runCatching {
+        SQLiteDatabase.openDatabase(db.path, null, SQLiteDatabase.OPEN_READONLY).use { d ->
+            val names = LinkedHashSet<String>()
+            for (table in arrayOf(
+                "singledesktopitems",
+                "singledesktopitems_draw",
+                "singledesktopitems_simple",
+            )) {
+                val rows = runCatching {
+                    d.rawQuery(
+                        "SELECT title FROM \"$table\" WHERE itemType=3 OR itemType=105 ORDER BY _id",
+                        null,
+                    )
+                }.getOrNull() ?: continue
+                rows.use { c ->
+                    while (c.moveToNext()) {
+                        val title = c.getString(0)
+                        if (!title.isNullOrEmpty()) names.add(title)
+                    }
+                }
+            }
+            names.toList()
+        }
+    }.getOrDefault(emptyList())
+}
+
 internal fun setBool(ctx: Context, key: String, value: Boolean) {
     ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
         .edit().putBoolean(key, value).commit()
@@ -516,6 +616,8 @@ internal fun setInt(ctx: Context, key: String, value: Int) {
         .edit().putInt(key, value).commit()
     makePrefsWorldReadable(ctx)
 }
+
+
 
 private fun makePrefsWorldReadable(ctx: Context) {
     runCatching {

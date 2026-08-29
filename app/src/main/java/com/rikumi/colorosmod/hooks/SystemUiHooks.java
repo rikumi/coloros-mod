@@ -63,5 +63,7 @@ public final class SystemUiHooks {
         KeyguardHooks.hookBouncerSwipeBack(lpparam);
         // 密码支持滑动输入: 运行时按 KEY_KEYGUARD_SLIDE_INPUT_ENABLED 门控。
         PasswordInputHooks.hookKeyguardSlideInput(lpparam);
+        // 支持魅族状态栏歌词: 运行时按 KEY_STATUSBAR_LYRIC_ENABLED 门控。
+        StatusBarLyricHooks.hookStatusBarLyric(lpparam);
     }
 }

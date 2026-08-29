@@ -66,7 +66,9 @@ import androidx.compose.ui.window.PopupProperties
 
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.Dialog
+import android.view.HapticFeedbackConstants
 import top.yukonga.miuix.kmp.theme.miuixShape
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -162,9 +164,12 @@ fun couixTextStyles(): TextStyles {
     val base = defaultTextStyles()
     return base.copy(
         body1 = base.body1.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold),
-        body2 = base.body2.copy(fontSize = 14.sp),
+        body2 = base.body2.copy(fontSize = 14.sp, lineHeight = COUIX_SUBTITLE_LINE_HEIGHT),
     )
 }
+
+// 副标题(body2)行高: 略高于默认行距, 长副标题折行后行与行之间不至于挤在一起。
+private val COUIX_SUBTITLE_LINE_HEIGHT = 20.sp
 
 // 分组副标题（顶部小标题）：比 miuix SmallTitle 更小、常规字重。
 // miuix SmallTitle 用 subtitle(14sp/Bold) 且不支持外部覆盖字号字重，故用 BasicText 直接绘制。
@@ -402,6 +407,15 @@ internal fun CouixCategoryRow(
 }
 
 /**
+ * 开关切换时的短振动反馈: 与系统虚拟按键同款 tick, 跟随系统"触摸反馈"开关, 不额外申请权限。
+ */
+@Composable
+private fun couixSwitchTick(): () -> Unit {
+    val view = LocalView.current
+    return { view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) }
+}
+
+/**
  * 自绘开关：miuix Switch 内部硬编码 49x28 布局（绘制坐标绑定该尺寸），
  * 无法从外部整体缩放且不溢出。这里改用 Canvas 直接按目标尺寸绘制轨道+滑块，
  * 尺寸精确、不溢出，并带滑块位移动画。
@@ -455,6 +469,7 @@ fun CouixSwitchPreference(
     showDivider: Boolean = false,
 ) {
     val density = LocalDensity.current
+    val tick = couixSwitchTick()
     // 按整行实际高度动态计算分割线高度，使分割线随列表项(含副标题/数值)高度自适应。
     var rowHeightPx by remember { mutableStateOf(0) }
     val dividerHeight: Dp = with(density) {
@@ -464,7 +479,10 @@ fun CouixSwitchPreference(
         modifier = modifier
             .fillMaxWidth()
             .onGloballyPositioned { rowHeightPx = it.size.height }
-            .clickable { onCheckedChange(!checked) },
+            .clickable {
+                tick()
+                onCheckedChange(!checked)
+            },
     ) {
         Row(
             modifier = Modifier
@@ -793,12 +811,18 @@ fun CouixMasterToggle(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    // 主开关下方追加的内容(如首页的隐藏桌面图标开关), 与主开关同卡片、以分割线隔开。
+    belowContent: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
+    val tick = couixSwitchTick()
     CouixCard(modifier = modifier) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { onCheckedChange(!checked) }
+                .clickable {
+                    tick()
+                    onCheckedChange(!checked)
+                }
                 .padding(horizontal = COUIX_ROW_HPADDING, vertical = COUIX_ROW_VPADDING),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -823,6 +847,10 @@ fun CouixMasterToggle(
                 checked = checked,
                 modifier = Modifier.padding(start = 16.dp),
             )
+        }
+        if (belowContent != null) {
+            CouixItemDivider()
+            belowContent()
         }
     }
 }
