@@ -58,6 +58,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -327,17 +328,24 @@ fun CouixLargeTitle(
 
 // 依据列表滚动状态计算标题栏分割线进度:
 // 首项仍在屏幕内时按真实滚动偏移延长, 首项离开后保持通栏。
+// overscrollOffset 不为空时, 一并参考回弹位移(上滑为负), 让不可滚动页面在上滑回弹时也显示分割线。
 @Composable
-internal fun couixTopBarDividerProgress(listState: LazyListState): Float {
+internal fun couixTopBarDividerProgress(
+    listState: LazyListState,
+    overscrollOffset: MutableState<Float>? = null,
+): Float {
     val density = LocalDensity.current
+    val extendPx = with(density) { TOP_BAR_DIVIDER_EXTEND_SCROLL.toPx() }
     return remember(listState, density) {
         derivedStateOf {
             if (listState.firstVisibleItemIndex > 0) {
                 1f
             } else {
                 val scrollPx = listState.firstVisibleItemScrollOffset.toFloat()
-                (scrollPx / with(density) { TOP_BAR_DIVIDER_EXTEND_SCROLL.toPx() })
-                    .coerceIn(0f, 1f)
+                // 上滑回弹时 offsetPx < 0, 取绝对值作为额外的"已上移距离"。
+                val ov = overscrollOffset?.value ?: 0f
+                val total = if (ov < 0f) scrollPx - ov else scrollPx
+                (total / extendPx).coerceIn(0f, 1f)
             }
         }
     }.value
@@ -382,12 +390,20 @@ private const val COUIX_OVERSCROLL_DRAG = 1f
  * 列表吃不掉的手势增量: 内容不可滚动时按带阻尼的比例转成整列位移, 松手后弹回原位; 内容
  * 可滚动的界面仍走系统 overscroll, 不重复叠加。
  */
+/**
+ * @param overscrollOffset 可选: 跨组件共享的当前回弹位移(px, 上滑为负)。传入后,
+ *   顶部标题栏分割线进度可一并参考该位移, 让不可滚动页面在上滑回弹时也显示分割线。
+ */
 @Composable
-fun Modifier.couixOverscroll(listState: LazyListState): Modifier {
+fun Modifier.couixOverscroll(
+    listState: LazyListState,
+    overscrollOffset: MutableState<Float>? = null,
+): Modifier {
     val density = LocalDensity.current
     val maxPx = with(density) { COUIX_OVERSCROLL_MAX.toPx() }
     val scope = rememberCoroutineScope()
-    var offsetPx by remember { mutableFloatStateOf(0f) }
+    val offsetState = overscrollOffset ?: remember { mutableFloatStateOf(0f) }
+    var offsetPx by offsetState
     var releaseJob by remember { mutableStateOf<Job?>(null) }
 
     val connection = remember(maxPx, scope) {
@@ -778,7 +794,7 @@ private fun CouixActionCell(
         contentAlignment = Alignment.CenterStart,
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().height(22.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             BasicText(

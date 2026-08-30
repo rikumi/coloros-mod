@@ -31,6 +31,8 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
@@ -830,7 +832,21 @@ public final class StatusBarLyricHooks {
         return pos;
     }
 
-    /** 取最后一个 timeMs <= position 的行。 */
+    /** 占位歌词: 这类文本不是真正的歌词, 命中时不应显示歌词、应恢复时钟。 */
+    private static final Pattern PLACEHOLDER_LYRIC_PATTERN =
+            Pattern.compile("(该歌曲)?暂?(无|没有)歌词");
+
+    /** 文本是否为"纯音乐/无歌词"类占位串(命中则不显示歌词)。 */
+    private static boolean isPlaceholderLyric(CharSequence text) {
+        if (text == null) return false;
+        String s = text.toString().trim();
+        if (s.isEmpty()) return false;
+        if (s.contains("纯音乐，请欣赏") || s.contains("纯音乐,请欣赏")) return true;
+        Matcher m = PLACEHOLDER_LYRIC_PATTERN.matcher(s);
+        return m.find();
+    }
+
+    /** 取最后一个 timeMs <= position 的行; 命中占位歌词时返回 null(交给上层隐藏并恢复时钟)。 */
     private static CharSequence findLineAt(long positionMs) {
         List<Line> lines = sLines;
         if (lines == null || lines.isEmpty()) return null;
@@ -839,6 +855,7 @@ public final class StatusBarLyricHooks {
             if (l.timeMs <= positionMs) result = l.text;
             else break;
         }
+        if (result != null && isPlaceholderLyric(result)) return null;
         return result;
     }
 

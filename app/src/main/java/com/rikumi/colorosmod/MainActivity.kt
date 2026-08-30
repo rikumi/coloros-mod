@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -109,9 +110,15 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// 设置页条目: 分组小标题或设置项。
+internal sealed interface SettingsItem
+
+// 分组小标题: 表示其后(到下一个 GroupTitleItem 或列表末尾)的 SwitchItem 开启一个新分组,
+// 可放在其它 item 之间或首个 item 前面。title 为空字符串表示仅分隔不显示标题。
+internal data class GroupTitleItem(val title: String) : SettingsItem
+
 // 单个设置项: key 用于持久化与 Xposed 读取, label 取自原 strings.xml 中的名称。sliderKey 非空时
 // 开关打开后下方显示滑条(范围 0..sliderMax 整数步进, 默认 sliderDefault, sliderUnit 为值后缀)。
-// dividerBefore 为 true 时该项与前面项之间插入分隔: 列表以 divider 为界拆成多个 group(各占一张卡片)。
 internal data class SwitchItem(
     val key: String,
     val label: String,
@@ -121,8 +128,7 @@ internal data class SwitchItem(
     val sliderDefault: Int = 0,
     val sliderUnit: String = "dp",
     val sliderMin: Int = 0,
-    val dividerBefore: Boolean = false,
-)
+) : SettingsItem
 
 // 下拉选项设置项。options 为静态选项; dynamicOptions 非空时进入页面后于 IO 线程重拉(如"新应用添加到"
 // 需读桌面文件夹名), 失败则沿用 options。valueKey 非空时选中项除存下标外还把选项文本写到 valueKey ——
@@ -136,69 +142,84 @@ internal data class SelectItem(
     val dynamicOptions: ((Context) -> List<String>)? = null,
 )
 
-private val DESKTOP = listOf(
+private val DESKTOP: List<SettingsItem> = listOf(
+    GroupTitleItem("桌面布局"),
     SwitchItem("icon_gap_enabled", "增加图标与名称间距", sliderKey = "icon_gap_dp", sliderMax = 8, sliderDefault = 4),
     SwitchItem("indicator_enabled", "减小页面与 Dock 间距", sliderKey = "indicator_dp", sliderMax = 32, sliderDefault = 16, sliderUnit = "dp"),
     SwitchItem("edit_mode_bg_transparent_enabled", "取消编辑模式背景遮罩"),
-    SwitchItem("shrink_popup_menu", "缩小图标长按菜单", sliderKey = "popup_scale_percent", sliderMax = 20, sliderDefault = 10, sliderUnit = "%", dividerBefore = true),
+    GroupTitleItem("长按菜单"),
+    SwitchItem("shrink_popup_menu", "缩小图标长按菜单", sliderKey = "popup_scale_percent", sliderMax = 20, sliderDefault = 10, sliderUnit = "%"),
     SwitchItem("popup_dynamic_blur_enabled", "长按菜单背景动态模糊"),
-    SwitchItem("desktop_popup_bg_brightness_enabled", "自定义桌面长按背景亮度", sliderKey = "desktop_popup_bg_brightness", sliderMax = 10, sliderDefault = 0, sliderUnit = ""),
-    SwitchItem("folder_bg_transparent_enabled", "文件夹展开背景透明", dividerBefore = true),
+    SwitchItem("desktop_popup_bg_brightness_enabled", "自定义长按菜单背景亮度", sliderKey = "desktop_popup_bg_brightness", sliderMax = 10, sliderDefault = 0, sliderUnit = ""),
+    GroupTitleItem("文件夹"),
+    SwitchItem("folder_bg_transparent_enabled", "文件夹展开背景透明"),
     SwitchItem("folder_anim_duration_enabled", "调整文件夹动画持续时间", sliderKey = "folder_anim_duration_ms", sliderMax = 500, sliderDefault = 300, sliderUnit = "ms", sliderMin = 100),
 )
 
-private val QS = listOf(
-    SwitchItem("qs_scrim_translucent_enabled", "自定义控制/通知中心背景亮度", sliderKey = "qs_scrim_brightness", sliderMax = 20, sliderDefault = 5, sliderUnit = "%"),
-    SwitchItem("qs_carrier_enabled", "去除控制中心运营商显示"),
-    SwitchItem("qs_topmargin_enabled", "隐藏控制中心顶部状态图标簇"),
-    SwitchItem("qs_tile_name_ellipsis_enabled", "分离版 Wi-Fi / 蓝牙名称单行省略"),
-    SwitchItem("qs_normal_corner_radius_enabled", "OxygenOS 控制中心恢复正常圆角"),
-    SwitchItem("qs_panel_switch_no_cut_enabled", "分离版左右切换取消切入效果"),
+private val QS: List<SettingsItem> = listOf(
+    GroupTitleItem("通控中心通用设置"),
+    SwitchItem("qs_scrim_translucent_enabled", "自定义背景亮度", sliderKey = "qs_scrim_brightness", sliderMax = 20, sliderDefault = 5, sliderUnit = "%"),
+    SwitchItem("qs_carrier_enabled", "去除运营商显示"),
+    SwitchItem("qs_topmargin_enabled", "隐藏顶部状态图标簇"),
+    SwitchItem("qs_panel_switch_no_cut_enabled", "分离版左右平移切换"),
+    GroupTitleItem("控制中心设置"),
+    SwitchItem("qs_tile_name_ellipsis_enabled", "Wi-Fi / 蓝牙名称单行省略"),
+    SwitchItem("qs_normal_corner_radius_enabled", "OxygenOS 恢复正常圆角"),
+    SwitchItem("qs_clock_no_expand_anim_enabled", "合并版时间日期固定单行"),
 )
-private val NOTIF = listOf(
+private val NOTIF: List<SettingsItem> = listOf(
+    GroupTitleItem("通知中心设置"),
     SwitchItem("notification_swipe_to_dismiss_enabled", "通知左滑直接清除"),
     SwitchItem("notification_pull_expand_enabled", "通知下滑展开"),
     SwitchItem("notification_subtitle_enabled", "缩小通知静默区域副标题", sliderKey = "notification_subtitle_sp", sliderMax = 16, sliderDefault = 8, sliderUnit = "sp"),
     SwitchItem("notification_padding_enabled", "增加通知上下内边距", sliderKey = "notification_padding_dp", sliderMax = 8, sliderDefault = 4),
+    GroupTitleItem("状态栏设置"),
+    SwitchItem("statusbar_lyric_enabled", "状态栏显示歌词", "需播放器支持 MediaSession metadata.lyricInfo ColorOS 歌词能力，暂不支持魅族歌词能力"),
     SwitchItem("fluid_cloud_keep_percent_enabled", "流体云出现时不隐藏电量百分比"),
-    SwitchItem("statusbar_lyric_enabled", "状态栏显示歌词", "需播放器支持 MediaSession metadata.lyricInfo ColorOS 歌词能力，暂不支持魅族歌词能力", dividerBefore = true),
 )
-private val HIDDEN = listOf(
+private val HIDDEN: List<SettingsItem> = listOf(
+    GroupTitleItem("隐藏应用逻辑简化"),
     SwitchItem("recents_show_hidden_enabled", "多任务显示已隐藏应用"),
     SwitchItem("hide_apps_noverify_enabled", "打开隐藏应用文件夹免验证"),
     SwitchItem("pinch_out_open_hide_apps_enabled", "桌面双指张开打开隐藏应用"),
     SwitchItem("hide_apps_title_folder_enabled", "应用隐藏标题显示文件夹名"),
-    // 后三项为后来挪入, 与上方分组隔开。
-    SwitchItem("hide_contacts_enabled", "彻底隐藏电话本图标", dividerBefore = true),
+    GroupTitleItem("特殊应用隐藏"),
+    SwitchItem("hide_contacts_enabled", "彻底隐藏电话本图标"),
     SwitchItem("hide_gboard_enabled", "彻底隐藏 Gboard 图标"),
     SwitchItem("hide_ghostlock_enabled", "彻底隐藏 GhostLock 图标", subtitle = "显然已经有 root 的时候不需要再 root"),
 )
 
 // 小窗相关设置: 改动需重启 system_server(框架) 才生效(本模块该作用域为 android/system_server)。
-private val FLOATWINDOW = listOf(
+private val FLOATWINDOW: List<SettingsItem> = listOf(
+    GroupTitleItem("小窗行为"),
     SwitchItem("recents_hide_freeform_enabled", "多任务隐藏小窗应用"),
     SwitchItem("float_window_edge_hang_enabled", "悬浮小窗贴边挂机"),
     SwitchItem("float_window_edge_hang_mute_enabled", "小窗贴边挂机静音"),
+    GroupTitleItem("小窗视觉"),
     SwitchItem("float_window_edge_hang_white_bar_enabled", "小窗贴边显示为白色竖条"),
     SwitchItem("float_window_landscape_keep_ratio_enabled", "横屏应用小窗保持比例", "横屏应用小窗的宽高比等于屏幕高宽比"),
     SwitchItem("float_window_edge_size_optimize_enabled", "优化小窗贴边位置及最大尺寸"),
 )
 
-private val NAV = listOf(
-    SwitchItem("gesture_bar_width_enabled", "调整手势滑动条宽度", sliderKey = "gesture_bar_width_dp", sliderMax = 120, sliderDefault = 100, sliderUnit = "dp", sliderMin = 80),
+private val NAV: List<SettingsItem> = listOf(
+    GroupTitleItem("手势行为"),
     SwitchItem("gesture_bar_height_enabled", "增大底部手势区高度", "缓解屏幕底部圆角区域吃掉应用内容", "gesture_bar_height_dp", 24, 12),
-    SwitchItem("gesture_bar_long_press_disable_enabled", "禁止手势条动画效果", "理论可解决 OxygenOS 关不掉助手动画的问题"),
     SwitchItem("mback_enabled", "启用 mBack", "点击手势条返回，长按回桌面"),
     SwitchItem("gesture_touch_through_enabled", "避免手势区域点击穿透"),
+    GroupTitleItem("手势视觉"),
+    SwitchItem("gesture_bar_width_enabled", "调整手势滑动条宽度", sliderKey = "gesture_bar_width_dp", sliderMax = 120, sliderDefault = 100, sliderUnit = "dp", sliderMin = 80),
+    SwitchItem("gesture_bar_long_press_disable_enabled", "禁止手势条动画效果", "理论可解决 OxygenOS 关不掉助手动画的问题"),
 )
 
-private val LOCKSCREEN = listOf(
+private val LOCKSCREEN: List<SettingsItem> = listOf(
+    GroupTitleItem("锁屏行为"),
     SwitchItem("unlocked_shutdown_noverify_enabled", "解锁时关机无需校验密码", "仅开启关机校验密码功能时生效"),
-    SwitchItem("keyguard_no_light_effect_enabled", "取消密码界面控件光效", "模拟恢复 ColorOS 15 效果"),
+    SwitchItem("keyguard_slide_input_enabled", "密码支持滑动输入"),
     SwitchItem("keyguard_bouncer_swipe_back_enabled", "密码界面支持侧滑/下滑返回", "解决误触上滑还要再上滑的奇怪交互"),
+    GroupTitleItem("锁屏视觉"),
+    SwitchItem("keyguard_no_light_effect_enabled", "取消密码界面控件光效", "模拟恢复 ColorOS 15 效果"),
     SwitchItem("keyguard_bouncer_brightness_enabled", "自定义密码界面背景亮度", sliderKey = "keyguard_bouncer_brightness", sliderMax = 5, sliderDefault = 0, sliderUnit = "%"),
     SwitchItem("keyguard_notification_offset_enabled", "锁屏通知区域下移", sliderKey = "keyguard_notification_offset_dp", sliderMax = 40, sliderDefault = 20),
-    SwitchItem("keyguard_slide_input_enabled", "密码支持滑动输入"),
 )
 
 // 首页的一个分类入口: id 用于页面栈定位, title 为首页/子页面标题, icon 取 miuix 扩展图标。
@@ -207,7 +228,7 @@ private data class Category(
     val id: String,
     val title: String,
     val icon: ImageVector,
-    val items: List<SwitchItem>,
+    val items: List<SettingsItem>,
     val subtitle: String? = null,
     val hint: String? = null,
 )
@@ -217,7 +238,7 @@ private val CATEGORY_GROUPS: List<List<Category>> = listOf(
     listOf(
         Category("desktop", "桌面", MiuixIcons.GridView, DESKTOP),
         Category("quick_settings", "控制中心", MiuixIcons.Tune, QS),
-        Category("notification", "状态栏与通知中心", MiuixIcons.Community, NOTIF),
+        Category("notification", "通知中心与状态栏", MiuixIcons.Community, NOTIF),
         Category("lockscreen", "锁屏", MiuixIcons.Lock, LOCKSCREEN),
     ),
     listOf(
@@ -236,18 +257,30 @@ private data class MasterOverride(val scope: String?, val value: Boolean)
 private fun MasterOverride?.valueFor(scope: String?): Boolean? =
     this?.takeIf { it.scope == null || it.scope == scope }?.value
 
-// 按 dividerBefore 把设置项切成连续的若干段, 每段渲染为一张独立卡片。
-// 首项若标记了 divider 也不会产生空段。
-private fun List<SwitchItem>.splitByDivider(): List<List<SwitchItem>> {
+// 设置分组: desc 为分组小标题(空字符串仅分隔不显示标题), items 为该组全部设置项。
+private data class SwitchGroup(val desc: String?, val items: List<SwitchItem>)
+
+// 过滤出实际设置项(GroupTitleItem 只是分组标题, 无 key 不参与开关)。
+private val List<SettingsItem>.switches: List<SwitchItem> get() = filterIsInstance<SwitchItem>()
+
+// 按 GroupTitleItem 把条目切成连续的若干段, 每段渲染为一张独立卡片。
+// GroupTitleItem 可放在其它 item 之间或首个 item 前面; 连续多个时以后一个为准, 不会产生空段。
+private fun List<SettingsItem>.splitByDivider(): List<SwitchGroup> {
     if (isEmpty()) return emptyList()
-    val result = mutableListOf<MutableList<SwitchItem>>()
+    val result = mutableListOf<SwitchGroup>()
+    var desc: String? = null
+    var current = mutableListOf<SwitchItem>()
     forEach { item ->
-        if (item.dividerBefore && result.isNotEmpty()) {
-            result.add(mutableListOf(item))
-        } else {
-            result.getOrNull(result.lastIndex)?.add(item) ?: result.add(mutableListOf(item))
+        when (item) {
+            is GroupTitleItem -> {
+                if (current.isNotEmpty()) result.add(SwitchGroup(desc, current))
+                desc = item.title
+                current = mutableListOf()
+            }
+            is SwitchItem -> current.add(item)
         }
     }
+    if (current.isNotEmpty()) result.add(SwitchGroup(desc, current))
     return result
 }
 
@@ -289,8 +322,8 @@ fun SettingsScreen() {
 
     // 主开关: scope = null 作用于全部功能(首页), 否则只作用于该分类的设置项。
     val onMasterChange: (String?, Boolean) -> Unit = { targetScope, target ->
-        val items = targetScope?.let { id -> CATEGORIES.first { it.id == id }.items }
-            ?: CATEGORIES.flatMap { it.items }
+        val items = targetScope?.let { id -> CATEGORIES.first { it.id == id }.items.switches }
+            ?: CATEGORIES.flatMap { it.items.switches }
         masterOverride = MasterOverride(targetScope, target)
         version++
         scope.launch {
@@ -329,7 +362,7 @@ fun SettingsScreen() {
         val category = CATEGORIES.firstOrNull { it.id == targetId }
         if (category == null) {
             val anyEnabled = remember(version) {
-                CATEGORIES.any { c -> c.items.any { prefs.getBoolean(it.key, false) } }
+                CATEGORIES.any { c -> c.items.switches.any { prefs.getBoolean(it.key, false) } }
             }
             HomeScreen(
                 masterChecked = masterOverride.valueFor(null) ?: anyEnabled,
@@ -338,7 +371,7 @@ fun SettingsScreen() {
             )
         } else {
             val override = masterOverride.valueFor(category.id)
-            val anyEnabled = remember(version) { category.items.any { prefs.getBoolean(it.key, false) } }
+            val anyEnabled = remember(version) { category.items.switches.any { prefs.getBoolean(it.key, false) } }
             CategoryScreen(
                 category = category,
                 prefs = prefs,
@@ -363,6 +396,8 @@ private fun HomeScreen(
 ) {
     val ctx = LocalContext.current
     val listState = rememberLazyListState()
+    // 回弹位移: 共享给标题栏分割线, 让不可滚动页面上滑回弹时分割线也出现。
+    val overscrollOffset = remember { mutableFloatStateOf(0f) }
     // 系统名要读 getprop(root shell), 不能阻塞首帧: 先空着, IO 线程取到后再补上。
     var system by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
@@ -372,7 +407,7 @@ private fun HomeScreen(
         topBar = {
             CouixLargeTitle(
                 title = "ColorOS Mod",
-                dividerProgress = couixTopBarDividerProgress(listState),
+                dividerProgress = couixTopBarDividerProgress(listState, overscrollOffset),
                 actions = { RestartMenu(ctx) },
             )
         },
@@ -382,7 +417,7 @@ private fun HomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .couixOverscroll(listState),
+                .couixOverscroll(listState, overscrollOffset),
         ) {
             item {
                 CouixMasterToggle(
@@ -423,7 +458,7 @@ private fun HomeScreen(
                     }
                 }
             }
-            item { Box(Modifier.height(24.dp)) }
+            item { Box(Modifier.height(20.dp)) }
         }
     }
 }
@@ -456,13 +491,15 @@ private fun CategoryScreen(
     onBack: () -> Unit,
 ) {
     val listState = rememberLazyListState()
-    // 按 dividerBefore 切分: 每段一张卡片, 段与段之间自然留出 group 间距。
+    // 按 GroupTitleItem 切分: 每段一张卡片, 段与段之间自然留出 group 间距。
     val groups = remember(category) { category.items.splitByDivider() }
+    // 回弹位移: 共享给标题栏分割线, 让不可滚动页面上滑回弹时分割线也出现。
+    val overscrollOffset = remember { mutableFloatStateOf(0f) }
     Scaffold(
         topBar = {
             CouixTopAppBar(
                 title = category.title,
-                dividerProgress = couixTopBarDividerProgress(listState),
+                dividerProgress = couixTopBarDividerProgress(listState, overscrollOffset),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -482,7 +519,7 @@ private fun CategoryScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .couixOverscroll(listState),
+                .couixOverscroll(listState, overscrollOffset),
         ) {
             // 第一个 group 的 header: 说明滑块两端值的含义。
             item { CouixSmallTitle(text = SLIDER_GROUP_HINT) }
@@ -498,9 +535,14 @@ private fun CategoryScreen(
                 item { CouixSmallTitle(text = hint) }
             }
             groups.forEach { group ->
+                // 分组小标题: GroupTitleItem 的 title 非空(且非空字符串)时在卡片上方显示。
+                val desc = group.desc
+                if (!desc.isNullOrEmpty()) {
+                    item { CouixSmallTitle(text = desc) }
+                }
                 item {
                     CouixGroup(
-                        items = group,
+                        items = group.items,
                         prefs = prefs,
                         ctx = ctx,
                         version = version,

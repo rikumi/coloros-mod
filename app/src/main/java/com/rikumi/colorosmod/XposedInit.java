@@ -117,6 +117,9 @@ public class XposedInit extends XposedModule {
     public static final String KEY_QS_NORMAL_CORNER_RADIUS_ENABLED = "qs_normal_corner_radius_enabled";
     // 分离版控制中心左右切换取消切入效果: 通知中心/控制中心之间左右滑动时直接平移而非切变。
     public static final String KEY_QS_PANEL_SWITCH_NO_CUT_ENABLED = "qs_panel_switch_no_cut_enabled";
+    // 合并控制中心时间日期取消展开动画: 一次下拉(fraction=0)时页脚时间与日期处于"小字号 + 未位移"
+    // 的初始态, 继续展开时系统把它们放大到约 2 倍并平移到新位置(见 QsHooks#hookQsClockNoExpandAnim)。
+    public static final String KEY_QS_CLOCK_NO_EXPAND_ANIM_ENABLED = "qs_clock_no_expand_anim_enabled";
     // false = 强制普通圆角(默认, 即本功能的正常行为); 改为 true 可强制 OxygenOS 大圆角, 用于确认注入是否生效。
     public static final boolean QS_CORNER_RADIUS_FORCE_ONEPLUS = false;
     public static final String QS_CORNER_RADIUS_DIMEN = QS_CORNER_RADIUS_FORCE_ONEPLUS

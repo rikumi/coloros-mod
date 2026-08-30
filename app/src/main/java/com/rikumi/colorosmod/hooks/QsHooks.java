@@ -309,6 +309,77 @@ public final class QsHooks {
         }
     }
 
+    // 合并控制中心时间日期取消展开动画(com.android.systemui)。
+    // 页脚 OplusQSFooterImpl 承载时间(mClockView, R.id.qs_footer_clock)与日期(mQsDateView,
+    // R.id.oplus_date)。createAndUpdateExpandAnimators 里建好的动画按 QS 展开进度 fraction 驱动:
+    //   mPortAndFoldAnimator       -> 时间 scaleX/scaleY: getFontScale() ~ min(2+fontScale-1, 2.2),
+    //                                 translationX: 0 ~ qs_footer_clock_expand_translation_x,
+    //                                 translationY: 0 ~ (设置按钮半高 - mClockBaseline)(同一 builder 还带
+    //                                 设置按钮/多用户/搜索按钮的位移, 不在本功能范围内);
+    //   mDateX/YExpandTranslationAnimator -> 日期平移到放大后的时间下方。
+    // fraction=0 即"一次下拉"的初始态(小字号、未位移), fraction=1 为完全展开态(放大并移动)。
+    // 开启动能后, 每次 updateExpand(float) 之后把时间/日期按 fraction=0 的取值复位即可:
+    // 时间 scaleX/scaleY = getFontScale()(动画起点, 随系统字体缩放变化故现取), 位移归零; 日期位移归零。
+    public static void hookQsClockNoExpandAnim(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.oplus.systemui.qs.OplusQSFooterImpl",
+                    lpparam.classLoader, "updateExpand", float.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_QS_CLOCK_NO_EXPAND_ANIM_ENABLED, false)) return;
+                                resetFooterClockAndDate(param.thisObject);
+                            } catch (Throwable t) {
+                                log("qs_clock_no_expand_anim apply fail: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK com.oplus.systemui.qs.OplusQSFooterImpl#updateExpand");
+        } catch (Throwable t) {
+            log("HOOK FAIL OplusQSFooterImpl#updateExpand :: " + Log.getStackTraceString(t));
+        }
+    }
+
+    // getFontScale() 是 OplusQSFooterImpl 的 private ()F, 反射结果缓存在静态字段,
+    // 避免展开过程中逐帧做方法查找。取不到时返回 null(跳过缩放复位, 只复位位移)。
+    private static volatile java.lang.reflect.Method sFooterFontScaleMethod;
+
+    static Float footerFontScale(Object footer) {
+        try {
+            java.lang.reflect.Method m = sFooterFontScaleMethod;
+            if (m == null) {
+                m = footer.getClass().getDeclaredMethod("getFontScale");
+                m.setAccessible(true);
+                sFooterFontScaleMethod = m;
+            }
+            return (Float) m.invoke(footer);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    static void resetFooterClockAndDate(Object footer) {
+        Object clock = XposedHelpers.getObjectField(footer, "mClockView");
+        Object date = XposedHelpers.getObjectField(footer, "mQsDateView");
+        Float scale = footerFontScale(footer);
+        if (clock instanceof View) {
+            View v = (View) clock;
+            if (scale != null) {
+                v.setScaleX(scale.floatValue());
+                v.setScaleY(scale.floatValue());
+            }
+            v.setTranslationX(0f);
+            v.setTranslationY(0f);
+        }
+        if (date instanceof View) {
+            View v = (View) date;
+            v.setTranslationX(0f);
+            v.setTranslationY(0f);
+        }
+    }
+
     // 合并控制中心背景压暗, 承载背景的是"背后 scrim"。为什么"纯黑背景反而变灰": behind scrim 默认
     // top=LUMINOSITY+#99333333 把亮度归一化到 ~0.2, 且该混色在 AGSL shader 里合成、位于窗口内容之下。
     // 故 hook getPanelPlatformMixConfig 改 top 为 LUMINOSITY+近黑、bottom OVERLAY 置 0。
@@ -353,9 +424,13 @@ public final class QsHooks {
         }
     }
 
-    // 控制中心 WLAN/蓝牙 名称单行省略。WLAN 的 SSID 写在主标题 labelTitle(R.id.tile_label),
-    // 由 handleTileStateChange 经 TextSwitcherExtKt.setContent 写入; 蓝牙设备名写在副标题
-    // labelDesc(R.id.tile_label_desc), 由 updateLabelDescText 写入。在这两个方法之后对 TextView 强制单行+省略号。
+    // 控制中心 WLAN/蓝牙 名称单行省略, 分离版与合并版都生效。
+    // 分离版(2x1 可伸缩磁贴 OplusQSResizeableTileViewTwoXOne): WLAN 的 SSID 写在主标题
+    // labelTitle(R.id.tile_label), 由 handleTileStateChange 经 TextSwitcherExtKt.setContent 写入;
+    // 蓝牙设备名写在副标题 labelDesc(R.id.tile_label_desc), 由 updateLabelDescText 写入。
+    // 合并版(高亮磁贴 OplusQSHighlightTileView, 子类 OplusQSHighlightTileViewImpl): WLAN 的 SSID
+    // 与蓝牙设备名都经 handleStateChanged 落到 mLabel(TextSwitcher, R.id.tile_label)。
+    // 在这些方法之后对相应 TextView 强制单行+省略号。
     public static void hookQsTileNameEllipsis(final XC_LoadPackage.LoadPackageParam lpparam) {
         // WLAN/BT 等可伸缩磁贴(2x1)字段名一致; 本类没有 updateLabelText(标题在 handleTileStateChange 里直接写)。
         final String cls = "com.oplus.systemui.plugins.qs.customize.view.tile.OplusQSResizeableTileViewTwoXOne";
@@ -383,6 +458,31 @@ public final class QsHooks {
             } catch (Throwable t) {
                 log("HOOK FAIL " + cls + "#" + m + " :: " + Log.getStackTraceString(t));
             }
+        }
+
+        // 合并版控制中心: 高亮磁贴(含 Wi-Fi/蓝牙)的标签统一由基类 handleStateChanged 写入 mLabel,
+        // SSID 写 state.label, 蓝牙设备名(spec=bt 且 state==2)写 state.labelDesc, 都落在 mLabel 上。
+        final String stdCls = "com.oplus.systemui.qs.base.tile.OplusQSHighlightTileView";
+        try {
+            XposedHelpers.findAndHookMethod(stdCls, lpparam.classLoader, "handleStateChanged",
+                    "com.android.systemui.plugins.qs.QSTile$State",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_QS_TILE_NAME_ELLIPSIS_ENABLED, false)) return;
+                                Object state = param.args[0];
+                                String spec = (String) XposedHelpers.getObjectField(state, "spec");
+                                if (!"wifi".equals(spec) && !"bt".equals(spec)) return;
+                                Object label = XposedHelpers.getObjectField(param.thisObject, "mLabel");
+                                forceSingleLineEllipsis(label);
+                            } catch (Throwable ignored) {
+                                // 按规则: 不靠日志排错, 忽略
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            log("HOOK FAIL " + stdCls + "#handleStateChanged :: " + Log.getStackTraceString(t));
         }
     }
 

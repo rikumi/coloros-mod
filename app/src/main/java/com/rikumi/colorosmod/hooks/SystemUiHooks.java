@@ -47,6 +47,8 @@ public final class SystemUiHooks {
         QsHooks.hookQsNormalCornerRadius(lpparam);
         // Feature 19 — 分离版控制中心左右切换取消切入效果: 始终注入, 运行时按 KEY_QS_PANEL_SWITCH_NO_CUT_ENABLED 门控。
         QsHooks.hookQsPanelSwitchNoCut(lpparam);
+        // 合并控制中心时间日期取消展开动画: 始终注入, 运行时按 KEY_QS_CLOCK_NO_EXPAND_ANIM_ENABLED 门控。
+        QsHooks.hookQsClockNoExpandAnim(lpparam);
         // Feature 17 — 流体云出现时不隐藏电量百分比: 始终注入, 运行时按 KEY_FLUID_CLOUD_KEEP_PERCENT_ENABLED 门控。
         StatusBarHooks.hookFluidCloudKeepPercent(lpparam);
         // Feature 18 — 悬浮小窗贴边挂机: 真正的提交逻辑在 system_server(android 作用域), 见 hookFloatWindowEdgeHangSystemServer。
