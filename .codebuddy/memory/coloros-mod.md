@@ -1724,3 +1724,239 @@ offset 项 + `ColorMatrixColorFilter` 一次 drawBitmap 完成（k=0 为负偏�
 **验证**：`./gradlew :app:assembleDebug` 通过。装完后需用户在 LSPosed/App 里重载作用域；
 最终验证必须整机重启（红线：禁止 Agent 私自重启，需用户自己操作并确认）。
 可用 `adb shell content query --uri content://com.rikumi.colorosmod.settings/__all__` 确认全量接口。
+
+## 26. 通知左滑直接清除（Feature 26，2026-08-30 实现）
+
+设置项：状态栏与通知中心 → `notification_swipe_to_dismiss_enabled`「通知左滑直接清除」，默认关。
+常量在 `XposedInit`，hook 在 `NotificationHooks#hookNotificationSwipeToDismiss`（由
+`SystemUiHooks` 无条件注入，运行时按开关门控）。
+
+**逆向结论（com.android.systemui，classes3.dex，均已 dexdump 核对签名）**：
+
+国内版左滑通知 → 露出「设置」(gear) +「删除」(lottie) 两个侧边按钮，滑到头才清除；
+海外版(exp) 一个按钮都不生成、抬手过阈值即清除。区分点在两处 `FeatureOption.isExpRegion()`：
+
+1. `com.oplus.systemui.notification.row.NotificationMenuRowExtImpl`
+   `#createMenuViewsExt(Z, NotificationMenuRowPlugin, ArrayList, Context, Z, Z)V`（PUBLIC）。
+   源码 265 行 `if (!FeatureOption.isExpRegion())` 内 `addFirst` settingsItem 与 deleteItem；
+   exp 分支在末尾（332 行）执行 `arrayList.clear()` → **一个菜单项都不留**。
+   菜单项清空后 `NotificationMenuRow#getSpaceForMenu()` 返回 0，
+   `getDismissThreshold()` 的 `0.1*width + spaceForMenu` 随之降低（exp 滑动距离更小、更易清除）。
+2. `com.oplus.systemui.notification.row.swipe.OplusSwipeHelperExImpl`
+   `#shouldNotShowMenuExt(MotionEvent, View, float, NotificationMenuRowPlugin)Z`（PUBLIC）。
+   源码 182 行 `(FeatureOption.isExpRegion() && view instanceof ExpandableNotificationRow)`。
+   返回 true 时 `NotificationSwipeHelper#handleMenuRowSwipe`（240 行）跳过「吸附露出菜单」分支，
+   改走 `dismiss(view, velocity)` / `snapClosed`。
+
+**实现要点（两处 hook 缺一不可）**：
+
+- `createMenuViewsExt` afterHook：开关开时 `((ArrayList) param.args[2]).clear()`，
+  并把 `settingsItem` / `deleteItem` 两个字段反射置 null。置 null 很关键：否则
+  `onDismissRow()`（`OplusSwipeHelperExImpl#startMenuDismissAnimation` 触发）会拿这两个
+  **未挂载**的 menuView 跑移除动画。用 afterHook 而非 beforeHook，是为了保留方法前半段
+  的既有副作用（`arrayList.remove(getLongpressMenuItem(context))`、metaBallController 创建），
+  与 exp 分支口径一致。
+- `shouldNotShowMenuExt` beforeHook：开关开且 `view` 是 `ExpandableNotificationRow` 时
+  `param.setResult(Boolean.TRUE)`。按类名逐级向上匹配超类，不用 `findClass().isInstance()`，
+  避免 classLoader 差异导致判否。OplusCustomRow 保持原生（与 exp 同口径）。
+
+**明确的反面结论**：不要 hook `FeatureOption.isExpRegion()` 本身——全 SystemUI 有 150+ 处
+调用（下拉状态栏、QS、键值配置、主题等），影响面不可控；只需上面两处即可覆盖左滑路径。
+
+**验证**：`./gradlew :app:assembleDebug` 通过；只需重载 SystemUI（`pkill -f com.android.systemui`）。
+设备验证：下拉通知中心，左滑一条通知应**看不到**任何侧边按钮，抬手即清除；
+关闭开关后恢复「左滑露出设置/删除按钮」的原生行为。
+
+## 27. 通知下滑展开（Feature 27，2026-08-30 实现）
+
+设置项：状态栏与通知中心 → `notification_pull_expand_enabled`「通知下滑展开」，默认关。
+常量在 `XposedInit`，hook 在 `NotificationHooks#hookNotificationPullExpand`（由 `SystemUiHooks`
+无条件注入，运行时按开关门控）。
+
+**逆向结论（com.android.systemui，均已 dexdump 核对签名）**：ColorOS 国内版关掉了 AOSP 的
+`ExpandHelper`（单指下拉通知展开），两处 `FeatureOption.isExpRegion()` 判断：
+
+1. `NotificationStackScrollLayout` 构造末尾（源码 3080-3085 行）
+   `if (FeatureOption.isExpRegion() || getView() == null) return; view.setExpandingEnabled(false);`
+   —— 国内版构造时即 `mExpandHelper.setEnabled(false)`；exp 分支什么都不做，保留构造里的
+   `expandHelper.mEnabled = true`。
+2. `com.oplus.systemui.statusbar.notification.stack.NotificationStackScrollLayoutExtImpl`
+   `#setExpandingEnabled(Z)V`（PUBLIC，classes4.dex）—— `if (!FeatureOption.isExpRegion() ||
+   getView() == null) return;` 直接短路；唯一调用方 `NotificationStackScrollLayoutController`
+   （237 行）传 `!onKeyguard()`，国内版永远传不进去。
+
+**实现要点（两处 hook 缺一不可）**：
+- NSSL 构造 afterHook（签名 `(Context, AttributeSet)V`，classes2.dex）：开关开时
+  `callMethod(thisObject, "setExpandingEnabled", TRUE)`，对齐 exp 的初值。
+- ExtImpl#setExpandingEnabled beforeHook：反射取 `getView()`，为 null 则原样返回，
+  否则 `callMethod(view, "setExpandingEnabled", args[0])` 并 `setResult(null)` —— 等价于接口
+  `NotificationStackScrollLayoutExt` 的 default 实现（Ext.java 152-155 行），保留「锁屏上不展开」
+  的原生语义。
+
+**验证**：`./gradlew :app:assembleDebug` 通过；只需重载 SystemUI。
+
+## 28. 「恢复 ColorOS 15 通知布局」可行性排查（2026-08-30，**结论：旧代码不存在，未实现**）
+
+**设备**：Android 16（API 36）+ ColorOS 16.1.0（PKT110_16.0.10.500(CN01)）。
+
+**排查结论：ColorOS 15（Android 15）的旧通知布局代码在设备上已不存在**。证据链（全部实测）：
+
+1. **通知正文 RemoteViews 由 framework 生成，SystemUI 换不了模板。**
+   `NotificationContentInflater$$ExternalSyntheticLambda3` 里逐条调用
+   `builder.createContentView() / createBigContentView() / createHeadsUpContentView()`
+   （framework 的 `android.app.Notification$Builder`）。SystemUI 侧只有两个旁路干预点：
+   - `OplusNotificationRowUiImpl#onExpandedViewCreated`：只能返回 null 或原样 RemoteViews；
+   - `NotifLayoutInflaterFactory`：只能按**单个 View 类名**替换控件。
+2. **framework-res.apk（设备上 pull）里模板只有一套，且已全面换成 TopLineView。**
+   - `res/layout/notification_template_material_base.xml`：`NotificationTopLineView`（line=79），
+     **没有** `NotificationHeaderView`。
+   - `notification_template_header.xml`：`NotificationHeaderView`(line=17) 内部**嵌套**
+     `NotificationTopLineView`(line=58) —— 旧 header 只剩一个壳，且只用于自定义通知。
+   - 全部 `notification_template_material_*` 模板一律只用 TopLineView。
+   - `notification_template_material_big_base.xml` / `_big_text.xml` 只是 `<include>` base。
+   - 资源 id：`notification_template_header=0x010900df`、`_material_base=0x010900e0`
+     （`aapt2 dump resources framework-res.apk` 实测）。
+3. **SystemUI 里没有第二套模板。** res/layout 下无 oplus 的通知正文模板；`NotifLayoutInflaterFactory`
+   只有一条实现 `OplusNotificationDateTimeViewFactory`（仅把 `DateTimeView` 换成 Oplus 版）。
+4. **误判排除（这两条看起来像、实际不是）：**
+   - `isOldWrapper` / `EXTRA_VERSION_CODES_RESULT_NULL`（`OplusNotificationRowUiImpl` L34 →
+     `OplusNotificationEntryExImpl.isOldWrapper` L59）：只针对**老 targetSdk app** 的小范围兼容，
+     作用是 `OplusNotificationHeaderViewWrapperExImp#setUpdateExpandability` 里控制 `mLabelIcon`
+     可见性 + `NotificationContentViewExtImp#isExpandable` 里一条日志，**不切换布局**。
+   - `com.oplus.systemui.notification.row.oplusgroup.*`（`OplusNotificationGroupTemplateWrapper`
+     等，含 `GroupIconManager`）：只是**分组折叠通知**的 Oplus 自定义样式，不是通用通知布局。
+   - `FeatureOption.isExpRegion` / `FlavorOne/TwoFeatureOption.isFlavorXxxDeviceExp()`：
+     与通知布局无关（Flavor 类里也只有这两个 exp 方法）。
+5. **Android 版本差异才是根因**：C15 = Android 15 模板（NotificationHeaderView，app 小图标 +
+   app 名在顶部、标题内容在下，宽松）；C16 = Android 16 模板（统一 NotificationTopLineView）。
+   旧模板随 Android 大版本被整体替换，ColorOS 16 未备份旧副本。
+
+**若要自行实现，唯一可行路径**：在 SystemUI 作用域往 `NotifLayoutInflaterFactory` 的
+factory 集合里注入一个自定义 `NotifRemoteViewsFactory`，把 `android.view.NotificationTopLineView`
+换成模块自带的自定义 View（继承 ViewGroup，复刻 C15 的 header）。因 RemoteViews 的更新是按
+**子 View id** 下发的，只要自定义 View 保留相同的子 View id（`app_name_text`、`icon`、`time` 等），
+framework 后续的 `setText`/`setImageViewBitmap` 仍会命中。代价：需复刻布局、展开/折叠按钮、
+`NotificationHeaderViewWrapper` 依赖的变换动画（`mTransformationHelper` 按 id 登记
+TransformState）与圆角（`Roundable`/`RoundableState`）适配，工作量大且易与 Oplus 的
+`OplusNotificationHeaderViewWrapperExImp` 冲突。此方案**尚未实现**，等用户确认。
+
+**↓ 后续找到了更简单得多的落点，已改为方案 B 实现，见下节。**
+
+## 29. ColorOS 15 通知布局（**2026-08-30 实现后因效果不佳，已完全移除**）
+
+**最终状态：功能已删除，代码不复存在。** 以下逆向结论保留备查，不要再重复排查。
+
+### 逆向结论（有效，framework 的 classes4.dex，`jadx --single-class` 实测）
+
+`android.view.NotificationTopLineView extends ViewGroup`（**不是** NotificationHeaderView 的子类）：
+- `onFinishInflate()`：`mAppName = findViewById(R.id.app_name_text)`、
+  **`mTitle = findViewById(R.id.title)`**、`mHeaderText = R.id.header_text_secondary`、
+  `mSecondaryHeaderText = R.id.headers`、`mFeedbackIcon = R.id.feedbackAudible`。
+  → **标题被收进了 TopLineView 内部**。
+- `onMeasure(w,h)`：遍历子 View **水平累加** `totalWidth`，高度取 `maxChildHeight`；
+  溢出时用内部 `OverflowAdjuster` 依次压缩 appName → headerText → title。
+- `onLayout(...)`：所有子 View 沿 `start += 宽度` 排成**同一行**，baseline 对齐。
+
+**这就是 C15→C16 布局差异的全部来源**：C16 把「应用名/时间/feedback 图标」与「标题」挤在同一行；
+C15 里标题是独立一行、位于顶部信息行下方。
+
+补充实测：
+- `notification_template_material_base.xml` 里 TopLineView 的子 View 顺序 =
+  `<include layout/notification_top_line_views>`（app_name/time/header_text/…）**后接**
+  `TextView @0x01020016 = R.id.title`。所以 title 恒为最后一个子 View。
+- `android.view.NotificationHeaderView` **仍在 framework 中**，持 `mTopLineView` 字段，
+  只为自定义/老 targetSdk 通知保留外壳（`notification_template_header.xml` 内嵌套 TopLineView）。
+- SystemUI 侧 `NotificationHeaderViewWrapper.mNotificationTopLine` 只被赋值（359 行）、
+  **没有被读取** → 改 TopLineView 高度不会影响 SystemUI 的变换动画。
+- 注意：`setMeasuredDimension` 是 protected，hook 代码里必须反射调。
+
+### 曾尝试的实现（方案 B，**已删除，不要再恢复**）
+
+不改视图树，只改 TopLineView 自身的测量与布局，四步：
+1. `onMeasure` before：把 `mTitle` 临时 `setVisibility(GONE)`，让 super 以为只有顶部信息行
+   —— 这样 super 的 `OverflowAdjuster` 会把整行宽度全部分给 app_name/header 文本，
+   而不是被标题挤占（这是临时 GONE 而非只改 onLayout 的原因）。
+2. `onMeasure` after：恢复 `mTitle` 为 VISIBLE，按整行宽度单独 `measure` 标题，
+   再**反射** `setMeasuredDimension(width, topLineHeight + gapPx + titleHeight)`（protected，
+   不能直接调）；`topLineHeight` 存进 additionalInstanceField。
+3. `onLayout` before：把 `param.args[4]`（b）改成 `t + topLineHeight`，否则 super 会把整行
+   居中在含标题的总高度里、顶部行整体下移。
+4. `onLayout` after：用**自身内部坐标**（与 super 一致，不带 t）把 `mTitle` 摆到第二行。
+
+间距 `CLASSIC_TITLE_GAP_DP = 4`。
+
+**效果不佳，用户要求移除（2026-08-30）。** 已清理：
+`XposedInit#KEY_NOTIFICATION_CLASSIC_LAYOUT_ENABLED`、`NotificationHooks#hookNotificationClassicLayout`
++ `getTopLineTitle` + `CLASSIC_TITLE_GAP_DP`/`EXTRA_*` 常量 + `android.view.ViewGroup` import、
+`SystemUiHooks` 注入调用、`MainActivity.kt` 设置项。已全仓 grep 确认零残留，`installDebug` 通过。
+
+**教训**：只把 title 换到第二行，并没有真正还原 C15 的观感 —— C15 与 C16 的差异不止「title 换行」，
+还涉及 app 图标位置、行高、字重/字号的整套 spacing 体系（framework 模板资源随 Android 大版本
+整体替换）。若日后再做，应从**替换 TopLineView 为自定义 View** 或**整体覆盖 spacing dimen**
+入手，而不是只改单个 View 的测量。
+
+## 恢复原生通知图标（2026-08-30 实现，同日因效果不好已移除）
+
+**功能已删除，仅保留其"通知图标区显示模式"这一基础设施给状态栏歌词用。**
+效果不好的原因未定位（三处 hook 都验证过链路正确，但视觉结果用户不满意），勿凭日志重试原方案。
+
+**根因（曾设备验证，结论仍有效）**：替换发生在 **system_server**，不在 SystemUI。
+`com.android.server.notification.OplusNotificationFixHelper#fixSmallIcon(Notification,String,String,boolean)`
+（由 `NotificationManagerService#enqueueNotification` 里的 `fixNotificationForOplus` 调用）对
+「非 Android 包 && 非系统/平台签名 && 非商业通知 && 不在 Oplus 白名单」的通知，执行
+`notification.setSmallIcon(Icon.createWithResource(pkg, appInfo.icon))`，同时把原图标存进
+`extras["oplus_small_icon"]`、置 `extras["oplus_smallicon_use_app_icon"]=true`。
+设备实测 Telegram 通知即带这两个 extra。
+
+**状态栏把小图标再裁成圆角方块的地方**（`StatusBarIconView#updateDrawable` 第 706-712 行）：
+`updateStatusBarIconGrayScale(...)` 之后 `updateStatusBarIconDrawable(...)` 返回 true 时，
+`RoundRectDrawableUtil#getTargetRoundRectDrawable` 把图标画进
+`R.dimen.notification_round_rect_icon_zoom_size` 的**正方形**并按 `status_bar_notification_icon_radius`
+比例裁圆角 —— 方形应用图标正好填满（= iOS 式小方块），而原生单色 smallIcon 会被拉伸裁切，
+所以这一步必须一起停掉。
+
+**实现（三处 hook + 一套显示模式下发，缺一不可）**：
+1. `com.android.systemui.statusbar.notification.icon.IconManager#getIconDescriptor(NotificationEntry, boolean)`
+   after：`XposedHelpers.setObjectField(result, "icon", 原生的 oplus_small_icon)`。
+   这是状态栏/货架/息屏/chip 四个 `StatusBarIconView` 共用的描述符来源（`createIcons` 与
+   `updateIcons` 都调它），改这一处即全部生效。
+2. `com.oplus.systemui.statusbar.phone.StatusBarIconControllerExImpl#updateStatusBarIconDrawable(
+   Drawable, StatusBarIconView, StatusBarNotification)` before：开启时 `setResult(false)`，
+   让 `updateDrawable` 走原生 `setImageDrawable(icon)`。第三参为 null 表示普通系统状态图标，不动。
+   类内静态 `sNotificationRoundIconSize/sIconRadiusFraction` 只在本类用，短路后无人读，安全。
+3. 同类的 `updateStatusBarIconGrayScale(...)` after：原实现是
+   `!useAppIconForSmallIcon(n) && isGrayscaleIcon(d)`，被 extra 短路成恒 false，原生单色图标
+   不会被着色（浅色背景会看不见）。这里在 after 里用
+   `OplusContrastColorUtil.getInstance(appCtx).isGrayscaleIcon(drawable)` 重判并
+   `setIsIconColorable(...)`。
+   刻意**不去** hook `OplusNotificationSmallIconUtil#useAppIconForSmallIcon`：它同时被
+   `OplusNotificationHeaderViewWrapperExImp`（通知行头图）与胶囊通知用到，只动状态栏这条链更稳。
+
+**通知栏显示方式强制**：`Settings.Secure notification_prompt_mode`，
+0=显示图标 / 1=显示数字 / 2=不显示（三处口径一致：设置 `StatusIconDialogItem#getNotificationFromSetting`、
+SystemUI `NotificationIconAreaType` 枚举序、仓库
+`OplusNotificationIconAreaRepository$notificationIconAreaType$1`）。
+- 读：`com.oplusos.systemui.statusbar.util.StatusBarSettingsValueProxy$Companion#
+  getNotificationPromptModeState(Context)` after 强制返回 0。
+- 写：`OplusNotificationIconAreaRepository` 构造时抓实例，主线程 500ms 轮询比较
+  `notificationShowMode`(MutableStateFlow) 的 `getValue()` 与目标值，不同才 `setValue`。
+  因为改模块开关不会触发系统的设置观察者，必须轮询才能实时切换。
+- 歌词优先：目标值 = `sLyricNumberMode ? 1 : (原生图标开 ? 0 : 读设置)`。
+  **`StatusBarLyricHooks` 已不再自己 hook 仓库**，改为调 `NotificationHooks#setLyricNumberMode`；
+  两处各写一份会互相拉扯（图标↔数字每 250ms 抖动）。
+- 开关翻转时调 `IconManager#updateIcons(entry, false)` 重画全部通知（抓 IconManager 构造实例，
+  从其 `notifCollection.getAllNotifs()` 取），否则已存在的图标要等下次更新才变。
+
+**注意**：通知行里的头图走 `notification.getSmallIcon()`（不经过 StatusBarIcon 描述符），
+所以当时开启后状态栏是原生图标、通知行仍是应用图标 —— 这是刻意保留的系统行为。
+
+## 通知图标区显示模式（保留，状态栏歌词专用）
+
+即使上面功能删了，这套下发机制仍在 `NotificationHooks`：
+`hookNotificationIconAreaRepository` 抓 `OplusNotificationIconAreaRepository` 实例，
+主线程 500ms 轮询比对 `notificationShowMode`(MutableStateFlow) 的 `getValue()` 与目标值，
+不同才 `setValue`。目标值 = `sLyricNumberMode ? 1(显示数字) : 读 Settings 值`。
+`StatusBarLyricHooks#setNotificationNumberMode` 调 `NotificationHooks#setLyricNumberMode`。
+**必须只有一处写这个流**：曾两处各写一份，导致图标↔数字每 250ms 抖动。
+轮询必要：歌词状态变化不触发系统的设置观察者。
+儿童模式/专注模式下仓库仍输出 NOTIFICATION_NOT_SHOW，是系统行为，保留。

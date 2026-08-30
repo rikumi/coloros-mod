@@ -31,10 +31,20 @@ public final class SystemUiHooks {
         // 内边距由 KEY_NOTIFICATION_PADDING_DP(0-8dp, 默认 4dp) 运行时读取。
         NotificationHooks.hookNotificationPadding(lpparam, density);
 
+        // 通知左滑直接清除: 始终注入, 运行时按 KEY_NOTIFICATION_SWIPE_TO_DISMISS_ENABLED 门控。
+        NotificationHooks.hookNotificationSwipeToDismiss(lpparam);
+        // 通知下滑展开: 始终注入, 运行时按 KEY_NOTIFICATION_PULL_EXPAND_ENABLED 门控。
+        NotificationHooks.hookNotificationPullExpand(lpparam);
+        // 通知图标区仓库(状态栏歌词显示时切"显示数字"要用): 由 NotificationHooks 统一下发显示模式,
+        // 两处各写一份会互相拉扯(图标 <-> 数字来回跳)。
+        NotificationHooks.hookNotificationIconAreaRepository(lpparam);
+
         // Feature 10 — 合并控制中心背景压暗(半透明黑): 始终注入, 运行时按 KEY_QS_SCRIM_TRANSLUCENT_ENABLED 门控。
         QsHooks.hookQsBackgroundDim(lpparam);
         // Feature 13 — 控制中心 WLAN/蓝牙 名称单行省略: 始终注入, 运行时按 KEY_QS_TILE_NAME_ELLIPSIS_ENABLED 门控。
         QsHooks.hookQsTileNameEllipsis(lpparam);
+        // 控制中心 Wi-Fi/蓝牙/音量/亮度 圆角: 始终注入, 运行时按 KEY_QS_NORMAL_CORNER_RADIUS_ENABLED 门控。
+        QsHooks.hookQsNormalCornerRadius(lpparam);
         // Feature 17 — 流体云出现时不隐藏电量百分比: 始终注入, 运行时按 KEY_FLUID_CLOUD_KEEP_PERCENT_ENABLED 门控。
         StatusBarHooks.hookFluidCloudKeepPercent(lpparam);
         // Feature 18 — 悬浮小窗贴边挂机: 真正的提交逻辑在 system_server(android 作用域), 见 hookFloatWindowEdgeHangSystemServer。

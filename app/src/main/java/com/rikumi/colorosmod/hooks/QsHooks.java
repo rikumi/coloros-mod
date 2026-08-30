@@ -261,6 +261,90 @@ public final class QsHooks {
         }
     }
 
+    // 控制中心 Wi-Fi / 蓝牙 / 音量 / 亮度 的圆角。
+    // 系统判定: FlavorTwoFeatureOption.isFlavorTwoDeviceExp() = (一加品牌) && (海外 exp 区域)。
+    // 命中(OxygenOS)时高亮磁贴(Wi-Fi/蓝牙)与滑条(音量/亮度)用 60dp 大圆角, 否则用 16dp。
+    // 开关开启后统一强制到 QS_CORNER_RADIUS_DIMEN 那一档, 合并式与分离式都生效。
+    public static void hookQsNormalCornerRadius(final XC_LoadPackage.LoadPackageParam lpparam) {
+        // 音量 / 亮度滑条: 合并式(com.oplus.systemui.qs.widget.OplusQsToggleSliderLayout)与分离式
+        // (com.oplus.systemui.plugins.qs.widget.OplusQsToggleSliderLayout)共同继承
+        // OplusQsBaseToggleSliderLayout, 半径最终都经它的 setCornerRadius(float) 落到 seekbar;
+        // 该方法在基类里是 final, 两处调用都会走到, 一次 hook 覆盖两种模式。
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.oplus.systemui.qs.base.seek.OplusQsBaseToggleSliderLayout",
+                    lpparam.classLoader, "setCornerRadius", float.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_QS_NORMAL_CORNER_RADIUS_ENABLED, false)) return;
+                                Float px = resolveQsCornerRadiusPx(param.thisObject);
+                                if (px == null) return;
+                                param.args[0] = px;
+                            } catch (Throwable t) {
+                                log("qs_radius slider fail: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK OplusQsBaseToggleSliderLayout#setCornerRadius");
+        } catch (Throwable t) {
+            log("HOOK FAIL OplusQsBaseToggleSliderLayout#setCornerRadius :: " + Log.getStackTraceString(t));
+        }
+
+        // 高亮磁贴(Wi-Fi / 蓝牙)轮廓: 合并式 StdQSTileResInteractor 与分离式 SepQSTileResInteractor
+        // 各自产出一个 RoundRectOutlineProvider, 分别写入 StdQSResPool / SepQSResPool,
+        // 再被 OplusQSHighlightTileView#onOutlineUpdate / OplusQSResizeableTileView*
+        // 当作背景 drawable 的 PathProvider, 决定磁贴可见圆角。
+        hookQsHighlightTileOutline(lpparam, "com.oplus.systemui.qs.res.domain.interactor."
+                + "StdQSTileResInteractor$startHighlightTileOutlineCollection$2");
+        hookQsHighlightTileOutline(lpparam, "com.oplus.systemui.qs.res.domain.interactor."
+                + "SepQSTileResInteractor$startHighlightTileOutlineCollection$2");
+    }
+
+    static void hookQsHighlightTileOutline(final XC_LoadPackage.LoadPackageParam lpparam,
+                                           final String clsName) {
+        try {
+            XposedHelpers.findAndHookMethod(clsName, lpparam.classLoader,
+                    "invokeSuspend", Object.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_QS_NORMAL_CORNER_RADIUS_ENABLED, false)) return;
+                                Object result = param.getResult();
+                                if (result == null) return;
+                                if (!QS_OUTLINE_PROVIDER_CLASS.equals(result.getClass().getName())) return;
+                                Object interactor = XposedHelpers.getObjectField(param.thisObject, "this$0");
+                                Context context = (Context) XposedHelpers.getObjectField(interactor, "context");
+                                int dimenId = context.getResources()
+                                        .getIdentifier(QS_CORNER_RADIUS_DIMEN, "dimen", "com.android.systemui");
+                                if (dimenId == 0) return;
+                                float radius = context.getResources().getDimension(dimenId);
+                                // 与系统同口径构造, 保留"平滑圆角"权重, 避免 60dp 这类大半径被降级成方角。
+                                param.setResult(XposedHelpers.callStaticMethod(
+                                        XposedHelpers.findClass(QS_CONSTANT_CLASS, lpparam.classLoader),
+                                        "getSmoothRoundRectOutlineProvider", context, radius));
+                            } catch (Throwable t) {
+                                log("qs_radius outline fail: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK " + clsName + "#invokeSuspend");
+        } catch (Throwable t) {
+            log("HOOK FAIL " + clsName + " :: " + Log.getStackTraceString(t));
+        }
+    }
+
+    // 解析要强制的圆角(px); 资源不存在时返回 null, 保持系统原值。
+    static Float resolveQsCornerRadiusPx(Object view) {
+        if (!(view instanceof View)) return null;
+        Resources res = ((View) view).getResources();
+        int dimenId = res.getIdentifier(QS_CORNER_RADIUS_DIMEN, "dimen", "com.android.systemui");
+        if (dimenId == 0) return null;
+        return Float.valueOf(res.getDimension(dimenId));
+    }
+
     // 对任意 View(TextSwitcher / ViewGroup / TextView) 递归对其下所有 TextView 强制单行省略。
     static void forceSingleLineEllipsis(Object view) {
         if (view instanceof TextView) {

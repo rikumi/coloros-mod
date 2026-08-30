@@ -9,6 +9,7 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.util.Log;
 
+import android.animation.ValueAnimator;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.text.TextUtils;
@@ -198,6 +199,9 @@ public final class PasswordInputHooks {
         hookSlideAction(kbCls, "handleActionDown", 0);
         hookSlideAction(kbCls, "handleActionMove", 1);
         hookSlideAction(kbCls, "handleActionUp", 2);
+        hookSlideDrawCell(kbCls);
+        hookSlideTouchTracking(kbCls);
+        hookSlideReset(kbCls);
     }
 
     /** action: 0=DOWN 1=MOVE 2=UP。三个方法签名同为 (FFI)V。 */
@@ -243,8 +247,229 @@ public final class PasswordInputHooks {
         }
     }
 
+    // 滑动输入时的按键缩小: 滑动期间把所有数字键(不含 9/11 侧键)的绘制半径缩到与圆形命中区一致
+    // (mNumberBackgroundRadius * SLIDE_HIT_RADIUS_RATIO), 数字同时淡出; 松手/取消后动画还原。
+    // 实现上只在 drawCell(Canvas, int column, int row) 绘制单格的前后临时替换两个字段:
+    // cell.mButtonScale —— style 1 下 drawInnerShadowLayer / drawInnerBorder 取圆半径、drawCell
+    // 取字号的唯一来源; mKeyboardNumberTextAlpha —— 只作用于数字文本透明度(int, 见 initPaint)。
+    // 替换只发生在一次绘制内, 按下动画/spring 写入的真实值不受影响, 松手后自然是系统自己的值。
+    private static final long SLIDE_SHRINK_DURATION_MS = 150L;
+    private static final String EXTRA_SLIDE_CELL = "cm_ss_cell";
+    private static final String EXTRA_SLIDE_SCALE = "cm_ss_scale";
+    private static final String EXTRA_SLIDE_ALPHA = "cm_ss_alpha";
+
+    /** 每个键盘实例一份: 缩小进度、正在滑动的 pointerId 位掩码、当前动画。 */
+    private static final class SlideState {
+        float progress;   // 0 = 原尺寸, 1 = 缩到命中区尺寸。
+        long pointers;
+        ValueAnimator animator;
+    }
+
+    /** 绘制期缩放: 只改绘制读取的字段, 不参与命中判定(命中半径与 mButtonScale 无关)。 */
+    private static void hookSlideDrawCell(Class<?> kbCls) {
+        try {
+            XposedHelpers.findAndHookMethod(kbCls, "drawCell",
+                    Canvas.class, int.class, int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            swapSlideShrink(param, true);
+                        }
+
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            swapSlideShrink(param, false);
+                        }
+                    });
+            log("HOOK OK COUINumericKeyboard#drawCell (slide_input)");
+        } catch (Throwable t) {
+            log("HOOK FAIL COUINumericKeyboard#drawCell :: " + Log.getStackTraceString(t));
+        }
+    }
+
+    /** 临时替换(apply=true) / 还原(apply=false) 单格的缩放与数字透明度。 */
+    private static void swapSlideShrink(XC_MethodHook.MethodHookParam param, boolean apply) {
+        if (!apply) {
+            restoreSlideShrink(param);
+            return;
+        }
+        try {
+            if (!readBool(KEY_KEYGUARD_SLIDE_INPUT_ENABLED, false)) return;
+            Object kb = param.thisObject;
+            float progress = slideProgress(kb);
+            if (progress <= 0f) return;
+            int col = (Integer) param.args[1];
+            int row = (Integer) param.args[2];
+            int idx = row * 3 + col;
+            if (idx == 9 || idx == 11) return; // 侧键(删除/确定)保持原样。
+            Object[][] sCells = (Object[][]) XposedHelpers.getObjectField(kb, "sCells");
+            Object cell = sCells[row][col];
+            if (cell == null) return;
+
+            float scale = 1f + (SLIDE_HIT_RADIUS_RATIO - 1f) * progress; // 1 -> 命中区尺寸
+            int alpha = XposedHelpers.getIntField(kb, "mKeyboardNumberTextAlpha");
+            param.setObjectExtra(EXTRA_SLIDE_CELL, cell);
+            param.setObjectExtra(EXTRA_SLIDE_SCALE,
+                    Float.valueOf(XposedHelpers.getFloatField(cell, "mButtonScale")));
+            param.setObjectExtra(EXTRA_SLIDE_ALPHA, Integer.valueOf(alpha));
+            XposedHelpers.setFloatField(cell, "mButtonScale", scale);
+            XposedHelpers.setIntField(kb, "mKeyboardNumberTextAlpha",
+                    Math.round(alpha * (1f - progress))); // 数字随缩小一起淡出。
+        } catch (Throwable t) {
+            log("slide_input swapSlideShrink error: " + t);
+        }
+    }
+
+    private static void restoreSlideShrink(XC_MethodHook.MethodHookParam param) {
+        Object cell = param.getObjectExtra(EXTRA_SLIDE_CELL);
+        if (cell == null) return;
+        try {
+            Object scale = param.getObjectExtra(EXTRA_SLIDE_SCALE);
+            if (scale instanceof Float) {
+                XposedHelpers.setFloatField(cell, "mButtonScale", ((Float) scale).floatValue());
+            }
+            Object alpha = param.getObjectExtra(EXTRA_SLIDE_ALPHA);
+            if (alpha instanceof Integer) {
+                XposedHelpers.setIntField(param.thisObject, "mKeyboardNumberTextAlpha",
+                        ((Integer) alpha).intValue());
+            }
+        } catch (Throwable t) {
+            log("slide_input restoreSlideShrink error: " + t);
+        }
+    }
+
+    private static SlideState slideState(Object kb) {
+        SlideState st = (SlideState) XposedHelpers.getAdditionalInstanceField(kb, "cm_slideState");
+        if (st == null) {
+            st = new SlideState();
+            XposedHelpers.setAdditionalInstanceField(kb, "cm_slideState", st);
+        }
+        return st;
+    }
+
+    /** 绘制期只读, 不创建状态。 */
+    private static float slideProgress(Object kb) {
+        SlideState st = (SlideState) XposedHelpers.getAdditionalInstanceField(kb, "cm_slideState");
+        return st == null ? 0f : st.progress;
+    }
+
+    private static void slidePointerDown(Object kb, int pid) {
+        SlideState st = slideState(kb);
+        if (pid >= 0 && pid < 64) st.pointers |= (1L << pid);
+        animateSlideShrink(kb, st, 1f);
+    }
+
+    private static void slidePointerUp(Object kb, int pid) {
+        SlideState st = slideState(kb);
+        if (pid >= 0 && pid < 64) st.pointers &= ~(1L << pid);
+        if (st.pointers == 0L) animateSlideShrink(kb, st, 0f);
+    }
+
+    /** 所有手指都失效: 立即取消动画并复位(无需动画, 状态本身已丢弃)。 */
+    private static void slideResetPointers(Object kb) {
+        SlideState st = slideState(kb);
+        st.pointers = 0L;
+        if (st.animator != null) {
+            st.animator.cancel();
+            st.animator = null;
+        }
+        if (st.progress == 0f) return;
+        st.progress = 0f;
+        invalidate(kb);
+    }
+
+    private static void animateSlideShrink(final Object kb, final SlideState st, float target) {
+        if (st.animator != null) {
+            st.animator.cancel();
+            st.animator = null;
+        }
+        if (Math.abs(st.progress - target) < 0.001f) return;
+        ValueAnimator animator = ValueAnimator.ofFloat(st.progress, target);
+        animator.setDuration(SLIDE_SHRINK_DURATION_MS);
+        animator.setInterpolator(new android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f));
+        animator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+            @Override
+            public void onAnimationUpdate(ValueAnimator animation) {
+                st.progress = ((Float) animation.getAnimatedValue()).floatValue();
+                invalidate(kb);
+            }
+        });
+        st.animator = animator;
+        animator.start();
+    }
+
+    // 恢复时机必须看真实 MotionEvent, 不能看 handleActionCancel(int): 手指滑到侧键(9/11)上时我们
+    // 会交还原生 handleActionMove, 而它一旦判定"落点不再是原格"就调 handleActionCancel —— 斜着从 0
+    // 滑到 7 途经侧键/间隙时会误触发, 导致中途弹回原尺寸。因此只在 UP / POINTER_UP(且无其它手指)
+    // / CANCEL 时恢复, 中途移出按键区域(甚至移出键盘)都保持缩小, 直到手指抬起。
+    private static void hookSlideTouchTracking(Class<?> kbCls) {
+        try {
+            XposedHelpers.findAndHookMethod(kbCls, "onTouchEvent", MotionEvent.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_KEYGUARD_SLIDE_INPUT_ENABLED, false)) return;
+                                Object kb = param.thisObject;
+                                // 键盘被禁用时原生会对所有手指走 handleActionCancel, 同样需要复位。
+                                if (!(kb instanceof android.view.View)
+                                        || !((android.view.View) kb).isEnabled()) {
+                                    slideResetPointers(kb);
+                                    return;
+                                }
+                                MotionEvent ev = (MotionEvent) param.args[0];
+                                if (ev == null) return;
+                                int action = ev.getActionMasked();
+                                if (action == MotionEvent.ACTION_CANCEL) {
+                                    slideResetPointers(kb);
+                                } else if (action == MotionEvent.ACTION_UP
+                                        || action == MotionEvent.ACTION_POINTER_UP) {
+                                    int index = ev.getActionIndex();
+                                    if (index >= 0 && index < ev.getPointerCount()) {
+                                        slidePointerUp(kb, ev.getPointerId(index));
+                                    }
+                                }
+                            } catch (Throwable t) {
+                                log("slide_input onTouchEvent error: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK COUINumericKeyboard#onTouchEvent (slide_input)");
+        } catch (Throwable t) {
+            log("HOOK FAIL COUINumericKeyboard#onTouchEvent :: " + Log.getStackTraceString(t));
+        }
+    }
+
+    /** 键盘重新做入场动画(bouncer 再次出现)时复位, 避免上一次滑动残留的缩小状态。 */
+    private static void hookSlideReset(Class<?> kbCls) {
+        try {
+            XposedHelpers.findAndHookMethod(kbCls, "getEnterAnim", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        SlideState st = (SlideState) XposedHelpers.getAdditionalInstanceField(
+                                param.thisObject, "cm_slideState");
+                        if (st == null) return;
+                        if (st.animator != null) {
+                            st.animator.cancel();
+                            st.animator = null;
+                        }
+                        st.pointers = 0L;
+                        st.progress = 0f;
+                    } catch (Throwable t) {
+                        log("slide_input getEnterAnim error: " + t);
+                    }
+                }
+            });
+            log("HOOK OK COUINumericKeyboard#getEnterAnim (slide_input)");
+        } catch (Throwable t) {
+            log("HOOK FAIL COUINumericKeyboard#getEnterAnim :: " + Log.getStackTraceString(t));
+        }
+    }
+
     /** DOWN: 命中数字键则显示按下态并立即输入该字符。 */
     private static void slideDown(Object kb, float x, float y, int pid) {
+        slidePointerDown(kb, pid);
         Object hit = findSlideHitCell(kb, x, y);
         if (hit == null) return;
         XposedHelpers.setIntField(hit, "pointerId", pid);
@@ -271,6 +496,7 @@ public final class PasswordInputHooks {
 
     /** UP: 仅取消按下态(字符在进入时已输入, 抬起不再重复输入)。 */
     private static void slideUp(Object kb, int pid) {
+        slidePointerUp(kb, pid);
         Object cur = findPressedCell(kb, pid);
         if (cur == null) return;
         int idx = slideTouchIndex(cur);

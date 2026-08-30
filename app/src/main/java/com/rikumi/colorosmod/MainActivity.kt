@@ -147,8 +147,11 @@ private val QS = listOf(
     SwitchItem("qs_carrier_enabled", "去除控制中心运营商显示"),
     SwitchItem("qs_topmargin_enabled", "隐藏控制中心顶部状态图标簇"),
     SwitchItem("qs_tile_name_ellipsis_enabled", "分离版 Wi-Fi / 蓝牙名称单行省略"),
+    SwitchItem("qs_normal_corner_radius_enabled", "OxygenOS 控制中心恢复正常圆角"),
 )
 private val NOTIF = listOf(
+    SwitchItem("notification_swipe_to_dismiss_enabled", "通知左滑直接清除"),
+    SwitchItem("notification_pull_expand_enabled", "通知下滑展开"),
     SwitchItem("notification_subtitle_enabled", "缩小通知静默区域副标题", sliderKey = "notification_subtitle_sp", sliderMax = 16, sliderDefault = 8, sliderUnit = "sp"),
     SwitchItem("notification_padding_enabled", "增加通知上下内边距", sliderKey = "notification_padding_dp", sliderMax = 8, sliderDefault = 4),
     SwitchItem("fluid_cloud_keep_percent_enabled", "流体云出现时不隐藏电量百分比"),

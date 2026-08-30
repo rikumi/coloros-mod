@@ -56,17 +56,10 @@ public final class StatusBarLyricHooks {
     private static final String CLS_PHONE_STATUS_BAR_VIEW =
             "com.android.systemui.statusbar.phone.PhoneStatusBarView";
 
-    private static final String CLS_ICON_AREA_REPOSITORY =
-            "com.oplus.systemui.statusbar.icon.data.OplusNotificationIconAreaRepository";
-
     // 显示歌词时只隐藏**时钟本身**(不隐藏 status_bar_start_side_except_heads_up 整块):
     // 歌词挂在 notification_icon_area 之后, 隐藏整块会把歌词容器一起藏掉。
     // clock 是 StatClock, 父容器 clock_for_fake 为 wrap_content, 故 clock GONE 后它宽度归零。
     private static final String[] HIDE_VIEW_IDS = {"clock"};
-
-    // 通知图标区显示模式(NotificationIconAreaType 的取值来源):
-    // notificationShowMode 0/其它 -> 显示图标, 1 -> 只显示数字, 2 -> 不显示。
-    private static final int NOTIFICATION_SHOW_NUMBER = 1;
 
     /** 歌词字体的字重: medium(500)。 */
     private static final int MEDIUM_WEIGHT = 500;
@@ -89,9 +82,6 @@ public final class StatusBarLyricHooks {
     // 全西文(ASCII 占比 100%)时的速率倍率: 西文字母窄、信息密度低, 可以滚得更快;
     // 纯中文/日文等全角字符时保持基准速率。中间按 ASCII 占比线性插值。
     private static final float SCROLL_SPEED_ASCII_FACTOR = 2f;
-    /** 系统存该模式的 Settings 键(StatusBarSettingsValueProxy#KEY_NOTIFICATION_PROMPT_MODE)。 */
-    private static final String SETTINGS_KEY_NOTIFICATION_PROMPT_MODE = "notification_prompt_mode";
-
     /** 歌词字幕容器(FrameLayout, 内部两个 TextView 做向上切换动画)。 */
     private static FrameLayout sLyricView = null;
     /** 当前显示的(将被换下的)字幕视图。 */
@@ -126,9 +116,7 @@ public final class StatusBarLyricHooks {
     // ---- 下拉通知栏/控制中心时隐藏歌词: 复用 QsHooks#hookQsTopMargin 同一个展开进度回调 ----
     /** 当前是否处于下拉/展开状态(由 QS 展开进度驱动)。 */
     private static boolean sPanelExpanded = false;
-    /** 通知图标区仓库实例(构造时抓取), 用于把通知图标切成"只显示数字"。 */
-    private static volatile Object sIconAreaRepository = null;
-    /** 通知图标区当前是否已被我们切成"只显示数字"。 */
+    /** 通知图标区当前是否已被我们切成"只显示数字"(仅用于避免每拍重复下发)。 */
     private static boolean sNumberModeOn = false;
 
     private static volatile Handler sMainHandler = null;
@@ -215,38 +203,10 @@ public final class StatusBarLyricHooks {
     }
 
     public static void hookStatusBarLyric(final XC_LoadPackage.LoadPackageParam lpparam) {
+        // 通知图标区仓库由 NotificationHooks#hookNativeNotificationIcon 抓取并统一下发显示模式,
+        // 这里不再重复 hook, 避免两处各写一份造成互相拉扯(图标 <-> 数字来回跳)。
         hookStatusBarView(lpparam);
-        hookNotificationIconAreaRepository(lpparam);
         hookQsExpansion(lpparam);
-    }
-
-    // 抓住 OplusNotificationIconAreaRepository 实例以切换通知图标显示模式: 该仓库的 notificationIconAreaType =
-    // combine(notificationShowMode, isChildrenMode, isFocusMode), showMode 1 -> 只显示数字、2 -> 不显示。
-    // notificationShowMode 是 MutableStateFlow, setValue(1) 即可实时切换, 还原时把设置里的真实值写回。
-    private static void hookNotificationIconAreaRepository(
-            final XC_LoadPackage.LoadPackageParam lpparam) {
-        try {
-            Class<?> repoCls = XposedHelpers.findClass(
-                    CLS_ICON_AREA_REPOSITORY, lpparam.classLoader);
-            XposedHelpers.findAndHookConstructor(repoCls,
-                    Context.class,
-                    XposedHelpers.findClass(
-                            "kotlinx.coroutines.CoroutineScope", lpparam.classLoader),
-                    XposedHelpers.findClass(
-                            "com.android.systemui.dump.DumpManager", lpparam.classLoader),
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            sIconAreaRepository = param.thisObject;
-                            sNumberModeOn = false; // 仓库重建后原状态失效。
-                            log("statusbar_lyric: icon area repository captured");
-                        }
-                    });
-            log("HOOK OK OplusNotificationIconAreaRepository#<init> (statusbar_lyric)");
-        } catch (Throwable t) {
-            log("HOOK FAIL OplusNotificationIconAreaRepository#<init> :: "
-                    + Log.getStackTraceString(t));
-        }
     }
 
     // 歌词显示期间**强制**时钟保持隐藏。时钟可见性会被 SystemUI 在锁屏、下拉通知、Dock 等时机动态切换,
@@ -1187,36 +1147,14 @@ public final class StatusBarLyricHooks {
         if (sIncomingView != null) sIncomingView.setText(null);
     }
 
-    // 把通知图标区切成"只显示数字"(歌词显示期间), 关闭时还原成设置里的真实模式。直接改仓库里的
-    // notificationShowMode(MutableStateFlow) —— 它是 NotificationIconAreaType 的输入, 改它等价于改设置。
+    // 显示歌词期间把通知图标区切成"只显示数字", 结束时还原。下发统一交给 NotificationHooks:
+    // 它同时管着"恢复原生通知图标"的强制"显示图标", 两边共用一个目标值才不会互相拉扯。
     // 儿童模式/专注模式下仓库仍输出 NOTIFICATION_NOT_SHOW, 是系统行为, 保留。
     private static void setNotificationNumberMode(boolean on) {
-        Object repo = sIconAreaRepository;
-        if (repo == null) return;
         if (sNumberModeOn == on) return;
-        try {
-            Object flow = XposedHelpers.getObjectField(repo, "notificationShowMode");
-            if (flow == null) return;
-            int value = on ? NOTIFICATION_SHOW_NUMBER : readNotificationPromptMode();
-            XposedHelpers.callMethod(flow, "setValue", Integer.valueOf(value));
-            sNumberModeOn = on;
-            log("statusbar_lyric notification number mode: " + on + " -> " + value);
-        } catch (Throwable t) {
-            log("statusbar_lyric setNotificationNumberMode error: " + t);
-        }
-    }
-
-    /** 读系统设置里的通知提示模式(notification_prompt_mode), 用于还原。 */
-    private static int readNotificationPromptMode() {
-        try {
-            View v = sLyricView;
-            Context ctx = v != null ? v.getContext() : null;
-            if (ctx == null) return 0;
-            return android.provider.Settings.Secure.getInt(
-                    ctx.getContentResolver(), SETTINGS_KEY_NOTIFICATION_PROMPT_MODE, 0);
-        } catch (Throwable t) {
-            return 0;
-        }
+        sNumberModeOn = on;
+        NotificationHooks.setLyricNumberMode(on);
+        log("statusbar_lyric notification number mode: " + on);
     }
 
     /** 显示歌词时隐藏时钟; 结束时还原。 */

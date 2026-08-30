@@ -45,6 +45,18 @@ public class XposedInit implements IXposedHookLoadPackage {
     public static final String KEY_QS_TOPMARGIN_ENABLED = "qs_topmargin_enabled";
     public static final String KEY_NOTIFICATION_SUBTITLE_ENABLED = "notification_subtitle_enabled";
     public static final String KEY_NOTIFICATION_PADDING_ENABLED = "notification_padding_enabled";
+    // 通知左滑直接清除: ColorOS 国内版左滑通知会露出"设置/删除"侧边按钮(需滑到底才清除),
+    // 海外版(exp)一个按钮都不生成、抬手即清除。区分点在 NotificationMenuRowExtImpl
+    // #createMenuViewsExt 与 OplusSwipeHelperExImpl#shouldNotShowMenuExt 两处(见
+    // NotificationHooks#hookNotificationSwipeToDismiss)。开启后强制走 exp 分支。
+    public static final String KEY_NOTIFICATION_SWIPE_TO_DISMISS_ENABLED =
+            "notification_swipe_to_dismiss_enabled";
+    // 通知下滑展开: 国内版在 NotificationStackScrollLayout 构造末尾主动
+    // setExpandingEnabled(false) 关掉 ExpandHelper, 并把 ext 层 setExpandingEnabled 整个短路,
+    // 海外版(含一加 OxygenOS)保持 ExpandHelper 可用, 单指下拉通知即可展开。
+    // 见 NotificationHooks#hookNotificationPullExpand。开启后按 exp 分支处理。
+    public static final String KEY_NOTIFICATION_PULL_EXPAND_ENABLED =
+            "notification_pull_expand_enabled";
     public static final String KEY_RECENTS_SHOW_HIDDEN_ENABLED = "recents_show_hidden_enabled";
     public static final String KEY_RECENTS_HIDE_FREEFORM_ENABLED = "recents_hide_freeform_enabled";
     public static final String KEY_HIDE_APPS_NOVERIFY_ENABLED = "hide_apps_noverify_enabled";
@@ -81,6 +93,20 @@ public class XposedInit implements IXposedHookLoadPackage {
     // labelDesc(TextSwitcher, R.id.tile_label_desc), 由 updateLabelDescText 经 TextSwitcherExtKt
     // .setContent 写入; 这里在每次 setContent 之后强制单行 + 行尾省略号。
     public static final String KEY_QS_TILE_NAME_ELLIPSIS_ENABLED = "qs_tile_name_ellipsis_enabled";
+    // 控制中心 Wi-Fi / 蓝牙 / 音量 / 亮度 圆角:
+    // 系统用 FlavorTwoFeatureOption.isFlavorTwoDeviceExp()(= 一加品牌 && 海外 exp 区域)判定 OxygenOS,
+    // 命中时把高亮磁贴(Wi-Fi/蓝牙)与滑条(音量/亮度)的圆角换成
+    // R.dimen.qs_hl_tile_corner_radius_circle_oneplus(60dp), 其余用 qs_hl_tile_corner_radius_circle(16dp)。
+    // 开关开启时统一强制到 QS_CORNER_RADIUS_DIMEN 指定的那一档(合并式与分离式都生效)。
+    public static final String KEY_QS_NORMAL_CORNER_RADIUS_ENABLED = "qs_normal_corner_radius_enabled";
+    // false = 强制普通圆角(默认, 即本功能的正常行为); 改为 true 可强制 OxygenOS 大圆角, 用于确认注入是否生效。
+    public static final boolean QS_CORNER_RADIUS_FORCE_ONEPLUS = false;
+    public static final String QS_CORNER_RADIUS_DIMEN = QS_CORNER_RADIUS_FORCE_ONEPLUS
+            ? "qs_hl_tile_corner_radius_circle_oneplus" : "qs_hl_tile_corner_radius_circle";
+    // 圆角轮廓 provider 与构造入口(QSConstant#getSmoothRoundRectOutlineProvider)。
+    public static final String QS_OUTLINE_PROVIDER_CLASS =
+            "com.oplusos.systemui.common.outline.RoundRectOutlineProvider";
+    public static final String QS_CONSTANT_CLASS = "com.oplus.systemui.qs.base.res.util.QSConstant";
     // Feature 17 — 流体云出现时不隐藏电量百分比:
     // 系统在流体云胶囊出现时会令 PercentOutIcon.isVisible=false, 隐藏电量百分比数字。
     // hook BatteryViewBinder.bind$updatePercentOutView, 强制 isVisible=true。
@@ -146,6 +172,12 @@ public class XposedInit implements IXposedHookLoadPackage {
     // 放行系统侧滑返回手势; 并把"上滑使用指纹解锁"提示改为"下滑返回指纹解锁"。
     // 状态栏歌词: 数据源是 ColorOS 媒体接口的 metadata.lyricInfo, 无需注入音乐软件/伪装机型。
     public static final String KEY_STATUSBAR_LYRIC_ENABLED = "statusbar_lyric_enabled";
+
+    // 系统设置"通知栏显示方式"(Settings.Secure, StatusBarSettingsValueProxy#KEY_NOTIFICATION_PROMPT_MODE)。
+    // 通知图标区显示模式的下发由 NotificationHooks 统一负责, 状态栏歌词显示时用它强制"显示数字"。
+    public static final String SETTINGS_KEY_NOTIFICATION_PROMPT_MODE = "notification_prompt_mode";
+    public static final int NOTIFICATION_PROMPT_SHOW_ICON = 0;
+    public static final int NOTIFICATION_PROMPT_SHOW_NUMBER = 1;
 
     public static final String KEY_KEYGUARD_BOUNCER_SWIPE_BACK_ENABLED = "keyguard_bouncer_swipe_back_enabled";
     // 密码支持滑动输入: 手指进入某数字键"中间 2/3 半径"的圆形区域即视为按下该键, 立即输入并
