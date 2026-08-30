@@ -171,7 +171,7 @@ private val HIDDEN = listOf(
 // 小窗相关设置: 改动需重启 system_server(框架) 才生效(本模块该作用域为 android/system_server)。
 private val FLOATWINDOW = listOf(
     SwitchItem("recents_hide_freeform_enabled", "多任务隐藏小窗应用"),
-    SwitchItem("float_window_edge_hang_enabled", "悬浮小窗贴边挂机", "调试中，目前贴边时需等待变成图标再松手"),
+    SwitchItem("float_window_edge_hang_enabled", "悬浮小窗贴边挂机"),
     SwitchItem("float_window_landscape_keep_ratio_enabled", "横屏应用小窗保持比例", "横屏应用小窗的宽高比等于屏幕高宽比"),
 )
 

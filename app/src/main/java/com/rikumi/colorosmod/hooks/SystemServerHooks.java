@@ -24,40 +24,73 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  * system_server(android) 作用域的全部 hook：小窗贴边挂机、横屏小窗保持比例。
  */
 public final class SystemServerHooks {
-// 悬浮小窗贴边挂机(system_server): 贴边松手后经 exitFlexibleTask -> Task.moveTaskToBack 切后台。
-// 调系统的 updateFocusWhenExitFlexibleTask 聚焦小窗下方任务, 但绝不拦截原生退出提交 ——
-// 否则原生 ToFloat 收尾被截断, 窗口会卡在拖拽位置而不变成图标。
+    // 贴边挂机: 拦 TaskExtImpl#moveTaskToBackForPanorama(只切后台), 让图标动画跑完并把任务留在前台。
+    // 不可拦 exitFlexibleTaskWindowInnerLocked —— 图标成形/缩小动画在其 handleEvent() 内, 截断就卡在松手位置。
+    // 同时把焦点交给小窗下方任务, 避免"窗口已 hide 但仍 focused"导致音量键无响应 / ANR。
     public static void hookFloatWindowEdgeHangSystemServer(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            final Class<?> ftc = XposedHelpers.findClass(
-                    "com.android.server.wm.FlexibleTaskController", lpparam.classLoader);
-            final Class<?> strategyCls = XposedHelpers.findClass(
-                    "com.android.server.wm.AbsFlexibleTaskExitStrategy", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(ftc, "exitFlexibleTaskWindowInnerLocked", strategyCls,
+            final Class<?> taskExtImplCls = XposedHelpers.findClass(
+                    "com.android.server.wm.TaskExtImpl", lpparam.classLoader);
+            final Class<?> taskCls = XposedHelpers.findClass(
+                    "com.android.server.wm.Task", lpparam.classLoader);
+            final Class<?> fhcCls = XposedHelpers.findClass(
+                    "com.android.server.wm.FloatHandleController", lpparam.classLoader);
+            final Class<?> fwmsCls = XposedHelpers.findClass(
+                    "com.android.server.wm.FlexibleWindowManagerService", lpparam.classLoader);
+
+            XposedHelpers.findAndHookMethod(taskExtImplCls, "moveTaskToBackForPanorama",
+                    taskCls, boolean.class, int.class,
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
                                 if (!readBool(KEY_FLOAT_WINDOW_EDGE_HANG_ENABLED, false)) return;
-                                final Object strategy = param.args[0];
-                                if (strategy == null) return;
-                                if (((Number) XposedHelpers.callMethod(strategy, "getExitTo")).intValue() != 5) return;
-                                final Object flexibleTask = XposedHelpers.getObjectField(strategy, "mTask");
-                                if (flexibleTask != null) {
-                                    // 设备框架真实公开方法；内部执行 mAtms.setFocusedTask(nextTask.mTaskId)。
-                                    XposedHelpers.callMethod(param.thisObject,
-                                            "updateFocusWhenExitFlexibleTask", flexibleTask);
+                                final Object task = param.args[0];
+                                if (task == null) return;
+                                final int taskId = XposedHelpers.getIntField(task, "mTaskId");
+
+                                // 只介入"贴边成浮窗"一路: 此时 addFloatHandle 已把任务加入浮窗列表。
+                                Object fhc = XposedHelpers.callStaticMethod(fhcCls, "getInstance");
+                                if (!Boolean.TRUE.equals(
+                                        XposedHelpers.callMethod(fhc, "isInFloatingList", taskId))) {
+                                    return;
                                 }
-                                // 禁止 setResult(null)：必须让系统完成 ToFloat 图标动画和后台收尾。
+
+                                // 先把焦点交给小窗下方任务, 避免 hidden + focused 造成 ANR。
+                                focusTaskBehind(fwmsCls, task);
+
+                                // 跳过 Task.moveTaskToBack: 任务保持在台前, 应用继续挂机。
+                                param.setResult(null);
+                                log(">>> edge_hang: skip moveTaskToBack, taskId=" + taskId);
                             } catch (Throwable t) {
-                                // 聚焦失败不能影响原生 ToFloat 收尾。
-                                log("!!! edge_hang focus-behind failed, keep native exit: " + t);
+                                log("!!! edge_hang error: " + t);
                             }
                         }
                     });
-            log(">>> matched android (system_server): float_window_edge_hang (focus behind, native exit)");
+            log(">>> matched android (system_server): float_window_edge_hang (skip moveTaskToBack)");
         } catch (Throwable t) {
             log("!!! float_window_edge_hang system_server hook failed: " + t);
+        }
+    }
+
+    // 把焦点交给小窗下方任务。FlexibleTaskController#setFocusTask 内部即 AOSP
+    // ActivityTaskManagerService#setFocusedTask(taskId)(FlexibleTaskController.java:9310)。
+    private static void focusTaskBehind(Class<?> fwmsCls, Object floatTask) {
+        try {
+            Object fwms = XposedHelpers.callStaticMethod(fwmsCls, "getInstance", new Object[] { null });
+            if (fwms == null) return;
+            Object ftc = XposedHelpers.callMethod(fwms, "getFlexibleTaskController");
+            if (ftc == null) return;
+            // getTaskUnderFlexible 是 private, XposedHelpers 反射可调用。
+            Object behind = XposedHelpers.callMethod(ftc, "getTaskUnderFlexible", floatTask);
+            if (behind == null) return;
+            if (!Boolean.TRUE.equals(XposedHelpers.callMethod(behind, "isTopActivityFocusable"))
+                    || !Boolean.TRUE.equals(XposedHelpers.callMethod(behind, "isVisible"))) {
+                return;
+            }
+            XposedHelpers.callMethod(ftc, "setFocusTask", behind);
+        } catch (Throwable t) {
+            log("!!! edge_hang focusTaskBehind failed: " + t);
         }
     }
 
