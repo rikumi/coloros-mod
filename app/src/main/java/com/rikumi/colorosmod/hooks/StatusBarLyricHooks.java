@@ -32,9 +32,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedHelpers;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import com.rikumi.colorosmod.xposed.XC_MethodHook;
+import com.rikumi.colorosmod.xposed.XposedHelpers;
+import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
 // 状态栏歌词(com.android.systemui)。数据源复用 ColorOS 自己的歌词接口: metadata.getString("lyricInfo")
 // 返回 {songName, artist, lyric, songId} 的 JSON, lyric 即歌词原文, 故无需私有协议、也无需注入音乐软件进程。

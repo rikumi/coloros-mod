@@ -11,6 +11,7 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
+        android:description="@string/xposed_description"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar"
         tools:ignore="MissingApplicationIcon">
 
@@ -49,22 +50,11 @@
             android:authorities="com.rikumi.colorosmod.settings"
             android:directBootAware="true"
             android:exported="true" />
-
-        <!-- LSPosed / Xposed module declaration -->
-        <meta-data
-            android:name="xposedmodule"
-            android:value="true" />
-        <meta-data
-            android:name="xposedminversion"
-            android:value="93" />
-        <meta-data
-            android:name="xposeddescription"
-            android:value="@string/xposed_description" />
-        <meta-data
-            android:name="xposedscope"
-            android:resource="@array/xposedscope" />
-        <meta-data
-            android:name="xposedsharedprefs"
-            android:value="true" />
     </application>
+
+    <!--
+        新版(libxposed)模块不再用 xposedmodule / xposedminversion / xposedscope 等
+        meta-data: 入口见 META-INF/xposed/java_init.list, 作用域见 META-INF/xposed/scope.list,
+        配置见 META-INF/xposed/module.prop, 名称用 android:label, 描述用 android:description。
+    -->
 </manifest>

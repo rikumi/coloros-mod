@@ -18,11 +18,10 @@ import android.view.View;
 import android.widget.TextView;
 import android.widget.TextSwitcher;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XSharedPreferences;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import com.rikumi.colorosmod.xposed.XC_MethodHook;
+import com.rikumi.colorosmod.xposed.XposedBridge;
+import com.rikumi.colorosmod.xposed.XposedHelpers;
+import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
 /**
  * 锁屏 / 解锁界面(bouncer)交互相关的 SystemUI hook。

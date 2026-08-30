@@ -2,7 +2,7 @@ package com.rikumi.colorosmod.hooks;
 
 import static com.rikumi.colorosmod.XposedInit.*;
 
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
 // SystemUI(com.android.systemui) 作用域的 hook 入口, 只做转发。
 // 各功能按类别拆分到同包独立文件: QsHooks / NotificationHooks / StatusBarHooks /

@@ -1,12 +1,19 @@
 package com.rikumi.colorosmod
 
+import android.app.Activity
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -24,8 +31,11 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -43,10 +53,13 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,11 +67,24 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.window.Popup
@@ -75,6 +101,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.abs
+import kotlin.math.abs
+import kotlin.math.ln
 import kotlin.math.roundToInt
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardColors
@@ -101,8 +130,35 @@ private val COUIX_SLIDER_TRACK_H = 20.dp
 private val COUIX_SLIDER_GAP = 3.dp
 private val COUIX_SLIDER_THUMB_R = 10.dp
 
-// 分组卡片圆角（miuix 默认 16dp -> 12dp）。
-private val COUIX_CARD_CORNER = 12.dp
+// 首页顶部机型横幅: 作为第一张 group 卡片的内容, 底色与渐变中心色随明暗主题取不同值。
+private val COUIX_HEADER_HEIGHT = 180.dp
+private val COUIX_HEADER_BASE_DARK = Color(0xFF34383B)
+private val COUIX_HEADER_GLOW_DARK = Color(0xFFB17666)
+private val COUIX_HEADER_BASE_LIGHT = Color(0xFFDDE2E8)
+private val COUIX_HEADER_GLOW_LIGHT = Color(0xFFDD7963)
+private const val COUIX_HEADER_GLOW_RADIUS_RATIO = 0.7f
+// 渐变圆心在横幅底边之下(>1 表示沉到底边外), 使可见范围内只剩光晕上部, 越往上越淡。
+private const val COUIX_HEADER_GLOW_CENTER_Y_RATIO = 1f
+// 椭圆的横向/纵向半径: 分别以横幅宽、高为基准。radialGradient 本身是正圆, 绘制时纵向压缩
+// canvas 得到椭圆(绘制矩形已按压缩比反向放大, 渐变半径处 alpha 已归零, 故纵向可放心压小)。
+private const val COUIX_HEADER_GLOW_RY_RATIO = 0.85f
+// 中心再叠一个更扁的椭圆提亮紧邻底边的一带: 横向半径相对大椭圆略收(让亮带向中心收拢),
+// 纵向略微抬高, 形成一小片贴底的亮区而非一条细线。
+private const val COUIX_HEADER_CORE_RADIUS_RATIO = 8f
+private const val COUIX_HEADER_CORE_RY_RATIO = 0.34f
+private const val COUIX_HEADER_CORE_ALPHA = 0.5f
+// 渐变衰减曲线: 由若干 stop 逼近 log 曲线 alpha(t) = 1 - ln(1 + k·t)/ln(1 + k)(t 为归一化半径)。
+// 相比线性衰减, 中心附近掉得快、外圈留一条长尾; k 越大越陡, k→0 退化为线性。
+private const val COUIX_HEADER_GLOW_LOG_K = 12f
+private const val COUIX_HEADER_GLOW_STOP_COUNT = 32
+// 横幅内系统名: 相对文字色的不透明度, 以及贴底时离底边的距离。
+private const val COUIX_HEADER_SYSTEM_ALPHA = 0.7f
+private val COUIX_HEADER_SYSTEM_BOTTOM = 14.dp
+// 设备名自横幅正中再上移的距离。
+private val COUIX_HEADER_MODEL_LIFT = 16.dp
+
+// 分组卡片圆角（miuix 默认 16dp -> 12dp）。首页机型横幅嵌在卡片顶部时需按此值裁顶部两角。
+internal val COUIX_CARD_CORNER = 12.dp
 
 // 分组左右外边距（相对屏幕边缘）。
 private val COUIX_GROUP_HMARGIN = 16.dp
@@ -270,6 +326,129 @@ internal fun couixTopBarDividerProgress(listState: LazyListState): Float {
     }.value
 }
 
+/**
+ * 状态栏跟随 miuix 主题: 背景取主题 surface(与 miuix Scaffold 的底色一致), 图标按背景明暗
+ * 在深/浅之间切换。需在 `MiuixTheme` 内调用。
+ *
+ * AppCompat 的 DayNight 主题**没有**定义 `android:windowLightStatusBar`(已核对 appcompat
+ * 1.6.1 全部 values-* 资源), 该属性默认为 false, 日间模式下状态栏图标依然是白色, 故在此显式跟随。
+ */
+@Composable
+fun CouixStatusBar() {
+    val view = LocalView.current
+    val surface = MiuixTheme.colorScheme.surface
+    // 亮底配深色图标, 暗底配浅色图标: 以感知亮度判定, 不依赖主题模式枚举。
+    val lightIcons = surface.luminance() > 0.5f
+    DisposableEffect(view, surface, lightIcons) {
+        val window = (view.context as? Activity)?.window
+        if (window != null) {
+            window.statusBarColor = surface.toArgb()
+            WindowInsetsControllerCompat(window, view).isAppearanceLightStatusBars = lightIcons
+        }
+        onDispose { }
+    }
+}
+
+// 回弹位移的渐近上限: 橡皮筋模型的极限值, 实际永远达不到(见 couixOverscrollStep),
+// 因此这里可以取一个偏大的行程而不必担心"拖到底"的手感。
+private val COUIX_OVERSCROLL_MAX = 180.dp
+
+// 起始跟手系数: 位移为 0 时, 手指移动 1px 内容就移动这么多(1 = 完全跟手)。
+// 之后随剩余行程线性衰减, 越拖越沉, 但衰减到 0 需要无限行程 —— 全程没有硬停点。
+private const val COUIX_OVERSCROLL_DRAG = 1f
+
+/**
+ * 让列表在任意界面都能上滑/下滑回弹。
+ *
+ * Compose 内置的 overscroll 只在内容可滚动时才派发(`ScrollingLogic.shouldDispatchOverscroll`
+ * 要求 canScrollForward || canScrollBackward), 内容不足一屏的界面拖动没有任何反馈。这里接管
+ * 列表吃不掉的手势增量: 内容不可滚动时按带阻尼的比例转成整列位移, 松手后弹回原位; 内容
+ * 可滚动的界面仍走系统 overscroll, 不重复叠加。
+ */
+@Composable
+fun Modifier.couixOverscroll(listState: LazyListState): Modifier {
+    val density = LocalDensity.current
+    val maxPx = with(density) { COUIX_OVERSCROLL_MAX.toPx() }
+    val scope = rememberCoroutineScope()
+    var offsetPx by remember { mutableFloatStateOf(0f) }
+    var releaseJob by remember { mutableStateOf<Job?>(null) }
+
+    val connection = remember(maxPx, scope) {
+        object : NestedScrollConnection {
+            // 已有位移时, 反向拖动先 1:1 原路返回; 归零后剩余增量交还列表(内容不可滚动时无剩余)。
+            // delta 与屏幕坐标同向: 上滑为负、下滑为正, 与 offsetPx 同号。
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val delta = available.y
+                if (offsetPx == 0f || delta == 0f) return Offset.Zero
+                if (delta * offsetPx > 0f) return Offset.Zero
+                releaseJob?.cancel()
+                releaseJob = null
+                val next = if (offsetPx > 0f) {
+                    (offsetPx + delta).coerceAtLeast(0f)
+                } else {
+                    (offsetPx + delta).coerceAtMost(0f)
+                }
+                val consumed = next - offsetPx
+                offsetPx = next
+                return Offset(0f, consumed)
+            }
+
+            // 列表吃不到的增量(内容不足一屏)转成回弹位移。
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                if (available.y == 0f) return Offset.Zero
+                if (listState.canScrollBackward || listState.canScrollForward) return Offset.Zero
+                releaseJob?.cancel()
+                releaseJob = null
+                offsetPx = couixOverscrollStep(offsetPx, available.y, maxPx)
+                return Offset(0f, available.y)
+            }
+
+            // 松手: 吃掉全部速度(内容不可滚动时本来也没有 fling), 位移弹回 0。
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (offsetPx == 0f) return Velocity.Zero
+                releaseJob?.cancel()
+                releaseJob = scope.launch {
+                    animate(
+                        offsetPx,
+                        0f,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessMediumLow,
+                        ),
+                    ) { value, _ -> offsetPx = value }
+                }
+                return available
+            }
+        }
+    }
+
+    return this
+        // 位移后裁掉溢出部分, 避免上滑时内容盖住标题栏。
+        .clipToBounds()
+        .drawWithContent { translate(top = offsetPx) { this@drawWithContent.drawContent() } }
+        .nestedScroll(connection)
+}
+
+/**
+ * 回弹位移推进: 橡皮筋模型。有效系数与剩余行程成正比,
+ *
+ *     offset' = offset + delta * DRAG * (maxPx - |offset|) / maxPx
+ *
+ * 解这个递推(连续形式 d(offset)/d(手指) = DRAG * (1 - offset/maxPx))得
+ * offset = maxPx * (1 - e^(-DRAG * 手指行程 / maxPx)): 起点斜率为 DRAG(完全跟手),
+ * 随行程指数趋近 maxPx 而**永远达不到**。因此不做 clamp —— 一旦 clamp 就等于设了个硬停点,
+ * 手指还在动而内容突然不动了, 正是要避免的手感。
+ */
+private fun couixOverscrollStep(current: Float, delta: Float, maxPx: Float): Float {
+    if (maxPx <= 0f) return 0f
+    val remaining = (maxPx - abs(current)).coerceIn(0f, maxPx)
+    return current + delta * COUIX_OVERSCROLL_DRAG * (remaining / maxPx)
+}
+
 /** 标题栏底部分割线: 随 [progress] 从两端内缩逐渐延长至通栏。 */
 @Composable
 internal fun BoxScope.CouixTopBarDivider(progress: Float) {
@@ -385,6 +564,194 @@ internal fun CouixCategoryRow(
                 .padding(start = if (subtitle != null) COUIX_CATEGORY_SUBTITLE_GAP else 0.dp, end = 0.dp)
                 .size(COUIX_CATEGORY_CHEVRON),
         )
+    }
+}
+
+/** 按 log 曲线采样出渐变的 stop 表: 第 i 个 stop 位于 t = i/N, alpha 为 log 衰减值 × [alpha]。 */
+private fun glowStops(color: Color, alpha: Float): Array<Pair<Float, Color>> {
+    val k = COUIX_HEADER_GLOW_LOG_K.toDouble()
+    val denom = ln(1.0 + k)
+    return Array(COUIX_HEADER_GLOW_STOP_COUNT + 1) { i ->
+        val t = i.toFloat() / COUIX_HEADER_GLOW_STOP_COUNT
+        val falloff = (1.0 - ln(1.0 + k * t) / denom).toFloat()
+        t to color.copy(alpha = alpha * falloff)
+    }
+}
+
+/** 首页第一张 group 卡片顶部的机型横幅: 底色上叠两层同心椭圆光晕(圆心沉在底边之下),
+ *  外层为压扁的椭圆放射, 内层再叠一个更扁的椭圆把紧邻底边的一带提亮。
+ *  设备名粗体居中(再上移一点), 系统名贴底, system 未取到时只显示设备名。
+ *  shape 由调用方给出: 嵌在卡片顶部时只需裁顶部两角, 单独成卡片时才四角全裁。
+ *  亮色主题下底色/渐变色另取一套, 文字色随之切换(见下方 light 常量)。 */
+@Composable
+internal fun CouixDeviceHeader(
+    model: String,
+    system: String?,
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(COUIX_CARD_CORNER),
+) {
+    // miuix 未直接暴露当前明暗, 用系统配置判定(主题为 ColorSchemeMode.System, 两者一致)。
+    val light = !isSystemInDarkTheme()
+    val baseColor = if (light) COUIX_HEADER_BASE_LIGHT else COUIX_HEADER_BASE_DARK
+    val glowColor = if (light) COUIX_HEADER_GLOW_LIGHT else COUIX_HEADER_GLOW_DARK
+    // 亮底上白字不可读, 故文字色跟着主题走: 暗底用纯白, 亮底用 onSurface。
+    val textColor = if (light) MiuixTheme.colorScheme.onSurface else Color.White
+    // 两层光晕共用同一条 log 衰减曲线, 只有整体 alpha 不同; 按颜色缓存避免每次重组重算。
+    val outerStops = remember(glowColor) { glowStops(glowColor, 1f) }
+    val coreStops = remember(glowColor) { glowStops(glowColor, COUIX_HEADER_CORE_ALPHA) }
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(COUIX_HEADER_HEIGHT)
+            .clip(shape)
+            .drawBehind {
+                drawRect(color = baseColor)
+                val cx = size.width / 2f
+                val cy = size.height * COUIX_HEADER_GLOW_CENTER_Y_RATIO
+                // 画一层以 (cx, cy) 为心、横/纵半径分别为 radiusX/radiusY 的椭圆光晕。
+                // radialGradient 只会画正圆, 故按 k = radiusY/radiusX 纵向压缩 canvas 得到椭圆。
+                // 注意压缩同时会缩小所绘矩形: 若按 size 绘制, 矩形纵向只覆盖 [cy-k*cy, cy+k*(h-cy)],
+                // 渐变在该边界处 alpha 尚未归零, 会露出一条硬边(看起来就是被裁切的圆)。
+                // 因此把矩形的纵向范围按 1/k 反向放大, 使其压缩后正好铺满整张横幅。
+                fun drawGlowEllipse(
+                    radiusX: Float,
+                    radiusY: Float,
+                    stops: Array<Pair<Float, Color>>,
+                ) {
+                    val k = radiusY / radiusX
+                    scale(scaleX = 1f, scaleY = k, pivot = Offset(cx, cy)) {
+                        val top = cy + (0f - cy) / k
+                        val bottom = cy + (size.height - cy) / k
+                        drawRect(
+                            brush = Brush.radialGradient(
+                                colorStops = stops,
+                                center = Offset(cx, cy),
+                                radius = radiusX,
+                            ),
+                            topLeft = Offset(0f, top),
+                            size = Size(size.width, bottom - top),
+                        )
+                    }
+                }
+                drawGlowEllipse(
+                    radiusX = size.width * COUIX_HEADER_GLOW_RADIUS_RATIO,
+                    radiusY = size.height * COUIX_HEADER_GLOW_RY_RATIO,
+                    stops = outerStops,
+                )
+                drawGlowEllipse(
+                    radiusX = size.width * COUIX_HEADER_CORE_RADIUS_RATIO,
+                    radiusY = size.height * COUIX_HEADER_CORE_RY_RATIO,
+                    stops = coreStops,
+                )
+            },
+    ) {
+        // 设备名在横幅正中, 再上移 COUIX_HEADER_MODEL_LIFT。
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(y = -COUIX_HEADER_MODEL_LIFT),
+            contentAlignment = Alignment.Center,
+        ) {
+            BasicText(
+                text = model,
+                style = MiuixTheme.textStyles.title1.copy(
+                    color = textColor,
+                    fontWeight = FontWeight.ExtraBold,
+                ),
+            )
+        }
+        // 系统名贴横幅底边。
+        if (!system.isNullOrEmpty()) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .padding(bottom = COUIX_HEADER_SYSTEM_BOTTOM),
+                contentAlignment = Alignment.BottomCenter,
+            ) {
+                BasicText(
+                    text = system,
+                    style = MiuixTheme.textStyles.body1.copy(
+                        color = textColor.copy(alpha = COUIX_HEADER_SYSTEM_ALPHA),
+                        fontWeight = FontWeight.Bold,
+                    ),
+                )
+            }
+        }
+    }
+}
+
+// 两个等宽可点击格横向并排, 中间以 1px 竖线分隔(纵向内缩与列表项一致)。
+// 无图标、无开关, 只放标题, 用于并排摆放一次性动作(如启动 KernelSU / LSPosed)。
+// 与 CouixCategoryRow 同高, 标题各自在半区内左对齐。
+@Composable
+internal fun CouixActionPairRow(
+    leftTitle: String,
+    onLeftClick: () -> Unit,
+    rightTitle: String,
+    onRightClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    val dividerWidth: Dp = (1f / density.density).dp
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CouixActionCell(
+            title = leftTitle,
+            onClick = onLeftClick,
+            modifier = Modifier.weight(1f),
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(vertical = COUIX_ROW_VPADDING)
+                .width(dividerWidth)
+                .background(MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.2f)),
+        )
+        CouixActionCell(
+            title = rightTitle,
+            onClick = onRightClick,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun CouixActionCell(
+    title: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val summary = MiuixTheme.colorScheme.onSurfaceVariantSummary
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .clickable { onClick() }
+            .padding(horizontal = COUIX_ROW_HPADDING, vertical = 13.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BasicText(
+                text = title,
+                style = MiuixTheme.textStyles.body1.copy(
+                    color = MiuixTheme.colorScheme.onSurface,
+                ),
+                modifier = Modifier.weight(1f),
+            )
+            // 与分类入口行同一枚前进箭头(同尺寸、同压低后的不透明度)。
+            Icon(
+                imageVector = MiuixIcons.ChevronForward,
+                contentDescription = null,
+                tint = summary.copy(alpha = summary.alpha * COUIX_CATEGORY_CHEVRON_ALPHA),
+                modifier = Modifier.size(COUIX_CATEGORY_CHEVRON),
+            )
+        }
     }
 }
 
@@ -782,11 +1149,17 @@ fun CouixMasterToggle(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    // 主开关上方追加的内容(如首页的机型横幅), 与主开关同卡片、以分割线隔开。
+    aboveContent: (@Composable ColumnScope.() -> Unit)? = null,
     // 主开关下方追加的内容(如首页的隐藏桌面图标开关), 与主开关同卡片、以分割线隔开。
     belowContent: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
     val tick = couixSwitchTick()
     CouixCard(modifier = modifier) {
+        if (aboveContent != null) {
+            aboveContent()
+            CouixItemDivider()
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()

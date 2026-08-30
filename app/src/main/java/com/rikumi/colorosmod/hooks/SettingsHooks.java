@@ -14,11 +14,10 @@ import android.view.View;
 import android.widget.TextView;
 import android.widget.TextSwitcher;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XSharedPreferences;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import com.rikumi.colorosmod.xposed.XC_MethodHook;
+import com.rikumi.colorosmod.xposed.XposedBridge;
+import com.rikumi.colorosmod.xposed.XposedHelpers;
+import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
 /**
  * 设置(com.android.settings) 作用域的全部 hook：首页图标风格(紧凑/列表)。

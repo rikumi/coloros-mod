@@ -19,16 +19,32 @@ import com.rikumi.colorosmod.hooks.SettingsHooks;
 import com.rikumi.colorosmod.hooks.StatusBarLyricHooks;
 import com.rikumi.colorosmod.hooks.SystemServerHooks;
 import com.rikumi.colorosmod.hooks.SystemUiHooks;
+import com.rikumi.colorosmod.xposed.XC_LoadPackage;
+import com.rikumi.colorosmod.xposed.XC_MethodHook;
+import com.rikumi.colorosmod.xposed.XposedBridge;
+import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-import de.robv.android.xposed.IXposedHookLoadPackage;
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import androidx.annotation.NonNull;
+
+import io.github.libxposed.api.XposedModule;
+import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam;
+import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam;
+import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam;
 
 // ColorOS (Oplus) 系统界面调整, 经 LSPosed 注入。
 // 每个功能由 prefs 中各自的开关控制; 各 hook 的目标类/方法与逆向结论见对应方法上的注释。
-public class XposedInit implements IXposedHookLoadPackage {
+//
+// 采用新版(libxposed)API: 入口实现 io.github.libxposed.api.XposedModule, 声明见
+// META-INF/xposed/java_init.list, 作用域见 META-INF/xposed/scope.list, 配置见
+// META-INF/xposed/module.prop。新版框架不再提供 XposedHelpers 等旧接口, 本模块
+// 在 com.rikumi.colorosmod.xposed 包里自建了等价的兼容层, hooks 下代码无需改动。
+public class XposedInit extends XposedModule {
+
+    // 当前进程信息, 由 onModuleLoaded 记录。system_server 里 "android" 包也会走
+    // onPackageLoaded, 只有靠它区分"这是 system_server 而不是普通应用里的框架包"。
+    private static volatile String sProcessName = "";
+    private static volatile boolean sIsSystemServer = false;
+    private static volatile boolean sSystemServerHooked = false;
 
     public static final String TAG = "ColorOSMod";
     public static final String MODULE_PACKAGE = "com.rikumi.colorosmod";
@@ -115,6 +131,9 @@ public class XposedInit implements IXposedHookLoadPackage {
     // moveToFront 拉回前台; 不能在提交中途拦截 —— 会触发 "Input dispatching timed out" ANR。
     // 需把模块作用域加入 "android"(system_server), 旧版 SystemUI 内 hook 路径已废弃。
     public static final String KEY_FLOAT_WINDOW_EDGE_HANG_ENABLED = "float_window_edge_hang_enabled";
+    // 贴边挂机静音: 挂机时经系统多应用音量通道把该应用音量置 0, 回到前台时恢复原值。
+    public static final String KEY_FLOAT_WINDOW_EDGE_HANG_MUTE_ENABLED =
+            "float_window_edge_hang_mute_enabled";
     // 横屏应用小窗保持比例: 系统对横屏应用硬编码 ratio=0.5625f(9:16), 与设备真实比例不符,
     // 这里在 system_server 内接管该 ratio 与 launchBounds, 让小窗 宽:高 = 屏幕 高:宽。
     public static final String KEY_FLOAT_WINDOW_LANDSCAPE_KEEP_RATIO_ENABLED =
@@ -332,8 +351,48 @@ public class XposedInit implements IXposedHookLoadPackage {
         Log.e(TAG, msg);
     }
 
+    // ---- 生命周期: 新版 API 把"包加载"与"system_server 启动"分成两个回调 ----
+
     @Override
-    public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lpparam) {
+    public void onModuleLoaded(@NonNull ModuleLoadedParam param) {
+        // 必须先拿到框架接口, 否则兼容层无法挂钩(见 XposedBridge#attachFramework)。
+        XposedBridge.attachFramework(this);
+        sProcessName = param.getProcessName();
+        sIsSystemServer = param.isSystemServer();
+        log("module loaded: framework=" + getFrameworkName() + " v" + getFrameworkVersion()
+                + " api=" + getApiVersion() + " process=" + sProcessName);
+    }
+
+    @Override
+    public void onPackageLoaded(@NonNull PackageLoadedParam param) {
+        XC_LoadPackage.LoadPackageParam lpparam = new XC_LoadPackage.LoadPackageParam();
+        lpparam.packageName = param.getPackageName();
+        lpparam.processName = sProcessName;
+        lpparam.classLoader = param.getDefaultClassLoader();
+        lpparam.appInfo = param.getApplicationInfo();
+        lpparam.isFirstApplication = param.isFirstPackage();
+        if ("android".equals(lpparam.packageName)) {
+            // 普通应用进程里也会加载 "android" 包, 那里的 system_server 钩子是找不到类的;
+            // 真正的 system_server 一律走 onSystemServerStarting, 这里只做兜底去重。
+            if (!sIsSystemServer || sSystemServerHooked) return;
+            sSystemServerHooked = true;
+        }
+        handleLoadPackage(lpparam);
+    }
+
+    @Override
+    public void onSystemServerStarting(@NonNull SystemServerStartingParam param) {
+        if (sSystemServerHooked) return;
+        sSystemServerHooked = true;
+        XC_LoadPackage.LoadPackageParam lpparam = new XC_LoadPackage.LoadPackageParam();
+        lpparam.packageName = "android";
+        lpparam.processName = sProcessName;
+        lpparam.classLoader = param.getClassLoader();
+        lpparam.isFirstApplication = true;
+        handleLoadPackage(lpparam);
+    }
+
+    private void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lpparam) {
         log("handleLoadPackage pkg=" + lpparam.packageName);
         // 后台预热模块设置(见 startSettingsLoader 注释): 尽早开始, 让首次 readBool 通常已有值,
         // 避免开机早期把默认值固化下来。
@@ -353,6 +412,8 @@ public class XposedInit implements IXposedHookLoadPackage {
         } else if ("android".equals(lpparam.packageName)) {
             // system_server: 承载"贴边最小化"的真正提交逻辑(com.android.server.wm.FlexibleTaskController)
             SystemServerHooks.hookFloatWindowEdgeHangSystemServer(lpparam);
+            // system_server: 贴边挂机静音, 走系统多应用音量通道
+            SystemServerHooks.hookFloatWindowEdgeHangMute(lpparam);
             // system_server: 横屏应用小窗保持比例(com.android.server.wm.FlexibleTaskController)
             SystemServerHooks.hookFloatWindowLandscapeKeepRatio(lpparam);
         }

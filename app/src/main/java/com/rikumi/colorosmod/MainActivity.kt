@@ -5,7 +5,9 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -20,12 +22,14 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -97,6 +101,7 @@ class MainActivity : ComponentActivity() {
                     },
                     textStyles = couixTextStyles(),
                 ) {
+                    CouixStatusBar()
                     SettingsScreen()
                 }
             }
@@ -172,6 +177,7 @@ private val HIDDEN = listOf(
 private val FLOATWINDOW = listOf(
     SwitchItem("recents_hide_freeform_enabled", "多任务隐藏小窗应用"),
     SwitchItem("float_window_edge_hang_enabled", "悬浮小窗贴边挂机"),
+    SwitchItem("float_window_edge_hang_mute_enabled", "小窗贴边挂机静音"),
     SwitchItem("float_window_landscape_keep_ratio_enabled", "横屏应用小窗保持比例", "横屏应用小窗的宽高比等于屏幕高宽比"),
 )
 
@@ -354,6 +360,11 @@ private fun HomeScreen(
 ) {
     val ctx = LocalContext.current
     val listState = rememberLazyListState()
+    // 系统名要读 getprop(root shell), 不能阻塞首帧: 先空着, IO 线程取到后再补上。
+    var system by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        system = withContext(Dispatchers.IO) { systemLabel() }
+    }
     Scaffold(
         topBar = {
             CouixLargeTitle(
@@ -367,9 +378,9 @@ private fun HomeScreen(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                .couixOverscroll(listState),
         ) {
-            item { CouixSmallTitle(text = "By Rikumi / Couix 基于 Miuix 魔改 / 让 Flyme 精神永续") }
             item {
                 CouixMasterToggle(
                     checked = masterChecked,
@@ -377,7 +388,21 @@ private fun HomeScreen(
                     // 启用后无需再解释, 仅未启用时提示。
                     subtitle = if (masterChecked) null else HOME_MASTER_HINT,
                     onCheckedChange = onMasterChange,
-                    belowContent = { HideLauncherIconRow(ctx) },
+                    // 机型横幅作为第一张卡片的首项, 只裁顶部两角(下方与开关行相接)。
+                    aboveContent = {
+                        CouixDeviceHeader(
+                            model = deviceName(ctx),
+                            system = system,
+                            shape = RoundedCornerShape(
+                                topStart = COUIX_CARD_CORNER,
+                                topEnd = COUIX_CARD_CORNER,
+                            ),
+                        )
+                    },
+                    belowContent = {
+                        HideLauncherIconRow(ctx)
+                        LaunchAppsRows(ctx)
+                    },
                 )
             }
             CATEGORY_GROUPS.forEach { group ->
@@ -453,7 +478,8 @@ private fun CategoryScreen(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                .couixOverscroll(listState),
         ) {
             // 第一个 group 的 header: 说明滑块两端值的含义。
             item { CouixSmallTitle(text = SLIDER_GROUP_HINT) }
@@ -520,6 +546,82 @@ private fun HideLauncherIconRow(ctx: Context) {
         title = "隐藏模块桌面图标",
         subtitle = "需在 LSPosed 中关闭强制显示模块图标",
     )
+}
+
+// 设备名称: 用户在设置里改过的名字存在 Settings.Global["device_name"](该机为 "Rikumi X8s"),
+// 未设置时退回 Build.MODEL(如 PKT110)。
+private fun deviceName(ctx: Context): String {
+    val name = Settings.Global.getString(ctx.contentResolver, Settings.Global.DEVICE_NAME)
+    return if (name.isNullOrBlank()) Build.MODEL else name
+}
+
+// ROM 大版本: Oplus 系把版本写在这几个只读属性里(该机 oplusrom.display=16.0.10、
+// oplusrom=V16.1.0), 取前两个数字段作为大版本(16.0)。属性只能通过 getprop 读, 故走 root shell。
+// 逐个尝试: 新版 oplusrom.display -> oplusrom -> 旧版 opporom -> realme 分支的 realmeui。
+private fun romVersion(): String? {
+    for (key in arrayOf(
+        "ro.build.version.oplusrom.display",
+        "ro.build.version.oplusrom",
+        "ro.build.version.opporom",
+        "ro.build.version.realmeui",
+    )) {
+        val major = runRoot("getprop $key")?.trim()?.let { Regex("\\d+\\.\\d+").find(it)?.value }
+        if (major != null) return major
+    }
+    return null
+}
+
+// 系统名: 版本取自系统属性(见上), 名称取自 ro.product.brand(公开 API Build.BRAND, 该机为 OPPO)。
+// 三者(品牌 + 版本)都是系统直接给出的值, 不做其它推测; 品牌不在 Oplus 三家里则不显示该行。
+private fun systemLabel(): String? {
+    val name = when {
+        Build.BRAND.equals("realme", ignoreCase = true) -> "realmeUI"
+        Build.BRAND.contains("oneplus", ignoreCase = true) -> "OxygenOS"
+        Build.BRAND.contains("oppo", ignoreCase = true) -> "ColorOS"
+        else -> return null
+    }
+    val version = romVersion() ?: return name
+    return "$name $version"
+}
+
+/**
+ * 首页首个 group 下方的两个快捷启动行: 拉起 KernelSU / LSPosed 管理器。
+ * 两者均需在 root shell 中启动 —— 普通 app 进程受后台启动限制, 也无权发 SECRET_CODE 广播。
+ */
+@Composable
+private fun LaunchAppsRows(ctx: Context) {
+    // root shell 启动会阻塞到命令结束(冷启动管理器可达秒级), 放到 IO 线程避免卡住 UI。
+    val scope = rememberCoroutineScope()
+    CouixItemDivider()
+    CouixActionPairRow(
+        leftTitle = "启动 KernelSU",
+        onLeftClick = { scope.launch(Dispatchers.IO) { launchApp(ctx, KERNELSU_LAUNCH) } },
+        rightTitle = "启动 LSPosed",
+        onRightClick = { scope.launch(Dispatchers.IO) { launchApp(ctx, lsposedLaunchCmd()) } },
+    )
+}
+
+// KernelSU 管理器有正常的应用入口, 直接拉起其主界面。
+private const val KERNELSU_LAUNCH = "am start -n me.weishu.kernelsu/.ui.MainActivity"
+
+// LSPosed 管理器不常驻应用列表, 由模块 action.sh 以 SECRET_CODE 5776733 唤起(Android 10 起
+// 广播 action 从 android.provider.Telephony 迁到 android.telephony.action)。
+private fun lsposedLaunchCmd(): String {
+    val action = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        "android.telephony.action.SECRET_CODE"
+    } else {
+        "android.provider.Telephony.SECRET_CODE"
+    }
+    return "am broadcast -a $action -d android_secret_code://5776733 android"
+}
+
+private fun launchApp(ctx: Context, command: String) {
+    if (runRoot(command) == null) {
+        // Toast 需回主线程: 本函数在 IO 线程被调用。
+        Handler(ctx.mainLooper).post {
+            android.widget.Toast.makeText(ctx, "未授予 root 权限", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
 }
 
 /** 标题栏右侧的重启菜单（首页与子页面共用）。 */

@@ -12,7 +12,7 @@
   `OplusQSFooterImpl#updateResources$15`（页脚日期/设置按钮）。
 - **隐藏应用免验证打开**（安全中心 / `com.oplus.safecenter`）：见 §8。
 - **Feature 10：控制中心背景压暗（qs_scrim_translucent_enabled）**：hook `OplusQSContainerImpl#onFinishInflate` + `#onVisibilityChanged`，把 `mBackground`（`quick_settings_background`）染成半透明黑（见 §12）。
-- **Feature 18：悬浮小窗贴边挂机（float_window_edge_hang_enabled）**：作用域扩展到 **`android`（system_server）**。在系统原生 to-float（缩成竖条把手 + 切后台）完成后，于 `TaskExtImpl#moveTaskToBackForPanorama` 的 **afterHook** 主动 `moveToFront` 把任务拉回前台，使其持续前台运行（挂机），而不是最小化到后台（见 §14）。仅对"贴边成浮窗"一路（`isInFloatingList(taskId)` 为真）生效，普通最小化不介入。稳定无 ANR。
+- **Feature 18：悬浮小窗贴边挂机（float_window_edge_hang_enabled）**：作用域扩展到 **`android`（system_server）**。当前实现为在 `TaskExtImpl#moveTaskToBackForPanorama` 的 **beforeHook** 里 `setResult(null)` 跳过 `Task.moveTaskToBack`，任务因此留在台前继续挂机，并在 `Task#prepareSurfaces` 后持续把该任务的 surface 保持隐藏（见 §14 与 §30）。仅对"贴边成浮窗"一路（`isInFloatingList(taskId)` 为真）生效，普通最小化不介入。稳定无 ANR。
 
 本笔记聚焦第 3 项（QS 状态栏图标「双重下沉 / 太偏下」）、Feature 10 及 Feature 18 的排查。
 
@@ -160,7 +160,7 @@ adb pull /sdcard/ui_qs.xml /tmp/ui_qs.xml
 | 应用隐藏标题改文件夹名 hook | **真正生效：launcher `hookLauncher` 内 hook `DeepProtectedAppsManager#createVirtualFolder`（afterHook 改 `folderInfo.title`）**；安全中心 `hookSafecenterTitleFolder()`（setTitle）仅覆盖列表界面，用户通常看不到（见 §9/§10）|
 | 桌面双指张开打开隐藏应用 hook | `hookLauncher` 内 hook `com.android.launcher3.dragndrop.DragLayer#dispatchTouchEvent`，被动 `ScaleGestureDetector` 检测 `accum>1.5` → `openHideAppsFolder()` → `DeepProtectedAppsManager.getInstance(ctx).showHideApps(ctx,false)`（见 §10）|
 | Feature 10 背景变暗 | `hookQsScrimTranslucent()` hook `ScrimView#setDrawable`，把 `WallpaperBlurDrawable` 替换为 `TranslucentBlackDrawable`（见 §12）|
-| 贴边挂机 hook | `hookFloatWindowEdgeHangSystemServer()`（**android/system_server 作用域**）hook `com.android.server.wm.TaskExtImpl#moveTaskToBackForPanorama`（`(Lcom/android/server/wm/Task;ZI)V`, after）；对"贴边成浮窗"一路（`FloatHandleController.isInFloatingList(taskId)` 为真）在系统原生 to-float 完成后 `moveToFront` 把任务拉回前台（挂机=前台运行）。不拦截 to-float 本身，故无 focused+hidden ANR（见 §14）。|
+| 贴边挂机 hook | `hookFloatWindowEdgeHangSystemServer()`（**android/system_server 作用域**）：① hook `com.android.server.wm.TaskExtImpl#moveTaskToBackForPanorama`（`(Lcom/android/server/wm/Task;ZI)V`, before）`setResult(null)` 跳过切后台，任务留台前挂机；② hook `Task#prepareSurfaces` after，对挂机中的任务持续 `getSyncTransaction().hide(surfaceControl)`（见 §14 / §30）。对"贴边成浮窗"一路（`FloatHandleController.isInFloatingList(taskId)` 为真）生效，普通最小化不介入。|
 | 框架 jar 反编译/签名核对 | `adb pull /system/framework/oplus-services.jar` + `$SDK/build-tools/30.0.3/dexdump`（`FlexibleTaskController` 在 `classes3.dex`，签名 `(Lcom/android/server/wm/AbsFlexibleTaskExitStrategy;)V`）|
 | 重载 system_server（仅用户同意后） | 只能使用项目既有的 `setprop ctl.restart zygote` 方式；禁止 `pkill -f system_server` / `killall system_server`，执行前必须先询问用户。|
 
@@ -440,7 +440,8 @@ FlexibleFloatHandleAnimationSpec.defaultCallAnimationEnd
 - **现象**：贴边后音量条不出、过一会 `ActivityManager: ANR in <app>` + `Reason: Input dispatching timed out (Application does not have a focused window)`。
 - **根因**：贴边后系统会**把真实窗口 `hide()` 隐藏**（只留竖条把手），这一步发生在 ② 的最小化动画里；而任务仍停留在前台。一旦我们**阻止任务切后台**（无论是 ① `exitFlexibleTaskWindowInnerLocked` 里 `setResult(null)` 取消整个提交，还是 ② `moveTaskToBackForPanorama` 里 `setResult(null)` 跳过后台化），结果都是 **"真实窗口已隐藏 + 任务仍 focused"** → 系统找不到有焦点的窗口 → 输入派发超时 → ANR。
 - **结论**：**"保持前台" 与 "只显示竖条（隐藏真实窗口）" 在输入焦点上互斥**。竖条形态必然隐藏真实窗口，所以必须让任务随之切后台（失焦）才稳定。系统原生 to-float 退出正是"形成竖条 + 切后台"，最稳定。
-- **最终做法**：`hookFloatWindowEdgeHangSystemServer` 不再"取消提交/跳过后台化"（那会 focused+hidden ANR），而是 **hook `TaskExtImpl#moveTaskToBackForPanorama` 的 afterHook**：系统原生 to-float 先把窗口缩成竖条、任务切后台（此时任务已后台、窗口 hidden，无焦点矛盾），**之后**才 `moveToFront` 把任务拉回前台——系统 bringToFront 会重新显示窗口（不再 hidden），任务前台且可见，无 ANR。仅对"贴边成浮窗"一路（`isInFloatingList` 为真）生效，普通最小化不介入。`moveToFront` 用多候选签名兜底（`moveToFront(String)` / `moveToFront(int,boolean,String)` / 经 ATMS `moveTaskToFront`）。
+- **最终做法（2026-08-30 改版，见 §30）**：`hookFloatWindowEdgeHangSystemServer` **hook `TaskExtImpl#moveTaskToBackForPanorama` 的 beforeHook 直接 `setResult(null)`**，只跳过"切后台"这一步，不阻止 to-float 本身的窗口隐藏动画。任务留在台前（挂机）、surface 保持隐藏，焦点矛盾由"surface 隐藏 + 仍在 floating list"这一状态自身承担，实测无 ANR。
+  （2026-08-30 之前的旧做法是 afterHook 里 `moveToFront` 拉回前台，会重新 show 出真实窗口，已废弃。）
 
 ### 用 dexdump 核对签名（不凭空猜）
 ```sh
@@ -1960,3 +1961,161 @@ SystemUI `NotificationIconAreaType` 枚举序、仓库
 **必须只有一处写这个流**：曾两处各写一份，导致图标↔数字每 250ms 抖动。
 轮询必要：歌词状态变化不触发系统的设置观察者。
 儿童模式/专注模式下仓库仍输出 NOTIFICATION_NOT_SHOW，是系统行为，保留。
+
+## 30. 悬浮小窗贴边挂机：锁屏再解锁后真实窗口重现（2026-08-30 修复）
+
+**现象**：开启「悬浮小窗贴边挂机」后，小窗贴边挂机 → 锁屏 → 解锁，小窗应用的
+**真实窗口**会重新出现在屏幕上（应只有边缘把手）。
+
+### 根因
+
+`ActivityRecord#setVisibility` 在锁屏/解锁的可见性重算中会**连带把 Task 的 surface show 出来**
+（`getSyncTransaction().show(task)` + `Task.mLastSurfaceShowing = true`）。
+贴边挂机只在 to-float 动画里 hide 过一次 surface，属于"一次性动作"，不是"不变式"，
+所以解锁后系统重新 show，真实窗口就回来了。
+
+### 修复（`SystemServerHooks#hookFloatWindowEdgeHangSystemServer`）
+
+把"隐藏"从一次性动作改成**恒常不变式**：
+
+1. `TaskExtImpl#moveTaskToBackForPanorama` beforeHook `setResult(null)` 时，把 taskId 记入
+   `sHungTaskIds`（`Collections.synchronizedSet`）。
+2. 新增 hook `com.android.server.wm.Task#prepareSurfaces()`：
+   - **before**：若 `task.mTaskId` 在 `sHungTaskIds` 中，用
+     `setAdditionalInstanceField(task, LAST_SHOWING, mLastSurfaceShowing)` 存下当前值
+     （用 per-task 附加字段而非 ThreadLocal，避免嵌套 Task 互相覆盖）；
+   - **after**：
+     - 先无条件取出并 `removeAdditionalInstanceField`（保证任何提前 return 路径都不残留）；
+     - 若该 taskId **已不在 `isInFloatingList`** 中（说明用户点把手还原成浮窗、或任务已被移除），
+       从 `sHungTaskIds` 移除、把 `mLastSurfaceShowing` 置 **false** 后 return，交还系统；
+       —— 置 false 是必需的：否则系统认为 surface 已是 shown，不再下发 show，窗口反倒不再显示；
+     - 否则 `getSurfaceControl()` 有效时 `getSyncTransaction().hide(sc)`，每帧重新压住。
+   - 检测到 before=false / after=true（系统重新 show 了）时打一条 `Log.e` 便于确认。
+
+### 要点与坑
+
+- 隐藏必须放在 `prepareSurfaces` **之后**：`prepareSurfaces` 内部自己会按
+  `hasNoSurfaceShowing()` 等条件下发 hide/show，放 before 会被它覆盖。
+- `Task#prepareSurfaces()` 无参，定义在 `services.jar` 的 `classes2.dex`（`WindowContainer`
+  的 `prepareSurfaces()` 是 protected，`Task` 覆写为 public，hook `Task` 才不会扩散）。
+- 与 §14 旧做法（afterHook `moveToFront`）的区别：旧做法会重新 show 出真实窗口，正是本 bug 的
+  另一条触发路径；现在改为只跳过 `moveTaskToBack`，不再动前台状态。
+- `sHungTaskIds` 只在 system_server 内存中，zygote 软重载后清空；此时已挂机的任务仍在
+  floating list，点把手走 `exitFlexibleTask` 正常还原，无残留风险。
+
+### 验证（用户实机确认通过）
+
+贴边挂机 → 锁屏 → 解锁：只有边缘把手，**不再出现真实窗口**；点把手仍能正常还原成浮窗。
+改动只在 `android` 作用域，需重载 zygote 才生效（必须先征求用户同意，且只能用
+`setprop ctl.restart zygote`）。
+
+## 31. 悬浮小窗贴边挂机：解锁后焦点落回小窗（2026-08-30 修复，**效果待验证**）
+
+**现象**：贴边挂机 → 锁屏 → 解锁，焦点落到挂机小窗上；小窗 surface 已被隐藏，焦点在不可见
+窗口上导致音量键等按键事件 dispatch 失败。
+
+### 关键逆向结论（均已核对源码，勿再走老路）
+
+1. **`FlexibleTaskController#setFocusTask(Task)` 不能用来转移焦点**（曾长期使用，实测无效）。
+   它最终是 `ATMS#setFocusedTask(taskId, null)`（FlexibleTaskController.java:9318）；
+   而 `setFocusedTask(int, ActivityRecord)`（ActivityTaskManagerService.java:1738）只在
+   `r.moveFocusableActivityToTop("setFocusedTask")` 返回 true 时才走
+   `resumeFocusedTasksTopActivities()` 真正转移焦点；`touchedActivity == null` 且移不动时
+   **什么都不做**（1769 行 else 分支只处理 embedded task）。
+   → 要么无效；一旦移动成功，后方任务被顶到最前并 resume，挂机任务被 pause，挂机直接失效。
+2. **"只改焦点、不动任务栈"的正确做法**取自 AOSP 自身的 embedded 分支
+   （ActivityTaskManagerService.java:1769-1772）：
+   `DisplayContent#setFocusedApp(ar)` + `WindowManagerService#updateFocusedWindowLocked(0, true)`。
+   `setFocusedApp`（DisplayContent.java:3228）内部会 `getInputMonitor().setFocusedAppLw(newFocus)`，
+   input 侧焦点一并更新 —— 这正是音量键 dispatch 所需要的那一环。
+3. **判定焦点在哪**：用 `DisplayContent.mFocusedApp`（DisplayContent.java:174）比对
+   `getTask()`；`Task` 自身**没有**可靠的 `isFocused()`（勿再用它）。
+4. **取 FlexibleTaskController 实例**：`getTaskUnderFlexible` 是它的 **private 实例方法**
+   （FlexibleTaskController.java:12689，排除小窗与 windowingMode==2），必须先
+   `FlexibleWindowManagerService.getInstance(null).getFlexibleTaskController()` 拿到实例再反射调用；
+   直接对 Class 对象调用必抛 NoSuchMethodError（会被 catch 静默吞掉，表现为"无声失效"）。
+
+### 实现（`SystemServerHooks`）
+
+1. `focusTaskBehind(Object floatTask)`：`getTaskUnderFlexible` + 校验
+   `isTopActivityFocusable() / isVisible()` → `getTopNonFinishingActivity()` →
+   `DisplayContent#setFocusedApp` + `updateFocusedWindowLocked(0, true)`。
+2. **不变式 hook** `DisplayContent#setFocusedApp(ActivityRecord)`（beforeHook）：若焦点正指向
+   `sHungTaskIds` 中的任务、且它仍在 floating list，就把 `args[0]` 换成后方任务的 ActivityRecord；
+   已脱离 floating list 则移除记录、交还系统。
+   —— 与 §30 把 surface 隐藏改成不变式同理：**一次性纠正会被后续焦点计算覆盖**。
+3. 保留 `FlexibleTaskController#notifyKeyguardStateChanged(boolean,boolean,int)` 的 afterHook：
+   仅 `keyguardChanged==true && keyguardShowing==false`（解锁）时，延后 500ms / 1500ms
+   各复查一次，兜住"焦点已停在小窗、之后不再有新的 setFocusedApp 调用"的情况。
+
+### 状态
+
+改动在 `android` 作用域，需重载 zygote 才生效。2026-08-30 用户选择延后自行重载，
+**行为效果尚未验证**。验证方式：贴边挂机 → 锁屏 → 解锁 → 按音量键应正常响应；
+并用只读命令确认焦点：`adb shell dumpsys window | grep -iE 'mCurrentFocus|mFocusedApp'`。
+
+### 排查提示
+
+若仍无效，先看 logcat 里是否有 `>>> edge_hang: redirect focus off hung task`（不变式命中）
+与 `>>> edge_hang: refocus behind on unlock`（延后复查命中）；两条都没有则焦点根本没被
+设到挂机任务上，问题在别处（注意 ColorOS 日志缓冲区刷新极快，重载后需尽快抓取）。
+## 32. Couix 任意界面始终可回弹（2026-08-30 实现）
+
+需求：内容不足一屏的界面（如「导航与手势」「应用小窗」子页面）拖动时毫无反馈，
+要求任意界面都能上滑/下滑回弹。
+
+根因（已从 Compose foundation 1.12 字节码确认）：`ScrollingLogic.shouldDispatchOverscroll`
+= `canScrollForward || canScrollBackward || overscrollEffect.isInProgress`。
+内容不可滚动时 **内置 overscroll 完全不派发**（`applyToScroll` / `applyToFling` 都被跳过），
+所以不足一屏的列表拉不动；松手时的 fling 路径仍会走到 `dispatchPreFling`（else 分支直接
+调用 `performFling`），所以父级 `NestedScrollConnection` 能拿到 pre/post scroll 与 pre fling。
+
+实现（`Couix.kt`）：
+- `Modifier.couixOverscroll(listState)` = `clipToBounds()` +
+  `drawWithContent { translate(top = offsetPx) { this@drawWithContent.drawContent() } }` +
+  `nestedScroll(connection)`，首页与子页面的 `LazyColumn` 都挂上（在 `.padding(padding)` 之后）。
+  用 `drawWithContent` 而非 `graphicsLayer`：绘制阶段的状态读取确定被观察，且不给整个列表
+  常驻一个合成层；`clipToBounds` 防止上滑时内容盖住标题栏。
+- `onPostScroll`：`listState` 两个方向都不可滚动时，把手势增量转成整列位移
+  （`couixOverscrollStep`）。**橡皮筋模型，不做 clamp**：
+  `offset' = offset + delta * DRAG * (maxPx - |offset|) / maxPx`。
+  连续形式 `d(offset)/d(手指) = DRAG * (1 - offset/maxPx)` 的解是
+  `offset = maxPx * (1 - e^(-DRAG * 手指行程 / maxPx))` —— 起点斜率 DRAG（完全跟手），
+  随行程指数趋近 `maxPx` 而**永远达不到**，所以行程常量可以取大（现为 180dp）也不会有
+  "拖到底"的感觉。手指拖 180dp 时实际位移约 113dp、拖 360dp 时约 156dp。
+  **关键：一旦用 `coerceIn` clamp 就等于设了硬停点，手指还在动内容却突然不动，
+  这是用户明确否掉的手感**，不要再改回去。当前 `COUIX_OVERSCROLL_DRAG = 1f`（起始 1:1 跟手）。
+  可滚动的界面直接让位给系统 overscroll，避免叠加。
+- `onPreScroll`：已有位移时反向拖动 1:1 原路返回，只消费到归零为止，余数交还列表。
+
+**符号约定（已从字节码确认，别再搞反）**：nested scroll 的 `available.y` 与**屏幕坐标同向**——
+上滑为负、下滑为正。依据是 `ScrollableNode$drag$2$1`：直接触摸时 `dragDelta` 乘以 **1.0f**
+（只有 indirect pointer 才乘 -1.0f）后交给 `scrollByWithOverscroll`，全程没有其它取反；
+`Offset` 打包为低 32 位 = y（`Offset.getY-impl` 用 `land 0xFFFFFFFF`）。
+因此 `offsetPx` 与 `available.y` 同号，直接 `step(offsetPx, available.y, maxPx)` 即可。
+第一版写成 `-available.y`，实机表现为"上滑下弹、下滑上弹"，已修正。
+- `onPreFling`：位移非零时吃掉全部速度并 `animate` 回 0（`DampingRatioNoBouncy` +
+  `StiffnessMediumLow` 的 spring），新一次拖动会 cancel 掉回弹 job。
+
+改动只在模块自己的 App（Compose UI），与 Xposed 作用域无关，重装 APK 即可，不需重启作用域。
+
+## 33. 模块界面状态栏跟随深浅色（2026-08-30 实现）
+
+现象：模块 App 的状态栏图标在日间模式下也是白色，看不清。
+
+**根因（已从 appcompat 1.6.1 资源确认）**：AppCompat 的全部 `values-*`（含 `values-v23`、
+`values-night-v8`）**都没有定义 `android:windowLightStatusBar`**。`Theme.AppCompat.DayNight.*`
+只在 `values` 下指向 Light 变体、在 `values-night-v8` 下指向 Dark 变体，但没有这项属性，
+因此它恒为 false，日间模式图标也是白的。指望 DayNight 主题自动切换是不成立的。
+
+实现（`Couix.kt` 新增 `CouixStatusBar()`，在 `MainActivity` 的 `MiuixTheme { }` 内调用，
+位于 `SettingsScreen()` 之前）：
+- 背景取 `MiuixTheme.colorScheme.surface` —— **不是 background**，因为 miuix `Scaffold`
+  的底色用的是 `Colors.getSurface()`（已从 `ScaffoldKt` 字节码确认），用 surface 才能与界面连成一片。
+- 前景用 `surface.luminance() > 0.5f` 判定明暗，再设 `WindowInsetsControllerCompat#isAppearanceLightStatusBars`，
+  不依赖主题模式枚举。
+- `DisposableEffect(view, surface, lightIcons)`：主题切换/系统深色模式切换导致 `surface`
+  变化时自动重设。
+
+首帧前（启动画面期间）状态栏仍由系统按主题默认值绘制，但 `windowSplashScreenBackground`
+已随日夜变化，实际无可见闪烁。这是模块 App 自身 UI，重装 APK 即可。

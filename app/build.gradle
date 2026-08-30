@@ -36,8 +36,11 @@ android {
 }
 
 dependencies {
-    // Xposed / LSPosed API, compile-only (provided by the framework at runtime)
-    compileOnly 'de.robv.android.xposed:api:82'
+    // 现代 Xposed API (libxposed), compile-only (provided by the framework at runtime).
+    // 入口见 META-INF/xposed/java_init.list, 作用域见 META-INF/xposed/scope.list。
+    compileOnly 'io.github.libxposed:api:102.0.0'
+    // api 构件里引用了 @SinceApi / @InternalApi, 编译期需要它们在 classpath 上。
+    compileOnly 'io.github.libxposed:annotation:1.0.0'
 
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'androidx.core:core-ktx:1.13.1'
