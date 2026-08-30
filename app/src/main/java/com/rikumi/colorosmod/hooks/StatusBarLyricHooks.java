@@ -69,7 +69,7 @@ public final class StatusBarLyricHooks {
     private static final float LYRIC_VERTICAL_OFFSET_DP = 1f;
 
     /** 歌词与左侧通知图标之间的外边距(dp): 位于歌词盒子**之外**, 歌词永远画不到它里面。 */
-    private static final int LYRIC_MARGIN_START_DP = 4;
+    private static final int LYRIC_MARGIN_START_DP = 2;
     // 歌词右边缘与流体云之间保留的间距(dp)。流体云(CapsulePluginContainer)覆盖在状态栏最上层,
     // 贴着它裁切会让歌词边缘被压住, 故右边界要再往左让出这一段。
     private static final int LYRIC_GAP_BEFORE_FLUID_DP = 4;
