@@ -94,9 +94,9 @@ public final class SystemServerHooks {
         }
     }
 
-// 横屏应用小窗保持比例: 系统 fillFlexibleTaskInfo 对横屏应用硬编码 ratio=0.5625f(9:16)。
-// afterHook fillFlexibleTaskInfo 改 ratio 并按系统同款公式重算 scale 与 launchBounds;
-// afterHook getFlexibleTaskAvailableRatioByActivity 把目标比例加入可选列表。
+    // 横屏应用小窗保持比例: 系统 fillFlexibleTaskInfo 对横屏应用硬编码 ratio=0.5625f(9:16)。
+    // afterHook fillFlexibleTaskInfo 改 ratio 并按系统同款公式重算 scale 与 launchBounds;
+    // afterHook getFlexibleTaskAvailableRatioByActivity 把目标比例加入可选列表。
     public static void hookFloatWindowLandscapeKeepRatio(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             final Class<?> ftc = XposedHelpers.findClass(
