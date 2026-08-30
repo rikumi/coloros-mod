@@ -138,6 +138,100 @@ public final class QsHooks {
         } catch (Throwable t) {
             log("HOOK FAIL OplusQSFooterImpl :: " + Log.getStackTraceString(t));
         }
+
+        // 分离模式 - 以下三个 hook 针对控制中心(QS)页的 fake 状态图标簇
+        // (fakeStatusIconContainer / statusIconsView)。通知中心页的图标簇不在 fake 容器里
+        // (通知中心展开时系统把 separateQsFakeLayout 置 GONE), 而由 OplusQSSimpleHeader 顶部
+        // 的 quick_qs_status_icons 承载, 见下方 OplusQSSimpleHeader#onInit hook。
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.oplus.systemui.plugins.qs.seamless.SeparateQSFakeStatusController$qsPanelExpandFractionListener$1",
+                    lpparam.classLoader, "onFractionChanged", float.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                float fraction = ((Float) param.args[0]).floatValue();
+                                Object controller = XposedHelpers.getObjectField(param.thisObject, "this$0");
+                                applySeparateStatusClusterFade(controller, fraction);
+                            } catch (Throwable t) {
+                                log("qs_status(separate) fade apply fail: " + t);
+                            }
+                        }
+
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                float fraction = ((Float) param.args[0]).floatValue();
+                                Object controller = XposedHelpers.getObjectField(param.thisObject, "this$0");
+                                applySeparateStatusClusterFade(controller, fraction);
+                            } catch (Throwable t) {
+                                log("qs_status(separate) fade after apply fail: " + t);
+                            }
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(
+                    "com.oplus.systemui.plugins.qs.seamless.SeparateQSFakeStatusController",
+                    lpparam.classLoader, "resetState", float.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                float fraction = ((Float) param.args[0]).floatValue();
+                                applySeparateStatusClusterFade(param.thisObject, fraction);
+                            } catch (Throwable t) {
+                                log("qs_status(separate) resetState apply fail: " + t);
+                            }
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(
+                    "com.oplus.systemui.plugins.qs.seamless.SeparateQSFakeStatusController",
+                    lpparam.classLoader, "access$showOrHideView",
+                    "com.oplus.systemui.plugins.qs.seamless.SeparateQSFakeStatusController",
+                    boolean.class, boolean.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_QS_TOPMARGIN_ENABLED, false)) return;
+                                hideSeparateStatusIconsView(param.args[0]);
+                            } catch (Throwable t) {
+                                log("qs_status(separate) showOrHide apply fail: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK SeparateQSFakeStatusController status cluster hide");
+        } catch (Throwable t) {
+            log("HOOK FAIL SeparateQSFakeStatusController status cluster :: " + Log.getStackTraceString(t));
+        }
+
+        // 分离模式通知中心头部真实状态图标簇: OplusQSSimpleHeader#getStatusIconsContainer()
+        // (quick_qs_status_icons) 由 OplusSimpleQSFakeController 注入真实 StatusBarIconView。
+        // 通知中心展开时系统把 separateQsFakeLayout 置 GONE, fake 容器已不可见; 真正显示在
+        // 右上角的是这里 quick_qs_status_icons 里的真实图标。系统从不在展开时切换其可见性
+        // (仅做 translationX 动画), 故 onInit 后 INVISIBLE 一次即持久生效。
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.oplus.systemui.separate.OplusQSSimpleHeader",
+                    lpparam.classLoader, "onInit",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                Object container = XposedHelpers.callMethod(
+                                        param.thisObject, "getStatusIconsContainer");
+                                if (container instanceof android.view.View) {
+                                    ((android.view.View) container)
+                                            .setVisibility(android.view.View.INVISIBLE);
+                                }
+                            } catch (Throwable t) {
+                                log("qs_status(separate) simpleHeader hide fail: " + t);
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            log("HOOK FAIL OplusQSSimpleHeader#onInit :: " + Log.getStackTraceString(t));
+        }
     }
 
     // 展开回调中原生会同时移动两个不同节点: mStatusIconsView(状态栏) 与 quickStatus(QS 顶栏)。
@@ -167,6 +261,38 @@ public final class QsHooks {
                 ((android.view.View) value).setVisibility(
                         hide ? android.view.View.INVISIBLE : android.view.View.VISIBLE);
             }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    // 分离模式图标簇隐藏: 控制中心 fakeStatusIconContainer 与通知中心 fakeNotificationIconContainer
+    // 跟经典模式同理在展开进度回调里原地渐隐; 展开态真实状态图标在 statusIconsView, 由
+    // access$showOrHideView 的弹簧动画重新显示, 故单独取消动画后隐藏。
+    static void applySeparateStatusClusterFade(Object controller, float expansionFraction) {
+        boolean enabled = readBool(KEY_QS_TOPMARGIN_ENABLED, false);
+        boolean hide = enabled && expansionFraction > 0f;
+        setQsStatusVisibility(controller, "fakeStatusIconContainer", hide);
+        setQsStatusVisibility(controller, "fakeNotificationIconContainer", hide);
+        if (hide) {
+            hideSeparateStatusIconsView(controller);
+        }
+    }
+
+    static void hideSeparateStatusIconsView(Object controller) {
+        try {
+            Object v = XposedHelpers.getObjectField(controller, "statusIconsView");
+            if (!(v instanceof android.view.View)) return;
+            android.view.View view = (android.view.View) v;
+            try {
+                Object am = XposedHelpers.getObjectField(controller, "qsPanelAnimatorManager");
+                if (am != null) {
+                    Object ea = XposedHelpers.callMethod(am, "fetchElementAnimator", view);
+                    if (ea != null) XposedHelpers.callMethod(ea, "cancelAll");
+                }
+            } catch (Throwable ignored) {
+            }
+            view.setAlpha(0.0f);
+            view.setVisibility(android.view.View.INVISIBLE);
         } catch (Throwable ignored) {
         }
     }
@@ -368,5 +494,47 @@ public final class QsHooks {
         tv.setMaxLines(1);
         tv.setEllipsize(TextUtils.TruncateAt.END);
         tv.setHorizontallyScrolling(false); // 关闭横向滚动/跑马灯, 仅静态行尾省略
+    }
+
+    // 分离版控制中心左右切换取消切入效果。
+    // 系统默认在通知中心/控制中心之间左右滑动切换时, 离场页会做 alpha 渐隐 + scale(0.85~1.0) 的"切变",
+    // 入场页做位移, 形成"淡入缩放"过渡。开启后改为两页直接随手指平移:
+    // 入场页保持原位移 initTranslationX + f; 离场页由"原地淡隐/缩放"改为位移 f(与入场页同量级), 并固定 alpha=1 scale=1。
+    // 切变只发生在 OplusPanelViewPagerController 的合成访问器 access$setAlphaAndTranslationXForScrollX
+    // (onScrollX 各阶段以 (controller, 离场view, 入场view, f, z) 调用), before 整体替换即可。
+    public static void hookQsPanelSwitchNoCut(final XC_LoadPackage.LoadPackageParam lpparam) {
+        final String cls = "com.oplus.systemui.separate.OplusPanelViewPagerController";
+        try {
+            XposedHelpers.findAndHookMethod(cls, lpparam.classLoader,
+                    "access$setAlphaAndTranslationXForScrollX",
+                    "com.oplus.systemui.separate.OplusPanelViewPagerController",
+                    android.view.View.class, android.view.View.class, float.class, boolean.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_QS_PANEL_SWITCH_NO_CUT_ENABLED, false)) return;
+                                Object controller = param.args[0];
+                                android.view.View leaving = (android.view.View) param.args[1];
+                                android.view.View entering = (android.view.View) param.args[2];
+                                float f = (Float) param.args[3];
+                                float initTranslationX = XposedHelpers.getFloatField(controller, "initTranslationX");
+                                // 入场页: 保持原位移(从 off-screen 滑入)。
+                                entering.setTranslationX(initTranslationX + f);
+                                // 离场页: 改为随手指位移(原 0 且只做 alpha/scale 切变), 去掉切变。
+                                leaving.setTranslationX(f);
+                                leaving.setAlpha(1.0f);
+                                leaving.setScaleX(1.0f);
+                                leaving.setScaleY(1.0f);
+                                param.setResult(null);
+                            } catch (Throwable t) {
+                                log("qs_panel_switch_no_cut apply fail: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK OplusPanelViewPagerController#access$setAlphaAndTranslationXForScrollX");
+        } catch (Throwable t) {
+            log("HOOK FAIL OplusPanelViewPagerController#access$setAlphaAndTranslationXForScrollX :: " + Log.getStackTraceString(t));
+        }
     }
 }

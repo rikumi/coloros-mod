@@ -153,6 +153,7 @@ private val QS = listOf(
     SwitchItem("qs_topmargin_enabled", "隐藏控制中心顶部状态图标簇"),
     SwitchItem("qs_tile_name_ellipsis_enabled", "分离版 Wi-Fi / 蓝牙名称单行省略"),
     SwitchItem("qs_normal_corner_radius_enabled", "OxygenOS 控制中心恢复正常圆角"),
+    SwitchItem("qs_panel_switch_no_cut_enabled", "分离版左右切换取消切入效果"),
 )
 private val NOTIF = listOf(
     SwitchItem("notification_swipe_to_dismiss_enabled", "通知左滑直接清除"),
@@ -178,6 +179,7 @@ private val FLOATWINDOW = listOf(
     SwitchItem("recents_hide_freeform_enabled", "多任务隐藏小窗应用"),
     SwitchItem("float_window_edge_hang_enabled", "悬浮小窗贴边挂机"),
     SwitchItem("float_window_edge_hang_mute_enabled", "小窗贴边挂机静音"),
+    SwitchItem("float_window_edge_hang_white_bar_enabled", "小窗贴边显示为白色竖条"),
     SwitchItem("float_window_landscape_keep_ratio_enabled", "横屏应用小窗保持比例", "横屏应用小窗的宽高比等于屏幕高宽比"),
     SwitchItem("float_window_edge_size_optimize_enabled", "优化小窗贴边位置及最大尺寸"),
 )

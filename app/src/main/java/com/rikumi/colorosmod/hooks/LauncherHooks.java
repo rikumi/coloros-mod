@@ -1161,8 +1161,11 @@ public final class LauncherHooks {
                                         anim.setInterpolator(origin.getInterpolator());
                                     }
                                 }
-                                // 模糊量由半径体现, View 全程可见, 否则又变回透明度渐显。
-                                view.setAlpha(1f);
+                                // 打开时背景保持可见(动态模糊由半径体现, 不靠透明度渐显);
+                                // 关闭时让 alpha 跟随 progress 淡出, 这样长按后拖动取消菜单时能
+                                // 透出后面真实图标、看到其它图标的避让运动。
+                                target.opening = open;
+                                view.setAlpha(open ? 1f : target.progress);
                                 applyPopupBgEffect(view, target.progress);
                                 param.setResult(anim);
                             } catch (Throwable t) {
@@ -1181,6 +1184,7 @@ public final class LauncherHooks {
     public static final class PopupBlurTarget {
         public final View view;
         public float progress;
+        public boolean opening = false;
 
         PopupBlurTarget(View view) {
             this.view = view;
@@ -1198,6 +1202,9 @@ public final class LauncherHooks {
                 public void set(PopupBlurTarget target, Float value) {
                     target.progress = value;
                     applyPopupBgEffect(target.view, value);
+                    // 打开时背景始终可见(动态模糊由半径体现); 关闭时 alpha 随 progress 淡出,
+                    // 透出后面真实图标与避让运动。
+                    target.view.setAlpha(target.opening ? 1f : value);
                 }
             };
 

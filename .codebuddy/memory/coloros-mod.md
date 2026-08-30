@@ -98,7 +98,6 @@
 | 应用小窗 | 多任务隐藏小窗应用 | `recents_hide_freeform_enabled` | — |
 | 应用小窗 | 悬浮小窗贴边挂机 | `float_window_edge_hang_enabled` | — |
 | 应用小窗 | 小窗贴边挂机静音 | `float_window_edge_hang_mute_enabled` | — |
-| 应用小窗 | 锁屏后保持挂机 | `float_window_edge_hang_keep_on_lock_enabled` | — |
 | 应用小窗 | 横屏应用小窗保持比例 | `float_window_landscape_keep_ratio_enabled` | — |
 | 导航与手势 | 调整手势滑动条宽度 | `gesture_bar_width_enabled` | `gesture_bar_width_dp` 80-120 / 100 |
 | 导航与手势 | 增大底部手势区高度 | `gesture_bar_height_enabled` | `gesture_bar_height_dp` 0-24 / 12 |
@@ -130,6 +129,21 @@
 - 页脚：`com.oplus.systemui.qs.OplusQSFooterImpl` 的 `updateResources$15` / `updateResources`（按顺序尝试），
   after 里给 `mSettingsContainer` 叠加 8dp 顶部 padding，让日期/设置按钮小幅下沉。
 
+**分离模式（控制中心 + 通知中心分离）同样隐藏右上角图标簇**（同一个 `qs_topmargin_enabled`）
+
+- 分离模式单例 `com.oplus.systemui.plugins.qs.seamless.SeparateQSFakeStatusController` 同时承载
+  控制中心图标簇 `fakeStatusIconContainer`(内含 `qsFakeStatusIcon`) 与通知中心图标簇
+  `fakeNotificationIconContainer`(内含 `qsFakeNotificationIcon`)；展开态真实状态图标在 `statusIconsView`
+  (`statusBarHeader.getQsStatusIconsView()`)。
+- 同一个面板容器展开进度回调
+  `com.oplus.systemui.plugins.qs.seamless.SeparateQSFakeStatusController$qsPanelExpandFractionListener$1`
+  `#onFractionChanged(float)` 在控制中心页与通知中心页展开时都会触发；`fraction > 0` 即把上面三个节点置 INVISIBLE。
+- `resetState(float)` after 也要重新隐藏（attach 与展开结束各调一次）。
+- `statusIconsView` 由 `access$showOrHideView(SeparateQSFakeStatusController, boolean, boolean)` 经
+  `QSPanelAnimatorManager.fetchElementAnimator(view).animateToWithProxyLogic(...)` 的弹簧动画重新显示，
+  故在该方法 after 里 `fetchElementAnimator(statusIconsView).cancelAll()` 取消动画后 `setAlpha(0)+INVISIBLE`
+  才能真正盖住（否则弹簧 end callback 又会置 VISIBLE）。
+
 **自定义控制/通知中心背景亮度** `qs_scrim_brightness`（0-20，默认 5）
 
 - 承载背景的是"背后 scrim"：默认 `top=LUMINOSITY+#99333333` 把亮度归一化到约 0.2，
@@ -157,6 +171,18 @@
   分离式的 `SepQSTileResInteractor$startHighlightTileOutlineCollection$2`，after 里限定返回类型是
   `RoundRectOutlineProvider`，改用 `QSConstant#getSmoothRoundRectOutlineProvider(context, radius)` 构造同口径
   provider（保留"平滑圆角"权重，否则 60dp 这类大半径会被降级成方角）。
+
+**分离版左右切换取消切入效果** `qs_panel_switch_no_cut_enabled`
+
+- 仅分离式控制中心生效，类 `com.oplus.systemui.separate.OplusPanelViewPagerController`。
+- 切变（淡入缩放过渡）只发生在合成访问器 `access$setAlphaAndTranslationXForScrollX(controller, 离场View,
+  入场View, f, z)`：原逻辑对**离场页**做 `alpha = 1 - |f|/width`、`scale = 1 + (initTranslationX+f)/width*0.15`，
+  **入场页**只做 `translationX = initTranslationX + f`（不透明不缩放）。
+- 开启后整体替换该访问器：入场页保持 `entering.setTranslationX(initTranslationX + f)`；离场页改为
+  `leaving.setTranslationX(f)` 并固定 `alpha=1/scale=1`，即两页直接随手指平移。f 的取值区间 0→-initTranslationX，
+  initTranslationX 为 ±screenWidth（由 `isQsOnLeft()` 决定正负），两种方向与左右镜像都对称成立。
+- 注意：该方法是 R8 内联后的合成访问器，名 `access$setAlphaAndTranslationXForScrollX` 含原始方法名、跨版本稳定；
+  必须 before 里 `setResult(null)` 跳过原始 alpha/scale 分支。initTranslationX 为 public 字段可反射读取。
 
 ### 通知（NotificationHooks）
 
@@ -563,7 +589,7 @@ COUI 给锁屏密码控件叠了三类非纯色绘制，分别跳过，去掉后
   before 里确认 `FloatHandleController.getInstance().isInFloatingList(taskId)` 为真（即"贴边成浮窗"这一路），
   则 `setResult(null)` 跳过 `Task.moveTaskToBack`，任务留在台前、应用继续运行。
 - 只拦这一层：图标成形/缩小动画在 `exitFlexibleTaskWindowInnerLocked` 的 `handleEvent()` 内，截断会卡在松手位置。
-- 挂机集合：`sHungTaskIds` / `sHungTasks`(弱引用) / `sHungUids`（`Task#effectiveUid`）。
+- 挂机集合：`sHungTaskIds` / `sHungTasks`(弱引用)。
 - 表面不变式 `com.android.server.wm.Task#prepareSurfaces()`：锁屏再解锁时 `ActivityRecord#setVisibility` 会连带
   show 所有父容器 surface 并把 `mLastSurfaceShowing` 置 true，真实窗口会重现。故 in before 用
   additionalInstanceField 存下 `mLastSurfaceShowing`，after 里若任务仍在挂机列表则 `getSyncTransaction().hide(getSurfaceControl())`。
@@ -577,7 +603,16 @@ COUI 给锁屏密码控件叠了三类非纯色绘制，分别跳过，去掉后
   不走 `FlexibleTaskController#setFocusTask` —— 它最终是 `ATMS#setFocusedTask(taskId, null)`，只在
   `moveFocusableActivityToTop` 成功时才转移焦点（实测无效），且一旦移动成功后方任务被 resume、挂机失效。
 - 解锁后补纠：hook `FlexibleTaskController#notifyKeyguardStateChanged(boolean, boolean, int)`，解锁时
-  异步 500ms / 1500ms 两次 `refocusBehindHungTasks`（只处理主屏 displayId=0；该回调同时维护 `sKeyguardShowing`）。
+  异步 500ms / 1500ms 两次 `refocusBehindHungTasks`（只处理主屏 displayId=0）。
+- **「锁屏后保持挂机」功能已取消并回退（2026-08-30）**。曾尝试 4 条路径均未能让游戏在锁屏后持续运行：
+  ① `TaskFragment#sleepIfPossible` 返回 true 跳过 `startPausing`（日志确认命中 ×5，但不够）；
+  ② `HansCGroup#hansFreezeLocked` 返回 false 阻止 cgroup 冻结（日志确认每 6s 命中，但不够）；
+  ③ `CachedAppOptimizer#freezeAppAsyncInternalLSP`；④ `AMS#doStopUidLocked` 拦截。
+  另曾 hook `ATMS#updateSleepIfNeededLocked` 改 `mTopProcessState` 12→2 并调 `updateOomAdj()`，
+  **导致系统启动异常，已废弃，勿再使用**（该方法在 system_server 启动早期即被调用，触发 oom adj 重算会与启动流程冲突）。
+  根因结论：即使系统不再暂停/冻结应用，锁屏后 CPU 仍从 ~160 jiffies/s 掉到 ~8 jiffies/s ——
+  这是**屏幕关闭导致 vsync 停止**所致，Unity 等游戏的 `Update()` 由渲染帧驱动，模块层无解。
+  故放弃该功能，仅保留"贴边挂机 + 解锁后焦点/表面恢复正常"。
 
 ### 小窗贴边挂机静音 `float_window_edge_hang_mute_enabled`
 

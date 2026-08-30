@@ -380,20 +380,25 @@ public final class XposedHelpers {
     // (值的生命周期与对象一致, 且被 hook 的类不会被改写)。
     // key 走 identity 语义, 避免目标对象重写 equals/hashCode 时串数据。
 
-    private static final Map<IdentityWeakKey, Map<String, Object>> ADDITIONAL_FIELDS =
-            java.util.Collections.synchronizedMap(new WeakHashMap<IdentityWeakKey, Map<String, Object>>());
+    // 以目标对象本身为 WeakHashMap 的 key(弱引用指向真实对象): 对象存活期间(含跨多次
+    // hook 调用的场景, 如 mBack 的 DOWN->UP)条目保留; 对象被 GC 时条目自动回收, 不泄漏。
+    // 注意: 此前误用 IdentityWeakKey 包装对象做 key —— 包装对象本身也被 WeakHashMap 弱引用,
+    // 方法返回后即无强引用, 很快被 GC, 导致条目在两次调用之间丢失, 表现为依赖附加实例字段
+    // 跨调用存状态的功能(如 mBack)整体失效; 单次 hook 调用内读写(如浮窗挂机的 LAST_SHOWING)
+    // 因包装对象仍在栈上而幸存, 故其他功能看似正常。这是 libxposed 迁移后兼容层引入的回归。
+    private static final Map<Object, Map<String, Object>> ADDITIONAL_FIELDS =
+            java.util.Collections.synchronizedMap(new WeakHashMap<Object, Map<String, Object>>());
 
     public static Object setAdditionalInstanceField(Object obj, String key, Object value) {
         if (obj == null) throw new NullPointerException("object must not be null");
         if (key == null) throw new NullPointerException("key must not be null");
-        Map<String, Object> fields = ADDITIONAL_FIELDS.get(new IdentityWeakKey(obj));
+        Map<String, Object> fields = ADDITIONAL_FIELDS.get(obj);
         if (fields == null) {
             synchronized (ADDITIONAL_FIELDS) {
-                IdentityWeakKey weakKey = new IdentityWeakKey(obj);
-                fields = ADDITIONAL_FIELDS.get(weakKey);
+                fields = ADDITIONAL_FIELDS.get(obj);
                 if (fields == null) {
                     fields = new ConcurrentHashMap<String, Object>();
-                    ADDITIONAL_FIELDS.put(weakKey, fields);
+                    ADDITIONAL_FIELDS.put(obj, fields);
                 }
             }
         }
@@ -403,7 +408,7 @@ public final class XposedHelpers {
     public static Object getAdditionalInstanceField(Object obj, String key) {
         if (obj == null) throw new NullPointerException("object must not be null");
         if (key == null) throw new NullPointerException("key must not be null");
-        Map<String, Object> fields = ADDITIONAL_FIELDS.get(new IdentityWeakKey(obj));
+        Map<String, Object> fields = ADDITIONAL_FIELDS.get(obj);
         if (fields == null) return null;
         return fields.get(key);
     }
@@ -411,38 +416,9 @@ public final class XposedHelpers {
     public static Object removeAdditionalInstanceField(Object obj, String key) {
         if (obj == null) throw new NullPointerException("object must not be null");
         if (key == null) throw new NullPointerException("key must not be null");
-        Map<String, Object> fields = ADDITIONAL_FIELDS.get(new IdentityWeakKey(obj));
+        Map<String, Object> fields = ADDITIONAL_FIELDS.get(obj);
         if (fields == null) return null;
         return fields.remove(key);
-    }
-
-    private static final class IdentityWeakKey {
-
-        private final java.lang.ref.WeakReference<Object> ref;
-        private final int hash;
-
-        IdentityWeakKey(Object obj) {
-            ref = new java.lang.ref.WeakReference<Object>(obj);
-            hash = System.identityHashCode(obj);
-        }
-
-        Object get() {
-            return ref.get();
-        }
-
-        @Override
-        public int hashCode() {
-            return hash;
-        }
-
-        @Override
-        public boolean equals(Object other) {
-            if (this == other) return true;
-            if (!(other instanceof IdentityWeakKey)) return false;
-            Object mine = get();
-            Object theirs = ((IdentityWeakKey) other).get();
-            return mine != null && mine == theirs;
-        }
     }
 
     // ------------------------------------------------------------------ 内部工具

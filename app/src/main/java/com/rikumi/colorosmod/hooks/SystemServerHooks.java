@@ -21,8 +21,11 @@ import java.util.Set;
 
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
+import android.content.res.Resources;
 import android.text.TextUtils;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.TextView;
 import android.widget.TextSwitcher;
 
@@ -121,6 +124,8 @@ public final class SystemServerHooks {
                             sHungTaskIds.remove(taskId);
                             sHungTasks.remove(Integer.valueOf(taskId));
                             XposedHelpers.setBooleanField(task, "mLastSurfaceShowing", false);
+                            // 任务离开浮窗列表 = 用户点开小窗 / 关闭应用: 静音在此处可靠地恢复。
+                            restoreMuteIfNeeded();
                             log(">>> edge_hang: task " + taskId + " left floating list, release surface");
                             return;
                         }
@@ -220,6 +225,245 @@ public final class SystemServerHooks {
             log(">>> matched android (system_server): float_window_edge_hang (focus invariant)");
         } catch (Throwable t) {
             log("!!! float_window_edge_hang focus invariant hook failed: " + t);
+        }
+
+        // 小窗贴边显示为白色竖条: 接管浮窗贴边把手(FloatHandleView)的绘制, 去掉应用图标,
+        // 只保留一个带圆角的白色竖条, 距屏幕边缘 8dp。
+        hookFloatHandleWhiteBar(lpparam);
+    }
+
+    // 小窗贴边显示为白色竖条: 开启后, 把浮窗贴边把手(FloatHandleView)改为一个带圆角的白色竖条,
+    // 距屏幕边缘 8dp。作用于 system_server 进程内的 FloatHandleView(浮窗贴边把手窗口内容)。
+    // 注意: 把手位置由 setTranslationX/Y 控制(computeCurrentPosition -> updateCurrentPosition),
+    // 把手宽度由 mViewContainerLayoutParams.width 控制(updateViewLayoutParams 应用), 不能用 margin。
+    private static void hookFloatHandleWhiteBar(final XC_LoadPackage.LoadPackageParam lpparam) {
+        final int BAR_WIDTH_DP = 4;   // 竖条宽度(细)
+        final int EDGE_DP = 16;       // 距屏幕右边界距离
+        try {
+            final Class<?> fhvCls = XposedHelpers.findClass(
+                    "com.android.server.wm.floathandle.FloatHandleView", lpparam.classLoader);
+            final Class<?> fhiCls = XposedHelpers.findClass(
+                    "com.android.server.wm.floathandle.FloatHandleInfo", lpparam.classLoader);
+
+            // 1) 刷新图标时: 白底圆角 + 隐藏图标列表 + 把容器宽度压成细竖条 + 摆放位置。
+            XposedHelpers.findAndHookMethod(fhvCls, "updateIconStyle",
+                    int.class, fhiCls,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_FLOAT_WINDOW_EDGE_HANG_WHITE_BAR_ENABLED, false)) return;
+                                final Object view = param.thisObject;
+                                final View container =
+                                        (View) XposedHelpers.getObjectField(view, "mFloatHandleViewContainer");
+                                if (container == null) return;
+
+                                final int barW = dip2px(container, BAR_WIDTH_DP);
+                                // 白色圆角竖条: 白底 + 隐藏图标 + 压窄宽度 + 摆到距边 8dp。
+                                applyWhiteBarStyle(view, barW, EDGE_DP);
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                    });
+
+            // 2) 布局参数应用点: 强制容器宽度为细竖条(框架每次都会用整条把手宽度覆盖, 必须在此拦截)。
+            XposedHelpers.findAndHookMethod(fhvCls, "updateViewLayoutParams",
+                    boolean.class, boolean.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_FLOAT_WINDOW_EDGE_HANG_WHITE_BAR_ENABLED, false)) return;
+                                final Object view = param.thisObject;
+                                final Object lp = XposedHelpers.getObjectField(view, "mViewContainerLayoutParams");
+                                if (lp instanceof ViewGroup.LayoutParams) {
+                                    ((ViewGroup.LayoutParams) lp).width = dip2px(view, BAR_WIDTH_DP);
+                                }
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                    });
+
+            // 3) 位置收口点: 把把手 translation 摆到距屏幕边缘 8dp, 而不是默认的"探出屏幕"位置。
+            XposedHelpers.findAndHookMethod(fhvCls, "updateCurrentPosition",
+                    float.class, float.class, int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_FLOAT_WINDOW_EDGE_HANG_WHITE_BAR_ENABLED, false)) return;
+                                final Object view = param.thisObject;
+                                final View container =
+                                        (View) XposedHelpers.getObjectField(view, "mFloatHandleViewContainer");
+                                if (container == null) return;
+                                applyWhiteBarPosition(view, container,
+                                        dip2px(container, BAR_WIDTH_DP), EDGE_DP);
+                                container.setAlpha(1.0f);
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                    });
+
+            // 3b) 落点计算: 把吸附落点的 x 直接改成"距屏幕右边界 8dp", 使框架算出的滑动终点也是右边缘,
+            //     从源头消除"向左滑动"动画。
+            XposedHelpers.findAndHookMethod(fhvCls, "computeCurrentPosition",
+                    int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_FLOAT_WINDOW_EDGE_HANG_WHITE_BAR_ENABLED, false)) return;
+                                final Object pt = param.getResult();
+                                if (pt == null) return;
+                                final Object controller =
+                                        XposedHelpers.getObjectField(param.thisObject, "mFloatHandleController");
+                                final int screenW = (int) XposedHelpers.callMethod(controller, "getScreenWidth");
+                                final int barW = dip2px(param.thisObject, BAR_WIDTH_DP);
+                                final int edge = dip2px(param.thisObject, EDGE_DP);
+                                XposedHelpers.setIntField(pt, "x", screenW - edge - barW);
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                    });
+
+            // 4) 吸附入口: 套用白条样式, 并吸附后强制位置/不透明(去掉可能的残留位移与淡出)。
+            XposedHelpers.findAndHookMethod(fhvCls, "switchToFullMode",
+                    fhiCls, boolean.class,
+                    XposedHelpers.findClass("android.view.SurfaceControl$Transaction", lpparam.classLoader),
+                    XposedHelpers.findClass("java.util.function.Consumer", lpparam.classLoader),
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_FLOAT_WINDOW_EDGE_HANG_WHITE_BAR_ENABLED, false)) return;
+                                final Object view = param.thisObject;
+                                final View container =
+                                        (View) XposedHelpers.getObjectField(view, "mFloatHandleViewContainer");
+                                if (container == null) return;
+                                applyWhiteBarStyle(view, dip2px(container, BAR_WIDTH_DP), EDGE_DP);
+                            } catch (Throwable ignored) {
+                            }
+                        }
+
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_FLOAT_WINDOW_EDGE_HANG_WHITE_BAR_ENABLED, false)) return;
+                                final Object view = param.thisObject;
+                                final View container =
+                                        (View) XposedHelpers.getObjectField(view, "mFloatHandleViewContainer");
+                                if (container == null) return;
+                                applyWhiteBarPosition(view, container,
+                                        dip2px(container, BAR_WIDTH_DP), EDGE_DP);
+                                container.setAlpha(1.0f);
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                    });
+
+            // 5) 兜底: 即使图标列表被重新显示, 也把每个图标 ImageView 隐藏掉。
+            final Class<?> adapterCls = XposedHelpers.findClass(
+                    "com.android.server.wm.floathandle.FloatHandleView$FloatIconListAdapter",
+                    lpparam.classLoader);
+            final Class<?> holderCls = XposedHelpers.findClass(
+                    "com.android.server.wm.floathandle.FloatHandleView$FloatIconViewHolder",
+                    lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(adapterCls, "onBindViewHolder",
+                    holderCls, int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_FLOAT_WINDOW_EDGE_HANG_WHITE_BAR_ENABLED, false)) return;
+                                final Object holder = param.args[0];
+                                final Object iv = XposedHelpers.getObjectField(holder, "mImageView");
+                                if (iv instanceof View) {
+                                    ((View) iv).setVisibility(View.GONE);
+                                }
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                    });
+
+            // 5) 抑制图标列表的"展开/堆叠"动画: 把手切换到全模式(toMode=2)或堆叠时会把应用图标动画显示出来,
+            //    这里直接 no-op, 使吸附动画期间只呈现白色竖条、不出现应用图标。
+            final Class<?> iconListCls = XposedHelpers.findClass(
+                    "com.android.server.wm.floathandle.FloatIconListAnimationLayout",
+                    lpparam.classLoader);
+            XC_MethodHook suppressIconAnim = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        if (readBool(KEY_FLOAT_WINDOW_EDGE_HANG_WHITE_BAR_ENABLED, false)) {
+                            param.setResult(null); // 跳过图标动画
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+            };
+            XposedHelpers.findAndHookMethod(iconListCls, "animateToExpand", suppressIconAnim);
+            XposedHelpers.findAndHookMethod(iconListCls, "animateToStacking", suppressIconAnim);
+
+            log(">>> matched android (system_server): float_window_edge_hang_white_bar");
+        } catch (Throwable t) {
+            log("!!! float_window_edge_hang_white_bar hook failed: " + t);
+        }
+    }
+
+    // 把把手容器刷成白色圆角竖条(直接瞬变): 白底 + 隐藏图标 + 压窄宽度 + 摆到距屏幕边缘 edgeDp。
+    private static void applyWhiteBarStyle(Object view, int barW, int edgeDp) {
+        try {
+            final View container =
+                    (View) XposedHelpers.getObjectField(view, "mFloatHandleViewContainer");
+            if (container == null) return;
+
+            // 白色圆角竖条(两端全圆 = 胶囊形)。
+            final GradientDrawable bg = new GradientDrawable();
+            bg.setColor(Color.WHITE);
+            bg.setCornerRadius(barW / 2.0f);
+            container.setBackground(bg);
+            container.setAlpha(1.0f);
+
+            // 隐藏图标列表(去掉应用图标)。
+            final Object list = XposedHelpers.getObjectField(view, "mFloatIconListAnimationLayout");
+            if (list instanceof View) {
+                ((View) list).setVisibility(View.GONE);
+            }
+
+            // 把容器宽度直接压成细竖条。
+            final ViewGroup.LayoutParams lp = container.getLayoutParams();
+            if (lp != null) {
+                lp.width = barW;
+                container.setLayoutParams(lp);
+            }
+
+            // 摆到距屏幕边缘 edgeDp。
+            applyWhiteBarPosition(view, container, barW, edgeDp);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    // 把把手容器摆到距屏幕边缘 EDGE_DP 的位置(替代默认的"探出屏幕"translation)。
+    private static void applyWhiteBarPosition(Object view, View container, int barW, int edgeDp) {
+        try {
+            final int side = XposedHelpers.getIntField(view, "mCurrentSide");
+            final Object controller = XposedHelpers.getObjectField(view, "mFloatHandleController");
+            final int screenWidth = (int) XposedHelpers.callMethod(controller, "getScreenWidth");
+            final int edge = dip2px(container, edgeDp);
+            // 固定距屏幕右边界 8dp(左右停靠均贴右边缘)。
+            if (side == 0 || side == 1) {
+                container.setTranslationX(screenWidth - edge - barW);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static int dip2px(Object view, int dp) {
+        try {
+            final Resources res = ((View) view).getResources();
+            return Math.round(dp * res.getDisplayMetrics().density);
+        } catch (Throwable t) {
+            return dp * 3;
         }
     }
 
@@ -371,11 +615,10 @@ public final class SystemServerHooks {
                             } catch (Throwable ignored) {
                                 return;
                             }
-                            final int focusedTaskId = ((Number) param.args[0]).intValue();
                             postAsync(new Runnable() {
                                 @Override
                                 public void run() {
-                                    restoreMuteIfNeeded(focusedTaskId);
+                                    restoreMuteIfNeeded();
                                 }
                             });
                         }
@@ -410,13 +653,14 @@ public final class SystemServerHooks {
         });
     }
 
-    // 挂机小窗回到前台, 或已被关闭(不在浮窗列表), 就恢复原音量, 避免长期静音。
-    private static void restoreMuteIfNeeded(int focusedTaskId) {
+    // 只在小窗被点开还原成浮窗、或任务已被关闭(两者都表现为"不在浮窗列表")时恢复原音量。
+    // 【不要】加"焦点回到该 task 就恢复"的判定: 锁屏/解锁时系统会 resume 台前任务,
+    // 把焦点短暂拨回挂机小窗, 若据此恢复, 解锁后立刻重新出声 —— 而此时小窗仍是边缘图标,
+    // 用户并没有点开它。静音必须贯穿整个挂机期间, 直到用户主动点开小窗。
+    private static void restoreMuteIfNeeded() {
         synchronized (MUTE_LOCK) {
             if (sMutedUid < 0) return;
-            if (focusedTaskId >= 0 && focusedTaskId == sMutedTaskId) {
-                restoreMutedLocked();
-            } else if (!isTaskInFloatingList(sMutedTaskId)) {
+            if (!isTaskInFloatingList(sMutedTaskId)) {
                 restoreMutedLocked();
             }
         }

@@ -115,6 +115,8 @@ public class XposedInit extends XposedModule {
     // R.dimen.qs_hl_tile_corner_radius_circle_oneplus(60dp), 其余用 qs_hl_tile_corner_radius_circle(16dp)。
     // 开关开启时统一强制到 QS_CORNER_RADIUS_DIMEN 指定的那一档(合并式与分离式都生效)。
     public static final String KEY_QS_NORMAL_CORNER_RADIUS_ENABLED = "qs_normal_corner_radius_enabled";
+    // 分离版控制中心左右切换取消切入效果: 通知中心/控制中心之间左右滑动时直接平移而非切变。
+    public static final String KEY_QS_PANEL_SWITCH_NO_CUT_ENABLED = "qs_panel_switch_no_cut_enabled";
     // false = 强制普通圆角(默认, 即本功能的正常行为); 改为 true 可强制 OxygenOS 大圆角, 用于确认注入是否生效。
     public static final boolean QS_CORNER_RADIUS_FORCE_ONEPLUS = false;
     public static final String QS_CORNER_RADIUS_DIMEN = QS_CORNER_RADIUS_FORCE_ONEPLUS
@@ -134,6 +136,10 @@ public class XposedInit extends XposedModule {
     // 贴边挂机静音: 挂机时经系统多应用音量通道把该应用音量置 0, 回到前台时恢复原值。
     public static final String KEY_FLOAT_WINDOW_EDGE_HANG_MUTE_ENABLED =
             "float_window_edge_hang_mute_enabled";
+    // 小窗贴边显示为白色竖条: 浮窗贴边把手去掉应用图标, 只保留一个带圆角的白色竖条, 距屏幕边缘 8dp。
+    // 作用于 system_server(android 作用域)内的 FloatHandleView, 需重启 zygote 才生效。
+    public static final String KEY_FLOAT_WINDOW_EDGE_HANG_WHITE_BAR_ENABLED =
+            "float_window_edge_hang_white_bar_enabled";
     // 横屏应用小窗保持比例: 系统对横屏应用硬编码 ratio=0.5625f(9:16), 与设备真实比例不符,
     // 这里在 system_server 内接管该 ratio 与 launchBounds, 让小窗 宽:高 = 屏幕 高:宽。
     public static final String KEY_FLOAT_WINDOW_LANDSCAPE_KEEP_RATIO_ENABLED =

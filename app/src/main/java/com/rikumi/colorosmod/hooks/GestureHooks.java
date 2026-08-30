@@ -71,6 +71,22 @@ public final class GestureHooks {
 
     static final long MBACK_RIPPLE_HIDE_DELAY_MS = 280L;
 
+    // 同一手势的状态: 以 MotionEvent.getDownTime() 为稳定标识(同手势 DOWN..UP 间恒定),
+    // 彻底不依赖 param.thisObject 在 libxposed 下是否每次 new 出包装壳。
+    private static final class MBackGesture {
+        boolean down;
+        boolean cancelled;
+        boolean longPress;
+        float downX;
+        float downY;
+        android.view.View handle;
+        java.lang.Runnable longPressRunnable;
+    }
+    private static final java.util.Map<Long, MBackGesture> MBACK_GESTURES =
+            new java.util.concurrent.ConcurrentHashMap<Long, MBackGesture>();
+    private static final java.util.Map<Long, Boolean> MBACK_IN_RANGE =
+            new java.util.concurrent.ConcurrentHashMap<Long, Boolean>();
+
     public static void hookMBack(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             Class<?> handleClass = XposedHelpers.findClass(
@@ -83,14 +99,14 @@ public final class GestureHooks {
                             if (!readBool(KEY_MBACK_ENABLED, false)) return;
                             android.view.View handle = (android.view.View) param.thisObject;
                             android.view.MotionEvent ev = (android.view.MotionEvent) param.args[0];
+                            if (ev == null) return;
+                            long downTime = ev.getDownTime();
                             // mBack 仅在白条水平范围内生效; 白条外(两侧)只响应系统手势,
                             // 不触发返回/震动, 也不接管事件(放行 handle 原逻辑)。
                             if (ev.getActionMasked() == android.view.MotionEvent.ACTION_DOWN) {
-                                XposedHelpers.setAdditionalInstanceField(handle, "mback_in_range",
-                                        isInMBackBarRange(handle, ev));
+                                MBACK_IN_RANGE.put(downTime, isInMBackBarRange(handle, ev));
                             }
-                            if (!Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(
-                                    handle, "mback_in_range"))) {
+                            if (!Boolean.TRUE.equals(MBACK_IN_RANGE.get(downTime))) {
                                 return;
                             }
                             handleMBackTouch(handle, ev);
@@ -224,13 +240,14 @@ public final class GestureHooks {
     }
 
     // mBack 热区留白: 手势条高度设置值(KEY_GESTURE_BAR_HEIGHT_DP, 单位 dp)的一半加 4dp, 上限 10dp。
-    // readInt(KEY_GESTURE_BAR_HEIGHT_DP, 0) 的默认值 0 即关闭功能时的系统初始值:
-    // 开关关闭时把该值当作 0 处理, 继续按公式计算。
+    // 默认值与手势条高度功能本身统一为 12dp(见 getBarLayoutParams hook 内 readInt(..., 12)):
+    // 该 key 是 sliderKey, 仅用户拖动滑块后才写入, 开启开关但未拖动时缺失, 故必须给默认 12,
+    // 否则开启功能后 padding 反而退化为 4dp, 背景边距变小。
     static float getMBackBandPaddingDp() {
         int dp = readInt(KEY_GESTURE_BAR_HEIGHT_ENABLED, 0) == 1
-                ? readInt(KEY_GESTURE_BAR_HEIGHT_DP, 0)
+                ? readInt(KEY_GESTURE_BAR_HEIGHT_DP, 12)
                 : 0;
-        return Math.min(dp / 2f + 4f, 10f);
+        return Math.min(dp / 2f + 4f, 8f);
     }
 
     // 白条厚度(mHeight)与白条底部间距(mHandleBottom)。触摸区域的 dispatch 独立于
@@ -382,76 +399,84 @@ public final class GestureHooks {
     static void handleMBackTouch(final android.view.View handle,
             android.view.MotionEvent event) {
         if (event == null) return;
-        MBackSurface surface = ensureMBackSurface(handle);
         int action = event.getActionMasked();
+        long downTime = event.getDownTime();
+        MBackGesture g = MBACK_GESTURES.get(downTime);
         if (action == android.view.MotionEvent.ACTION_DOWN) {
-            cancelMBackLongPress(handle);
-            XposedHelpers.setAdditionalInstanceField(handle, "mback_down", Boolean.TRUE);
-            XposedHelpers.setAdditionalInstanceField(handle, "mback_long", Boolean.FALSE);
-            XposedHelpers.setAdditionalInstanceField(handle, "mback_cancelled", Boolean.FALSE);
-            XposedHelpers.setAdditionalInstanceField(handle, "mback_down_x", event.getX());
-            XposedHelpers.setAdditionalInstanceField(handle, "mback_down_y", event.getY());
-            if (surface != null) {
-                surface.update();
-                surface.showAnimated();
-            }
-            final Runnable longPress = new Runnable() {
+            g = new MBackGesture();
+            g.down = true;
+            g.handle = handle;
+            g.downX = event.getX();
+            g.downY = event.getY();
+            MBACK_GESTURES.put(downTime, g);
+            // 视觉反馈层非必要, 异常不得阻断触发逻辑。
+            try {
+                MBackSurface surface = ensureMBackSurface(handle);
+                if (surface != null) {
+                    surface.update();
+                    surface.showAnimated();
+                }
+            } catch (Throwable ignored) { }
+            final long fDownTime = downTime;
+            final java.lang.Runnable longPress = new java.lang.Runnable() {
                 @Override
                 public void run() {
-                    if (!Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(
-                            handle, "mback_down"))
-                            || Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(
-                            handle, "mback_cancelled"))) {
-                        return;
-                    }
-                    XposedHelpers.setAdditionalInstanceField(handle, "mback_long", Boolean.TRUE);
-                    android.view.View feedback = handle;
-                    feedback.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+                    MBackGesture gg = MBACK_GESTURES.get(fDownTime);
+                    if (gg == null || !gg.down || gg.cancelled) return;
+                    gg.longPress = true;
+                    try {
+                        handle.performHapticFeedback(
+                                android.view.HapticFeedbackConstants.LONG_PRESS);
+                    } catch (Throwable ignored) { }
                     triggerNavigation(handle, true);
                 }
             };
-            XposedHelpers.setAdditionalInstanceField(handle, "mback_runnable", longPress);
+            g.longPressRunnable = longPress;
             handle.postDelayed(longPress, android.view.ViewConfiguration.getLongPressTimeout());
             return;
         }
-        if (!Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(handle, "mback_down"))) {
-            return;
-        }
+        if (g == null || !g.down) return;
         if (action == android.view.MotionEvent.ACTION_MOVE) {
             // 从白条向左/右/上划动时放弃接管（不震动、不触发导航），交由系统手势处理。
-            float dx = event.getX() - getMBackFloat(handle, "mback_down_x");
-            float dy = event.getY() - getMBackFloat(handle, "mback_down_y");
+            float dx = event.getX() - g.downX;
+            float dy = event.getY() - g.downY;
             float swipe = Math.round(MBACK_SWIPE_DP * readDensity());
             if (Math.abs(dx) > swipe || dy < -swipe) {
-                XposedHelpers.setAdditionalInstanceField(handle, "mback_cancelled", Boolean.TRUE);
-                cancelMBackLongPress(handle);
-                hideMBackSurface(handle);
+                g.cancelled = true;
+                cancelMBackLongPress(g);
+                try { hideMBackSurface(handle); } catch (Throwable ignored) { }
             }
             return;
         }
         if (action == android.view.MotionEvent.ACTION_UP) {
-            boolean cancelled = Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(
-                    handle, "mback_cancelled"));
-            boolean longPressed = Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(
-                    handle, "mback_long"));
-            cancelMBackLongPress(handle);
+            boolean cancelled = g.cancelled;
+            boolean longPressed = g.longPress;
+            cancelMBackLongPress(g);
             if (!cancelled && !longPressed) {
-                handle.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+                try {
+                    handle.performHapticFeedback(
+                            android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+                } catch (Throwable ignored) { }
                 triggerNavigation(handle, false);
             } else if (!cancelled && longPressed) {
                 // 长按触发回桌面后松手: 追加与长按触发一致的线性马达反馈。
-                handle.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+                try {
+                    handle.performHapticFeedback(
+                            android.view.HapticFeedbackConstants.LONG_PRESS);
+                } catch (Throwable ignored) { }
             }
-            XposedHelpers.setAdditionalInstanceField(handle, "mback_down", Boolean.FALSE);
-            hideMBackSurface(handle);
+            MBACK_GESTURES.remove(downTime);
+            MBACK_IN_RANGE.remove(downTime);
+            try { hideMBackSurface(handle); } catch (Throwable ignored) { }
             return;
         }
         if (action == android.view.MotionEvent.ACTION_CANCEL
                 || action == android.view.MotionEvent.ACTION_POINTER_DOWN) {
-            XposedHelpers.setAdditionalInstanceField(handle, "mback_cancelled", Boolean.TRUE);
-            cancelMBackLongPress(handle);
-            XposedHelpers.setAdditionalInstanceField(handle, "mback_down", Boolean.FALSE);
-            hideMBackSurface(handle);
+            g.cancelled = true;
+            cancelMBackLongPress(g);
+            MBACK_GESTURES.remove(downTime);
+            MBACK_IN_RANGE.remove(downTime);
+            try { hideMBackSurface(handle); } catch (Throwable ignored) { }
         }
     }
 
@@ -471,15 +496,11 @@ public final class GestureHooks {
         }
     }
 
-    static float getMBackFloat(android.view.View view, String key) {
-        Object value = XposedHelpers.getAdditionalInstanceField(view, key);
-        return value instanceof Number ? ((Number) value).floatValue() : 0.0f;
-    }
-
-    static void cancelMBackLongPress(android.view.View handle) {
-        Object runnable = XposedHelpers.getAdditionalInstanceField(handle, "mback_runnable");
-        if (runnable instanceof Runnable) handle.removeCallbacks((Runnable) runnable);
-        XposedHelpers.setAdditionalInstanceField(handle, "mback_runnable", null);
+    static void cancelMBackLongPress(MBackGesture g) {
+        if (g != null && g.longPressRunnable != null && g.handle != null) {
+            g.handle.removeCallbacks(g.longPressRunnable);
+        }
+        if (g != null) g.longPressRunnable = null;
     }
 
     static MBackSurface ensureMBackSurface(android.view.View handle) {
@@ -539,7 +560,14 @@ public final class GestureHooks {
     }
 
     static void removeMBackSurface(android.view.View handle) {
-        cancelMBackLongPress(handle);
+        // 取消该 handle 上所有未触发的长按, 并清理对应的手势状态。
+        for (java.util.Iterator<MBackGesture> it = MBACK_GESTURES.values().iterator(); it.hasNext(); ) {
+            MBackGesture gg = it.next();
+            if (gg.handle == handle) {
+                cancelMBackLongPress(gg);
+                it.remove();
+            }
+        }
         Object surface = XposedHelpers.getAdditionalInstanceField(handle, "mback_surface");
         if (surface instanceof MBackSurface && ((MBackSurface) surface).getParent() instanceof android.view.ViewGroup) {
             ((android.view.ViewGroup) ((MBackSurface) surface).getParent()).removeView((MBackSurface) surface);
@@ -557,7 +585,11 @@ public final class GestureHooks {
                 parent = parent.getParent() instanceof android.view.View
                         ? (android.view.View) parent.getParent() : null;
             }
-            if (parent == null) return;
+            if (parent == null) {
+                // 手势模式下可能找不到 NavigationBarView, 直接走 InputManager 注入兜底。
+                injectKey(home ? android.view.KeyEvent.KEYCODE_HOME : android.view.KeyEvent.KEYCODE_BACK);
+                return;
+            }
             if (home) {
                 if (injectHomeKey()) return;
                 Object homeDispatcher = XposedHelpers.callMethod(parent, "getHomeButton");
@@ -567,16 +599,19 @@ public final class GestureHooks {
             }
             Object dispatcher = XposedHelpers.callMethod(parent, "getBackButton");
             Object keyView = XposedHelpers.callMethod(dispatcher, "getCurrentView");
-            if (keyView == null) return;
-            long now = android.os.SystemClock.uptimeMillis();
-            XposedHelpers.callMethod(keyView, "sendEvent", 0, 0, now);
-            XposedHelpers.callMethod(keyView, "sendEvent", 1, 0);
+            if (keyView != null) {
+                long now = android.os.SystemClock.uptimeMillis();
+                XposedHelpers.callMethod(keyView, "sendEvent", 0, 0, now);
+                XposedHelpers.callMethod(keyView, "sendEvent", 1, 0);
+            } else {
+                injectKey(android.view.KeyEvent.KEYCODE_BACK);
+            }
         } catch (Throwable t) {
             log("mback navigation failed: " + t);
         }
     }
 
-    static boolean injectHomeKey() {
+    static boolean injectKey(int code) {
         try {
             Class<?> inputManagerClass = Class.forName("android.hardware.input.InputManager");
             Object inputManager = XposedHelpers.callStaticMethod(inputManagerClass, "getInstance");
@@ -585,12 +620,12 @@ public final class GestureHooks {
                     | android.view.KeyEvent.FLAG_VIRTUAL_HARD_KEY;
             android.view.KeyEvent down = new android.view.KeyEvent(
                     now, now, android.view.KeyEvent.ACTION_DOWN,
-                    android.view.KeyEvent.KEYCODE_HOME, 0, 0,
+                    code, 0, 0,
                     android.view.KeyCharacterMap.VIRTUAL_KEYBOARD, 0, flags,
                     android.view.InputDevice.SOURCE_KEYBOARD);
             android.view.KeyEvent up = new android.view.KeyEvent(
                     now, now, android.view.KeyEvent.ACTION_UP,
-                    android.view.KeyEvent.KEYCODE_HOME, 0, 0,
+                    code, 0, 0,
                     android.view.KeyCharacterMap.VIRTUAL_KEYBOARD, 0, flags,
                     android.view.InputDevice.SOURCE_KEYBOARD);
             XposedHelpers.callMethod(inputManager, "injectInputEvent", down, 0);
@@ -599,6 +634,10 @@ public final class GestureHooks {
         } catch (Throwable t) {
             return false;
         }
+    }
+
+    static boolean injectHomeKey() {
+        return injectKey(android.view.KeyEvent.KEYCODE_HOME);
     }
 
     static final class MBackSurface extends android.view.View {

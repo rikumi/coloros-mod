@@ -13,6 +13,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -95,6 +96,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.Dialog
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.view.HapticFeedbackConstants
 import top.yukonga.miuix.kmp.theme.miuixShape
 import androidx.compose.ui.text.TextStyle
@@ -153,10 +156,18 @@ private const val COUIX_HEADER_CORE_ALPHA = 0.5f
 private const val COUIX_HEADER_GLOW_LOG_K = 12f
 private const val COUIX_HEADER_GLOW_STOP_COUNT = 32
 // 横幅内系统名: 相对文字色的不透明度, 以及贴底时离底边的距离。
-private const val COUIX_HEADER_SYSTEM_ALPHA = 0.7f
-private val COUIX_HEADER_SYSTEM_BOTTOM = 14.dp
+private const val COUIX_HEADER_SYSTEM_ALPHA = 0.9f
+private val COUIX_HEADER_SYSTEM_BOTTOM = 24.dp
 // 设备名自横幅正中再上移的距离。
 private val COUIX_HEADER_MODEL_LIFT = 16.dp
+
+// 横幅长按时触发连续振动的阈值(ms): 按住超过阈值后开始连续细微震动, 松手即停。
+private const val BANNER_LONG_PRESS_MS = 350L
+// 长按期间震动间隔(ms): 越小越频繁。
+private const val BANNER_TICK_INTERVAL_MS = 35L
+// 单次震动时长(ms)与振幅(0~255): 极短 + 低振幅 = 更细微的连续震感。
+private const val BANNER_VIBRATE_MS = 8L
+private const val BANNER_VIBRATE_AMPLITUDE = 100
 
 // 分组卡片圆角（miuix 默认 16dp -> 12dp）。首页机型横幅嵌在卡片顶部时需按此值裁顶部两角。
 internal val COUIX_CARD_CORNER = 12.dp
@@ -245,7 +256,7 @@ fun CouixSmallTitle(
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
         ),
-        modifier = modifier.padding(start = 24.dp, top = 12.dp, bottom = 6.dp),
+        modifier = modifier.padding(start = 32.dp, top = 12.dp, bottom = 6.dp),
     )
 }
 
@@ -605,11 +616,38 @@ internal fun CouixDeviceHeader(
     // 两层光晕共用同一条 log 衰减曲线, 只有整体 alpha 不同; 按颜色缓存避免每次重组重算。
     val outerStops = remember(glowColor) { glowStops(glowColor, 1f) }
     val coreStops = remember(glowColor) { glowStops(glowColor, COUIX_HEADER_CORE_ALPHA) }
+    // 长按时连续轻微短振动: 按住超过阈值后反复触发一次 VIRTUAL_KEY tick(与系统虚拟按键同款,
+    // 跟随系统"触摸反馈"开关), 间隔由 BANNER_TICK_INTERVAL_MS 控制, 松手即停。
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
+    var bannerTickJob by remember { mutableStateOf<Job?>(null) }
+    val longPressModifier = Modifier.pointerInput(Unit) {
+        detectTapGestures(onPress = {
+            val vibrator =
+                view.context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            val tick =
+                VibrationEffect.createOneShot(BANNER_VIBRATE_MS, BANNER_VIBRATE_AMPLITUDE)
+            val startJob = scope.launch {
+                delay(BANNER_LONG_PRESS_MS)
+                bannerTickJob = scope.launch {
+                    while (isActive) {
+                        vibrator.vibrate(tick)
+                        delay(BANNER_TICK_INTERVAL_MS)
+                    }
+                }
+            }
+            tryAwaitRelease()
+            startJob.cancel()
+            bannerTickJob?.cancel()
+            bannerTickJob = null
+        })
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(COUIX_HEADER_HEIGHT)
             .clip(shape)
+            .then(longPressModifier)
             .drawBehind {
                 drawRect(color = baseColor)
                 val cx = size.width / 2f
