@@ -571,15 +571,31 @@ private fun romVersion(): String? {
     return null
 }
 
-// 系统名: 版本取自系统属性(见上), 名称取自 ro.product.brand(公开 API Build.BRAND, 该机为 OPPO)。
-// 三者(品牌 + 版本)都是系统直接给出的值, 不做其它推测; 品牌不在 Oplus 三家里则不显示该行。
+// 系统属性只能通过 getprop 读, 故统一走 root shell(本文件的取值都在 IO 线程完成)。
+private fun getProp(key: String): String? =
+    runRoot("getprop $key")?.trim()?.takeIf { it.isNotEmpty() }
+
+// 是否国行: persist.sys.oplus.region 是 Oplus 全系通用的销售区域属性(该机实测 CN);
+// 取不到时退一步看 ota 版本号里的地区段(该机 PKT110_16.0.10.500(CN01)), 仍取不到按国行处理。
+private fun isCnRegion(): Boolean {
+    val region = getProp("persist.sys.oplus.region")
+    if (region != null) return region.equals("CN", ignoreCase = true)
+    val ota = getProp("persist.sys.oplus.ota_ver_display")
+    return ota == null || ota.contains("CN01", ignoreCase = true)
+}
+
+// 系统名: 名称取自 ro.product.brand(公开 API Build.BRAND, 该机为 OPPO), 版本取自系统属性(见上),
+// 都不做其它推测; 品牌不在 Oplus 三家里则不显示该行。
+// 一加国内版刷的是 ColorOS、只有海外版才是 OxygenOS, 故一加额外看销售区域。
+private fun systemName(): String? = when {
+    Build.BRAND.contains("oneplus", ignoreCase = true) -> if (isCnRegion()) "ColorOS" else "OxygenOS"
+    Build.BRAND.contains("oppo", ignoreCase = true) -> "ColorOS"
+    Build.BRAND.equals("realme", ignoreCase = true) -> "realmeUI"
+    else -> null
+}
+
 private fun systemLabel(): String? {
-    val name = when {
-        Build.BRAND.equals("realme", ignoreCase = true) -> "realmeUI"
-        Build.BRAND.contains("oneplus", ignoreCase = true) -> "OxygenOS"
-        Build.BRAND.contains("oppo", ignoreCase = true) -> "ColorOS"
-        else -> return null
-    }
+    val name = systemName() ?: return null
     val version = romVersion() ?: return name
     return "$name $version"
 }

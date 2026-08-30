@@ -319,9 +319,8 @@ public final class SystemServerHooks {
         }
     }
 
-    // 贴边挂机静音: 走系统多应用音量通道 PlaybackActivityMonitorExtImpl#setVolumeForUid。
-    // 恢复判定只看浮窗列表: 在列表中=图标态, 保持静音; 出列表(还原成浮窗/被关闭)才恢复。
-    // 不能用"焦点回到该任务"判定 —— 任务从未切后台, 系统会自行把焦点指回它, 导致刚静音就恢复。
+    // 贴边挂机静音: 走系统多应用音量通道 PlaybackActivityMonitorExtImpl#setVolumeForUid,
+    // isEternalSet=true 会写入 mMusicVolumeMap, 当前及此后新建的播放器都按该值生效。
     private static final Object MUTE_LOCK = new Object();
     private static Class<?> sFloatHandleController;   // 兜底: 判断挂机任务是否仍在浮窗列表
     private static Class<?> sFlexibleWindowService;   // FlexibleWindowManagerService
@@ -341,8 +340,7 @@ public final class SystemServerHooks {
     private static Handler sHandler;
 
     public static void hookFloatWindowEdgeHangMute(final XC_LoadPackage.LoadPackageParam lpparam) {
-        // mPamExt 在 AudioService 构造期(早期)就已创建, 模块注入通常更晚, 故不能只靠钩构造。
-        // 这里以 ServiceManager 反查 AudioService -> mPlaybackMonitor -> mPamExt 作为主要获取途径。
+        // 捕获多应用音量实现实例: 其构造早于任何播放, 拿一次即可。
         try {
             XposedHelpers.findAndHookConstructor(
                     "com.android.server.audio.PlaybackActivityMonitorExtImpl", lpparam.classLoader,
@@ -356,26 +354,7 @@ public final class SystemServerHooks {
             log("!!! edge_hang_mute: capture PlaybackActivityMonitorExtImpl failed: " + t);
         }
 
-        // 兜底: 每次创建播放器时若实例仍为空, 就沿 AudioService 反查一次。
-        try {
-            final Class<?> idCard = XposedHelpers.findClass(
-                    "android.media.PlayerBase$PlayerIdCard", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(
-                    "com.android.server.audio.PlaybackActivityMonitor", lpparam.classLoader,
-                    "trackPlayer", idCard,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            if (sPamExt == null) {
-                                sPamExt = findPamExtViaAudioService(param.thisObject);
-                            }
-                        }
-                    });
-        } catch (Throwable t) {
-            log("!!! edge_hang_mute: hook trackPlayer failed: " + t);
-        }
-
-        // 兜底: 焦点变化时复查一次, 覆盖小窗被直接关闭等未走 removeFloatHandle 的情况。
+        // 焦点中枢: 一参 setFocusedTask(int) 内部也转调这个两参版本, 挂机小窗回前台必过此。
         try {
             final Class<?> activityRecord = XposedHelpers.findClass(
                     "com.android.server.wm.ActivityRecord", lpparam.classLoader);
@@ -385,85 +364,23 @@ public final class SystemServerHooks {
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
-                            if (!muteEnabled()) return;
+                            try {
+                                if (!readBool(KEY_FLOAT_WINDOW_EDGE_HANG_MUTE_ENABLED, false)) return;
+                            } catch (Throwable ignored) {
+                                return;
+                            }
+                            final int focusedTaskId = ((Number) param.args[0]).intValue();
                             postAsync(new Runnable() {
                                 @Override
                                 public void run() {
-                                    restoreIfNoLongerFloating();
+                                    restoreMuteIfNeeded(focusedTaskId);
                                 }
                             });
                         }
                     });
+            log(">>> matched android (system_server): float_window_edge_hang_mute");
         } catch (Throwable t) {
-            log("!!! edge_hang_mute: hook setFocusedTask failed: " + t);
-        }
-
-        // 主信号: 点图标还原成浮窗(onFloatOpenAnimationStartInner)、小窗关闭、任务移除都走这里。
-        try {
-            final Class<?> taskCls = XposedHelpers.findClass(
-                    "com.android.server.wm.Task", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(
-                    "com.android.server.wm.FloatHandleController", lpparam.classLoader,
-                    "removeFloatHandle", int.class, taskCls, boolean.class, int.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            if (!muteEnabled()) return;
-                            final int taskId = ((Number) param.args[0]).intValue();
-                            postAsync(new Runnable() {
-                                @Override
-                                public void run() {
-                                    synchronized (MUTE_LOCK) {
-                                        if (sMutedUid >= 0 && taskId == sMutedTaskId) {
-                                            restoreMutedLocked();
-                                        }
-                                    }
-                                }
-                            });
-                        }
-                    });
-        } catch (Throwable t) {
-            log("!!! edge_hang_mute: hook removeFloatHandle failed: " + t);
-        }
-        log(">>> matched android (system_server): float_window_edge_hang_mute");
-    }
-
-    // PlaybackActivityMonitor 在 AudioService 构造期就建好, 模块注入往往更晚,
-    // 钩构造捕获不到实例。故优先就地取 mPamExt, 再沿 ServiceManager 反查 AudioService。
-    @SuppressWarnings("unchecked")
-    private static Object findPamExtViaAudioService(Object pam) {
-        try {
-            if (pam != null) {
-                Object ext = XposedHelpers.getObjectField(pam, "mPamExt");
-                if (ext != null && ext.getClass().getName().contains("ExtImpl")) return ext;
-            }
-        } catch (Throwable ignored) {
-            // 继续走 ServiceManager 反查。
-        }
-        try {
-            Object binder = XposedHelpers.callStaticMethod(
-                    XposedHelpers.findClass("android.os.ServiceManager", null),
-                    "getService", "audio");
-            if (binder == null) return null;
-            Object as = XposedHelpers.callStaticMethod(
-                    XposedHelpers.findClass("android.media.IAudioService$Stub", null),
-                    "asInterface", binder);
-            if (as == null) return null;
-            Object monitor = XposedHelpers.getObjectField(as, "mPlaybackMonitor");
-            if (monitor == null) return null;
-            Object ext = XposedHelpers.getObjectField(monitor, "mPamExt");
-            if (ext != null && ext.getClass().getName().contains("ExtImpl")) return ext;
-        } catch (Throwable t) {
-            log("!!! edge_hang_mute findPamExtViaAudioService failed: " + t);
-        }
-        return null;
-    }
-
-    private static boolean muteEnabled() {
-        try {
-            return readBool(KEY_FLOAT_WINDOW_EDGE_HANG_MUTE_ENABLED, false);
-        } catch (Throwable ignored) {
-            return false;
+            log("!!! float_window_edge_hang_mute system_server hook failed: " + t);
         }
     }
 
@@ -475,38 +392,31 @@ public final class SystemServerHooks {
             @Override
             public void run() {
                 synchronized (MUTE_LOCK) {
-                    if (sPamExt == null) sPamExt = findPamExtViaAudioService(null);
-                    if (sPamExt == null) {
-                        log("!!! edge_hang_mute: sPamExt null, cannot mute uid=" + uid);
+                    if (sPamExt == null) return;
+                    // 同一应用重复贴边: 已静音, 保留最初记录的原始音量, 勿把 0 记成原值。
+                    if (sMutedUid == uid) {
+                        sMutedTaskId = taskId;
                         return;
                     }
-                    if (sMutedUid == uid) {
-                        // 同一应用重复贴边: 已静音, 只更新 taskId, 勿把 0 记成原始音量。
-                        sMutedTaskId = taskId;
-                    } else {
-                        if (sMutedUid >= 0) applyAppVolume(sMutedUid, sMutedPrevGain);
-                        float prev = applyAppVolume(uid, 0.0f);
-                        sMutedTaskId = taskId;
-                        sMutedUid = uid;
-                        sMutedPrevGain = prev;
-                    }
+                    if (sMutedUid >= 0) applyAppVolume(sMutedUid, sMutedPrevGain);
+                    float prev = applyAppVolume(uid, 0.0f);
+                    sMutedTaskId = taskId;
+                    sMutedUid = uid;
+                    sMutedPrevGain = prev;
                 }
-                // 复查: 贴边动画收尾与本 hook 存在时序差, 延后确认一次仍在图标态。
-                postAsyncDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        restoreIfNoLongerFloating();
-                    }
-                }, 1200);
             }
         });
     }
 
-    // 出了浮窗列表即已还原成浮窗或被关闭, 此时恢复原音量。
-    private static void restoreIfNoLongerFloating() {
+    // 挂机小窗回到前台, 或已被关闭(不在浮窗列表), 就恢复原音量, 避免长期静音。
+    private static void restoreMuteIfNeeded(int focusedTaskId) {
         synchronized (MUTE_LOCK) {
             if (sMutedUid < 0) return;
-            if (!isTaskInFloatingList(sMutedTaskId)) restoreMutedLocked();
+            if (focusedTaskId >= 0 && focusedTaskId == sMutedTaskId) {
+                restoreMutedLocked();
+            } else if (!isTaskInFloatingList(sMutedTaskId)) {
+                restoreMutedLocked();
+            }
         }
     }
 
@@ -523,11 +433,7 @@ public final class SystemServerHooks {
     @SuppressWarnings("unchecked")
     private static float applyAppVolume(int uid, float gain) {
         final Object pamExt = sPamExt;
-        if (pamExt == null) {
-            log("!!! edge_hang_mute: sPamExt is null, cannot change app volume");
-            return 1.0f;
-        }
-        if (uid <= 0) return 1.0f;
+        if (pamExt == null || uid <= 0) return 1.0f;
         try {
             final String pkg = pkgNameForUid(pamExt, uid);
             if (pkg == null) return 1.0f;
@@ -550,14 +456,66 @@ public final class SystemServerHooks {
     }
 
     // 音量表的键须与系统一致: PackageManager#getNameForUid(uid)。
+    // ExtImpl 的 mContext 有时为 null(实测 NPE), 故按多条路径依次取 PackageManager。
     private static String pkgNameForUid(Object pamExt, int uid) {
+        // 1) ExtImpl.mContext
         try {
             Object ctx = XposedHelpers.getObjectField(pamExt, "mContext");
+            String pkg = nameForUidFromContext(ctx, uid);
+            if (pkg != null) return pkg;
+        } catch (Throwable ignored) {
+            // 继续尝试下一条路径。
+        }
+
+        // 2) ExtImpl.mPam -> getWrapper().getContext()
+        try {
+            Object pam = XposedHelpers.getObjectField(pamExt, "mPam");
+            if (pam != null) {
+                Object wrapper = XposedHelpers.callMethod(pam, "getWrapper");
+                Object ctx = XposedHelpers.callMethod(wrapper, "getContext");
+                String pkg = nameForUidFromContext(ctx, uid);
+                if (pkg != null) return pkg;
+            }
+        } catch (Throwable ignored) {
+            // 继续尝试下一条路径。
+        }
+
+        // 3) system_server 的 Application
+        try {
+            Object app = XposedHelpers.callStaticMethod(
+                    XposedHelpers.findClass("android.app.ActivityThread", null),
+                    "currentApplication");
+            String pkg = nameForUidFromContext(app, uid);
+            if (pkg != null) return pkg;
+        } catch (Throwable ignored) {
+            // 继续尝试下一条路径。
+        }
+
+        // 4) 直接走 IPackageManager(AppGlobals), 不依赖任何 Context。
+        try {
+            Object ipm = XposedHelpers.callStaticMethod(
+                    XposedHelpers.findClass("android.app.AppGlobals", null),
+                    "getPackageManager");
+            if (ipm != null) {
+                String pkg = (String) XposedHelpers.callMethod(ipm, "getNameForUid", uid);
+                if (pkg != null && !pkg.isEmpty()) return pkg;
+            }
+        } catch (Throwable ignored) {
+            // 全部失败。
+        }
+
+        log("!!! edge_hang_mute: cannot resolve package for uid=" + uid);
+        return null;
+    }
+
+    private static String nameForUidFromContext(Object ctx, int uid) {
+        if (ctx == null) return null;
+        try {
             Object pm = XposedHelpers.callMethod(ctx, "getPackageManager");
+            if (pm == null) return null;
             String pkg = (String) XposedHelpers.callMethod(pm, "getNameForUid", uid);
             return (pkg == null || pkg.isEmpty()) ? null : pkg;
-        } catch (Throwable t) {
-            log("!!! edge_hang_mute getNameForUid failed: " + t);
+        } catch (Throwable ignored) {
             return null;
         }
     }

@@ -494,7 +494,7 @@ public final class LauncherHooks {
 
     // 桌面文件夹展开背景透明化: 展开时系统对壁纸施加 blur=1.0 + mBlurBlendColor 暗色。
     // 所有壁纸模糊都汇入 OplusDepthController.setBlur(float, boolean)(唯一收口点), hook 它在有
-    // 文件夹打开(含动画)时把模糊强制为 0; 多任务/应用抽屉等无打开文件夹的场景不受影响。
+    // 文件夹打开(含动画)且停留在桌面时把模糊强制为 0。
     public static void hookFolderOpenBgBlur(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             Class<?> depthClass = XposedHelpers.findClass(
@@ -508,6 +508,9 @@ public final class LauncherHooks {
                                 Object launcher = XposedHelpers.getObjectField(param.thisObject, "mLauncher");
                                 if (launcher == null) return;
                                 if (!isLauncherFolderOpen(launcher, lpparam.classLoader)) return;
+                                // 只在停留/前往桌面时生效, 否则(详见 isLauncherOnWorkspace)打开文件夹后
+                                // 上滑进多任务会连多任务的遮罩一起去掉。
+                                if (!isLauncherOnWorkspace(launcher, lpparam.classLoader)) return;
                                 param.args[0] = 0f;
                             } catch (Throwable t) {
                                 log("folder bg blur hook error: " + t);
@@ -517,6 +520,58 @@ public final class LauncherHooks {
             log("HOOK OK launcher OplusDepthController#setBlur (transparent folder bg)");
         } catch (Throwable t) {
             log("HOOK FAIL launcher OplusDepthController#setBlur: " + t);
+        }
+    }
+
+    // 桌面是否停在/正在前往 NORMAL(桌面)状态。
+    // OplusDepthController#setState 中, 只要 getOpenFolder() != null 就把 blur 取成 1.0, 与切到哪个
+    // 状态无关: 因此打开文件夹后上滑进多任务, 系统会按"文件夹开着"给多任务也加模糊, 而我们无条件
+    // 归零就会把多任务的遮罩一并去掉。故这里加一层状态判定, 只在桌面上才让文件夹背景透明。
+    // 状态取 OPlusBaseState#getTargetLauncherState(静态, StateManager#goToState 一进来就写入目标状态,
+    // 切换动画期间它已是新状态, 而 mLauncher 的当前状态此时还是旧的), 取不到时退回 StateManager#getState。
+    static boolean isLauncherOnWorkspace(Object launcher, ClassLoader cl) {
+        Object state = launcherTargetState(cl);
+        if (state == null) state = launcherCurrentState(launcher);
+        if (state == null) return false;
+        return state == launcherNormalState(cl);
+    }
+
+    static Class<?> sOplusBaseStateClass;
+
+    private static Object launcherTargetState(ClassLoader cl) {
+        try {
+            if (sOplusBaseStateClass == null) {
+                sOplusBaseStateClass = XposedHelpers.findClass(
+                        "com.android.launcher3.states.OPlusBaseState", cl);
+            }
+            return XposedHelpers.callStaticMethod(sOplusBaseStateClass, "getTargetLauncherState");
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static Object launcherCurrentState(Object launcher) {
+        try {
+            Object stateManager = XposedHelpers.callMethod(launcher, "getStateManager");
+            if (stateManager == null) return null;
+            return XposedHelpers.callMethod(stateManager, "getState");
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static Object launcherNormalState(ClassLoader cl) {
+        try {
+            if (sLauncherStateClass == null) {
+                sLauncherStateClass = XposedHelpers.findClass(
+                        "com.android.launcher3.LauncherState", cl);
+            }
+            if (sNormalState == null) {
+                sNormalState = XposedHelpers.getStaticObjectField(sLauncherStateClass, "NORMAL");
+            }
+            return sNormalState;
+        } catch (Throwable t) {
+            return null;
         }
     }
 
