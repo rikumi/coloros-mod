@@ -179,6 +179,7 @@ private val FLOATWINDOW = listOf(
     SwitchItem("float_window_edge_hang_enabled", "悬浮小窗贴边挂机"),
     SwitchItem("float_window_edge_hang_mute_enabled", "小窗贴边挂机静音"),
     SwitchItem("float_window_landscape_keep_ratio_enabled", "横屏应用小窗保持比例", "横屏应用小窗的宽高比等于屏幕高宽比"),
+    SwitchItem("float_window_edge_size_optimize_enabled", "优化小窗贴边位置及最大尺寸"),
 )
 
 private val NAV = listOf(

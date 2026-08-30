@@ -3,6 +3,7 @@ package com.rikumi.colorosmod.hooks;
 import static com.rikumi.colorosmod.XposedInit.*;
 
 import android.content.ContentResolver;
+import android.content.res.Resources;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Handler;
@@ -331,6 +332,7 @@ public final class SystemServerHooks {
     // taskId -> Task(弱引用, 仅供解锁后纠正焦点时取对象用)。
     private static final Map<Integer, WeakReference<Object>> sHungTasks =
             Collections.synchronizedMap(new HashMap<Integer, WeakReference<Object>>());
+
     // prepareSurfaces 的 before/after 之间传递 Task.mLastSurfaceShowing 的附加字段键。
     private static final String LAST_SHOWING = "colorosModLastSurfaceShowing";
     private static volatile Object sPamExt;           // PlaybackActivityMonitorExtImpl 实例
@@ -663,6 +665,228 @@ public final class SystemServerHooks {
             log(">>> matched android (system_server): float_window_landscape_keep_ratio (FlexibleTaskController)");
         } catch (Throwable t) {
             log("!!! float_window_landscape_keep_ratio system_server hook failed: " + t);
+        }
+    }
+
+    // 小窗尺寸与贴边: 1) 缩到最小(mini)时贴靠边缘只留 FLOAT_WINDOW_SIDE_MARGIN_DP;
+    // 2) 放大的最大宽度 = 屏幕宽度 - 2 * FLOAT_WINDOW_SIDE_MARGIN_DP。
+    public static void hookFloatWindowSizeLimits(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            final Class<?> zoomDisplayCls = XposedHelpers.findClass(
+                    "com.android.server.wm.OplusZoomDisplay", lpparam.classLoader);
+
+            // 1) mini 窗口贴边时与屏幕边缘的间距(小屏竖屏默认 20dp)。
+            //    getDefaultMulitMiniRect / getDefaultMiniRect 用它算贴靠后的 right = 屏宽 - limit,
+            //    getLimitBoundInMiniFlexibleTask 也用它当拖动边界, 所以左右两侧统一留出该间距。
+            XposedHelpers.findAndHookMethod(zoomDisplayCls, "getLeftRightLimitInMini",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!edgeSizeOptimizeEnabled()) return;
+                                param.setResult(Integer.valueOf(sideMarginPx()));
+                            } catch (Throwable t) {
+                                log("!!! float_window_size getLeftRightLimitInMini failed: " + t);
+                            }
+                        }
+                    });
+
+            // 2) 各屏幕档位的可视宽度上限: 从源头把每个比例的 mMaxVisualWidth 改成 屏幕宽度 - 左右边距。
+            //    该字段是"该 ratio 下最大可视宽度"的唯一来源, getCurrentRatioMaxVisualWidth(dp) 与
+            //    getCurrRatioMaxFlexibleScale(= mMaxVisualWidth / policyReferValue) 都读它,
+            //    改字段二者自动同步, 不会出现 bounds 能到屏宽而 scale 被旧上限拉回去的错位。
+            final String[] paramClsNames = {
+                    "com.android.server.wm.OplusZoomSmallScreenParameter",
+                    "com.android.server.wm.OplusZoomMiddleScreenParameter",
+                    "com.android.server.wm.OplusZoomLargeScreenParameter",
+            };
+            for (final String clsName : paramClsNames) {
+                final Class<?> cls;
+                try {
+                    cls = XposedHelpers.findClass(clsName, lpparam.classLoader);
+                } catch (Throwable t) {
+                    continue;
+                }
+                XposedHelpers.findAndHookMethod(cls, "computeAllRatioData",
+                        new XC_MethodHook() {
+                            @Override
+                            protected void afterHookedMethod(MethodHookParam param) {
+                                try {
+                                    if (!edgeSizeOptimizeEnabled()) return;
+                                    widenMaxVisualWidth(param.thisObject);
+                                } catch (Throwable t) {
+                                    log("!!! float_window_size computeAllRatioData failed: " + t);
+                                }
+                            }
+                        });
+            }
+
+            // 3) 自由比例应用(支持任意比例): 系统把最大宽度压到 屏宽 * 0.96, 放开到 屏宽 - 左右边距。
+            XposedHelpers.findAndHookMethod(zoomDisplayCls, "getFreeRatioSupportMaxWidthProp",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!edgeSizeOptimizeEnabled()) return;
+                                float prop = freeRatioMaxWidthProp();
+                                if (prop > 0f) param.setResult(Float.valueOf(prop));
+                            } catch (Throwable t) {
+                                log("!!! float_window_size getFreeRatioSupportMaxWidthProp failed: " + t);
+                            }
+                        }
+                    });
+
+            // 4) 打开/重算小窗尺寸时的 clamp: 系统会预留左右各 18dp 安全边距, 临时改成 2dp。
+            //    只在方法执行期间改, 不动多窗排布用到的其它间距计算。
+            final Class<?> policyCls = XposedHelpers.findClass(
+                    "com.android.server.wm.OplusFlexibleTaskLayoutPolicy", lpparam.classLoader);
+            final Class<?> taskCls = XposedHelpers.findClass(
+                    "com.android.server.wm.Task", lpparam.classLoader);
+            final Class<?> ftiCls = XposedHelpers.findClass(
+                    "com.android.server.wm.FlexibleTaskInfo", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(policyCls, "regulateSizeIfOverScreen",
+                    taskCls, ftiCls, float.class, float.class,
+                    android.graphics.Point.class, android.graphics.Point.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!edgeSizeOptimizeEnabled()) {
+                                sSecurityMarginBackup.remove();
+                                return;
+                            }
+                            sSecurityMarginBackup.set(overrideSecurityMargin(param.thisObject));
+                        }
+
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            restoreSecurityMargin(param.thisObject);
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(policyCls, "getTaskRealSize",
+                    boolean.class, float.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!edgeSizeOptimizeEnabled()) {
+                                sSecurityMarginBackup.remove();
+                                return;
+                            }
+                            sSecurityMarginBackup.set(overrideSecurityMargin(param.thisObject));
+                        }
+
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            restoreSecurityMargin(param.thisObject);
+                        }
+                    });
+
+            log(">>> matched android (system_server): float_window_size_limits");
+        } catch (Throwable t) {
+            log("!!! float_window_size_limits system_server hook failed: " + t);
+        }
+    }
+
+    // 用线程局部保存, 避免不同线程/嵌套调用互相覆盖。
+    private static final ThreadLocal<Integer> sSecurityMarginBackup = new ThreadLocal<>();
+
+    private static Integer overrideSecurityMargin(Object policy) {
+        if (policy == null) return null;
+        try {
+            int old = XposedHelpers.getIntField(policy, "mSecurityMarginRight");
+            XposedHelpers.setIntField(policy, "mSecurityMarginRight", sideMarginPx());
+            return Integer.valueOf(old);
+        } catch (Throwable t) {
+            log("!!! float_window_size overrideSecurityMargin failed: " + t);
+            return null;
+        }
+    }
+
+    private static void restoreSecurityMargin(Object policy) {
+        Integer backup = sSecurityMarginBackup.get();
+        sSecurityMarginBackup.remove();
+        if (policy == null || backup == null) return;
+        try {
+            XposedHelpers.setIntField(policy, "mSecurityMarginRight", backup.intValue());
+        } catch (Throwable t) {
+            log("!!! float_window_size restoreSecurityMargin failed: " + t);
+        }
+    }
+
+    private static boolean edgeSizeOptimizeEnabled() {
+        return readBool(KEY_FLOAT_WINDOW_EDGE_SIZE_OPTIMIZE_ENABLED, false);
+    }
+
+    private static int sideMarginPx() {
+        float density = Resources.getSystem().getDisplayMetrics().density;
+        if (density <= 0f) return 0;
+        return Math.round(FLOAT_WINDOW_SIDE_MARGIN_DP * density);
+    }
+
+    // 自由比例的最大宽度 = 屏幕宽度 * prop, 反解出保留左右边距后的 prop。
+    private static float freeRatioMaxWidthProp() {
+        android.util.DisplayMetrics dm = Resources.getSystem().getDisplayMetrics();
+        int widthPx = Math.min(dm.widthPixels, dm.heightPixels);
+        if (widthPx <= 0) return 0f;
+        int margin = sideMarginPx() * 2;
+        if (margin >= widthPx) return 0f;
+        return (widthPx - margin) * 1.0f / widthPx;
+    }
+
+    // 把每个比例的 mMaxVisualWidth(dp) 改写成 屏幕宽度 - 左右边距:
+    // 竖屏场景(mIsPort)用屏幕短边, 横屏场景用长边, 这样两种旋转下都是"当前屏幕宽度"。
+    @SuppressWarnings("unchecked")
+    private static void widenMaxVisualWidth(Object parameterStore) {
+        if (parameterStore == null) return;
+        Object raw;
+        try {
+            raw = XposedHelpers.getObjectField(parameterStore, "mRatioDataList");
+        } catch (Throwable t) {
+            return;
+        }
+        if (!(raw instanceof java.util.List)) return;
+        java.util.List<Object> list = (java.util.List<Object>) raw;
+        if (list.isEmpty()) return;
+
+        float density = 0f;
+        int shortSide = 0, longSide = 0;
+        try {
+            Object dc = XposedHelpers.getObjectField(parameterStore, "mDisplayContent");
+            Object di = XposedHelpers.callMethod(dc, "getDisplayInfo");
+            int w = XposedHelpers.getIntField(di, "logicalWidth");
+            int h = XposedHelpers.getIntField(di, "logicalHeight");
+            Object dm = XposedHelpers.callMethod(dc, "getDisplayMetrics");
+            density = XposedHelpers.getFloatField(dm, "density");
+            shortSide = Math.min(w, h);
+            longSide = Math.max(w, h);
+        } catch (Throwable ignored) {
+            // 回退到系统 metrics。
+        }
+        if (density <= 0f || shortSide <= 0 || longSide <= 0) {
+            android.util.DisplayMetrics dm = Resources.getSystem().getDisplayMetrics();
+            density = dm.density;
+            shortSide = Math.min(dm.widthPixels, dm.heightPixels);
+            longSide = Math.max(dm.widthPixels, dm.heightPixels);
+        }
+        if (density <= 0f || shortSide <= 0 || longSide <= 0) return;
+
+        final int marginDp = Math.round(2 * FLOAT_WINDOW_SIDE_MARGIN_DP);
+        final int portWidthDp = Math.round(shortSide / density) - marginDp;
+        final int landWidthDp = Math.round(longSide / density) - marginDp;
+        if (portWidthDp <= 0 || landWidthDp <= 0) return;
+        for (Object data : list) {
+            if (data == null) continue;
+            boolean isPort;
+            try {
+                isPort = XposedHelpers.getBooleanField(data, "mIsPort");
+            } catch (Throwable t) {
+                continue;
+            }
+            int newWidth = isPort ? portWidthDp : landWidthDp;
+            try {
+                XposedHelpers.setIntField(data, "mMaxVisualWidth", newWidth);
+            } catch (Throwable t) {
+                log("!!! float_window_size widenMaxVisualWidth set field failed: " + t);
+            }
         }
     }
 }

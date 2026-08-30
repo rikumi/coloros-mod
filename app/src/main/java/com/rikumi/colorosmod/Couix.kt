@@ -72,6 +72,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -176,6 +177,11 @@ private val COUIX_ROW_VPADDING = 13.dp
 // 下拉菜单宽度。
 private val COUIX_DROPDOWN_WIDTH = 160.dp
 private val COUIX_DROPDOWN_TRANSFORM_ORIGIN = TransformOrigin(0.85f, 0f)
+
+// 右上角下拉菜单的阴影: 抬升值取对话框级别(Material 的菜单通常只有 3~8dp), 扩散范围随抬升
+// 单调增大, 菜单本身面积小, 这个值已经是一片明显偏大的投影。环境光/主光源两层都压成纯黑,
+// 暗色主题下也能看出菜单轮廓。
+private val COUIX_DROPDOWN_ELEVATION = 12.dp
 
 // 标题栏底部分割线: 界面上滑时出现, 初始两端各内缩 16dp, 随滚动量在该距离内逐渐延长至通栏。
 private val TOP_BAR_DIVIDER_INSET = 16.dp
@@ -1352,6 +1358,14 @@ fun CouixActionMenu(
                         Column(
                             modifier = Modifier
                                 .width(COUIX_DROPDOWN_WIDTH)
+                                // 阴影画在自身边界之外, 故 clip = false; 内容裁剪仍由下面的 .clip() 负责。
+                                .shadow(
+                                    elevation = COUIX_DROPDOWN_ELEVATION,
+                                    shape = dropdownShape,
+                                    clip = false,
+                                    ambientColor = Color.Black,
+                                    spotColor = Color.Black,
+                                )
                                 .background(MiuixTheme.colorScheme.surfaceContainer, dropdownShape)
                                 .clip(dropdownShape),
                         ) {

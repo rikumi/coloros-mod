@@ -138,6 +138,12 @@ public class XposedInit extends XposedModule {
     // 这里在 system_server 内接管该 ratio 与 launchBounds, 让小窗 宽:高 = 屏幕 高:宽。
     public static final String KEY_FLOAT_WINDOW_LANDSCAPE_KEEP_RATIO_ENABLED =
             "float_window_landscape_keep_ratio_enabled";
+    // 优化小窗贴边位置及最大尺寸: 缩到最小贴边时只留 FLOAT_WINDOW_SIDE_MARGIN_DP, 放大上限 =
+    // 屏幕宽度 - 2 * FLOAT_WINDOW_SIDE_MARGIN_DP(系统默认为 20dp 边距 + 屏宽 - 48dp 的上限)。
+    public static final String KEY_FLOAT_WINDOW_EDGE_SIZE_OPTIMIZE_ENABLED =
+            "float_window_edge_size_optimize_enabled";
+    // 小窗放大到最大时, 左右各保留的边距(dp): 最大宽度 = 屏幕宽度 - 2 * FLOAT_WINDOW_SIDE_MARGIN_DP。
+    public static final float FLOAT_WINDOW_SIDE_MARGIN_DP = 8f;
     public static final String KEY_GESTURE_BAR_HEIGHT_ENABLED = "gesture_bar_height_enabled";
     public static final String KEY_GESTURE_BAR_HEIGHT_DP = "gesture_bar_height_dp";
     public static final String KEY_GESTURE_BAR_WIDTH_ENABLED = "gesture_bar_width_enabled";
@@ -416,6 +422,8 @@ public class XposedInit extends XposedModule {
             SystemServerHooks.hookFloatWindowEdgeHangMute(lpparam);
             // system_server: 横屏应用小窗保持比例(com.android.server.wm.FlexibleTaskController)
             SystemServerHooks.hookFloatWindowLandscapeKeepRatio(lpparam);
+            // system_server: 小窗缩到最小贴边不留边距 + 最大可调宽度 = 屏幕宽度
+            SystemServerHooks.hookFloatWindowSizeLimits(lpparam);
         }
         // 状态栏歌词只需在 SystemUI 侧实现: 直接读 MediaSession 的标题,
         // 无需在音乐软件进程注入, 也无需伪装机型(见 StatusBarLyricHooks 类注释)。
