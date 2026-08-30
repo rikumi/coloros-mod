@@ -25,6 +25,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.LocalOverscrollFactory
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxScope
@@ -54,6 +55,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -107,7 +109,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.abs
-import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.roundToInt
 import top.yukonga.miuix.kmp.basic.Card
@@ -136,7 +137,7 @@ private val COUIX_SLIDER_GAP = 3.dp
 private val COUIX_SLIDER_THUMB_R = 10.dp
 
 // 首页顶部机型横幅: 作为第一张 group 卡片的内容, 底色与渐变中心色随明暗主题取不同值。
-private val COUIX_HEADER_HEIGHT = 180.dp
+private val COUIX_HEADER_HEIGHT = 200.dp
 private val COUIX_HEADER_BASE_DARK = Color(0xFF34383B)
 private val COUIX_HEADER_GLOW_DARK = Color(0xFFB17666)
 private val COUIX_HEADER_BASE_LIGHT = Color(0xFFDDE2E8)
@@ -257,7 +258,7 @@ fun CouixSmallTitle(
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
         ),
-        modifier = modifier.padding(start = 32.dp, top = 12.dp, bottom = 6.dp),
+        modifier = modifier.padding(start = 32.dp, end = 32.dp, top = 12.dp, bottom = 6.dp),
     )
 }
 
@@ -374,21 +375,44 @@ fun CouixStatusBar() {
     }
 }
 
-// 回弹位移的渐近上限: 橡皮筋模型的极限值, 实际永远达不到(见 couixOverscrollStep),
-// 因此这里可以取一个偏大的行程而不必担心"拖到底"的手感。
-private val COUIX_OVERSCROLL_MAX = 180.dp
+// 回弹位移的上限: 手指拖动拉到该距离后停住(线性阻尼下必须有一个终点, 否则可无限拖动)。
+private val COUIX_OVERSCROLL_MAX = 400.dp
 
-// 起始跟手系数: 位移为 0 时, 手指移动 1px 内容就移动这么多(1 = 完全跟手)。
-// 之后随剩余行程线性衰减, 越拖越沉, 但衰减到 0 需要无限行程 —— 全程没有硬停点。
-private const val COUIX_OVERSCROLL_DRAG = 1f
+// 惯性撞边时位移的渐近上限: 常规速度下位移远达不到它, 只在极端速度下才起作用,
+// 免得一次猛甩把列表拉出去太远 —— 见 couixOverscrollFlingStep。
+private val COUIX_OVERSCROLL_FLING_MAX = 50.dp
+
+// 惯性撞边的减速阻尼: 单帧位移 = 该帧的惯性位移 × DRAG_FLING。惯性在衰减, 每帧的惯性位移
+// 逐帧变小, 推出的量同步变小 —— 撞边瞬间即开始减速, 位移随惯性一起走完整个减速过程,
+// 到速度耗尽时停在当下拉到的位置, 不存在"推到某个固定位置才停"。
+private const val COUIX_OVERSCROLL_DRAG_FLING = 0.7f
+
+// 拉动阻尼系数: 手指移动 1px 内容移动这么多, 全程恒定, 与已拉出的距离无关
+// (1 = 完全跟手)。越小越"沉", 但无论拉多远手感都不变。
+private const val COUIX_OVERSCROLL_DRAG = 0.7f
+
+// 松手回弹: 不过冲(DampingRatioNoBouncy), 刚度明显低于系统 MediumLow(400), 回弹过程更慢更柔和。
+private const val COUIX_RELEASE_STIFFNESS = 120f
 
 /**
- * 让列表在任意界面都能上滑/下滑回弹。
+ * 关闭系统自带的过度滚动, 让 [Modifier.couixOverscroll] 完全接管边界回弹。
  *
- * Compose 内置的 overscroll 只在内容可滚动时才派发(`ScrollingLogic.shouldDispatchOverscroll`
- * 要求 canScrollForward || canScrollBackward), 内容不足一屏的界面拖动没有任何反馈。这里接管
- * 列表吃不掉的手势增量: 内容不可滚动时按带阻尼的比例转成整列位移, 松手后弹回原位; 内容
- * 可滚动的界面仍走系统 overscroll, 不重复叠加。
+ * 系统 EdgeEffect(Android 12+ 的内容拉伸)有两个问题: 阻尼几乎 1:1 且无法调; 惯性滑动撞到
+ * 边界后它会一直保持拉伸, 直到惯性速度完全衰减才释放, 表现为"停住很久才弹回"。
+ * 将 [LocalOverscrollFactory] 置空后 `rememberOverscrollEffect()` 返回 null, 边界上剩余的
+ * 手势增量就会全部流到 [Modifier.couixOverscroll] 的 connection 里。
+ */
+@Composable
+fun CouixOverscrollHost(content: @Composable () -> Unit) {
+    CompositionLocalProvider(LocalOverscrollFactory provides null) { content() }
+}
+
+/**
+ * 让列表在上滑/下滑到边界时回弹, 并接管回弹的阻尼与回弹动画。
+ *
+ * 列表吃不掉的手势增量一律按固定比例(见 COUIX_OVERSCROLL_DRAG)折算成整列位移, 松手后由
+ * 本函数自己的弹簧弹回。需配合 [CouixOverscrollHost] 使用: 系统 overscroll 会抢先吃掉边界
+ * 增量并自己回弹, 不关掉的话这里拿不到量(内容可滚动时尤甚)。
  */
 /**
  * @param overscrollOffset 可选: 跨组件共享的当前回弹位移(px, 上滑为负)。传入后,
@@ -401,12 +425,13 @@ fun Modifier.couixOverscroll(
 ): Modifier {
     val density = LocalDensity.current
     val maxPx = with(density) { COUIX_OVERSCROLL_MAX.toPx() }
+    val flingPx = with(density) { COUIX_OVERSCROLL_FLING_MAX.toPx() }
     val scope = rememberCoroutineScope()
     val offsetState = overscrollOffset ?: remember { mutableFloatStateOf(0f) }
     var offsetPx by offsetState
     var releaseJob by remember { mutableStateOf<Job?>(null) }
 
-    val connection = remember(maxPx, scope) {
+    val connection = remember(maxPx, flingPx, scope) {
         object : NestedScrollConnection {
             // 已有位移时, 反向拖动先 1:1 原路返回; 归零后剩余增量交还列表(内容不可滚动时无剩余)。
             // delta 与屏幕坐标同向: 上滑为负、下滑为正, 与 offsetPx 同号。
@@ -426,35 +451,66 @@ fun Modifier.couixOverscroll(
                 return Offset(0f, consumed)
             }
 
-            // 列表吃不到的增量(内容不足一屏)转成回弹位移。
+            // 列表吃不到的增量转成回弹位移: 只看拖动方向上是否还有内容可滚,
+            // 到顶继续下拉 / 到底继续上滑都算到边(内容不足一屏时两个 can* 均为 false, 恒接管)。
             override fun onPostScroll(
                 consumed: Offset,
                 available: Offset,
                 source: NestedScrollSource,
             ): Offset {
-                if (available.y == 0f) return Offset.Zero
-                if (listState.canScrollBackward || listState.canScrollForward) return Offset.Zero
+                val delta = available.y
+                if (delta == 0f) return Offset.Zero
+                val atEdge = if (delta > 0f) {
+                    !listState.canScrollBackward
+                } else {
+                    !listState.canScrollForward
+                }
+                if (!atEdge) return Offset.Zero
                 releaseJob?.cancel()
                 releaseJob = null
-                offsetPx = couixOverscrollStep(offsetPx, available.y, maxPx)
-                return Offset(0f, available.y)
+                if (source != NestedScrollSource.UserInput) {
+                    // 惯性撞边: 按剩余速度折算位移 —— 惯性每衰减一点, 这一帧推出的量就跟着
+                    // 变小, 于是"撞边立刻开始减速", 而不是等推到某个位置才停。
+                    val step = couixOverscrollFlingStep(delta, flingPx, offsetPx)
+                    offsetPx += step
+                    // 惯性速度耗尽(单帧已推不动)时报告"未消费": DefaultFlingBehavior 只要有
+                    // 半像素没吃完就立刻取消惯性动画, 随后 onPostFling 起弹簧回弹。
+                    if (abs(step) < 0.5f) return Offset.Zero
+                    return Offset(0f, delta)
+                }
+                offsetPx = couixOverscrollStep(offsetPx, delta, maxPx)
+                return Offset(0f, delta)
             }
 
-            // 松手: 吃掉全部速度(内容不可滚动时本来也没有 fling), 位移弹回 0。
+            // 松手: 吃掉全部速度, 位移弹回 0。
             override suspend fun onPreFling(available: Velocity): Velocity {
                 if (offsetPx == 0f) return Velocity.Zero
                 releaseJob?.cancel()
+                releaseJob = null
+                startRelease()
+                return available
+            }
+
+            // 惯性滑动撞到边界后残留的增量同样会被 onPostScroll 吃成位移,
+            // 滑行结束时这里负责把它弹回(可能与 onPreFling 的回弹重复调用, 由 startRelease 去重)。
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                startRelease()
+                return Velocity.Zero
+            }
+
+            /** 位移回零: 已在回弹中则忽略, 否则从当前位移起弹。 */
+            private fun startRelease() {
+                if (offsetPx == 0f || releaseJob != null) return
                 releaseJob = scope.launch {
                     animate(
                         offsetPx,
                         0f,
                         animationSpec = spring(
                             dampingRatio = Spring.DampingRatioNoBouncy,
-                            stiffness = Spring.StiffnessMediumLow,
+                            stiffness = COUIX_RELEASE_STIFFNESS,
                         ),
                     ) { value, _ -> offsetPx = value }
                 }
-                return available
             }
         }
     }
@@ -467,19 +523,30 @@ fun Modifier.couixOverscroll(
 }
 
 /**
- * 回弹位移推进: 橡皮筋模型。有效系数与剩余行程成正比,
+ * 手指拖动的回弹位移推进: 线性阻尼。手指的位移按固定比例折算成内容位移, 系数恒为 DRAG,
  *
- *     offset' = offset + delta * DRAG * (maxPx - |offset|) / maxPx
+ *     offset' = offset + delta * DRAG
  *
- * 解这个递推(连续形式 d(offset)/d(手指) = DRAG * (1 - offset/maxPx))得
- * offset = maxPx * (1 - e^(-DRAG * 手指行程 / maxPx)): 起点斜率为 DRAG(完全跟手),
- * 随行程指数趋近 maxPx 而**永远达不到**。因此不做 clamp —— 一旦 clamp 就等于设了个硬停点,
- * 手指还在动而内容突然不动了, 正是要避免的手感。
+ * 与已拉出的距离无关 —— 拉到哪儿都是同一份"沉", 不会出现越拉越费力的橡皮筋感。
+ * 代价是必须给一个终点: 到 maxPx 即停。
  */
 private fun couixOverscrollStep(current: Float, delta: Float, maxPx: Float): Float {
     if (maxPx <= 0f) return 0f
-    val remaining = (maxPx - abs(current)).coerceIn(0f, maxPx)
-    return current + delta * COUIX_OVERSCROLL_DRAG * (remaining / maxPx)
+    return (current + delta * COUIX_OVERSCROLL_DRAG).coerceIn(-maxPx, maxPx)
+}
+
+/**
+ * 惯性撞边的位移推进: 位移完全由惯性当前这一帧的位移 [delta] 驱动 —— 惯性在减速, 每帧推出的
+ * 量同步变小, 所以撞边瞬间就开始减速, 到惯性速度耗尽时位移也恰好停在当时推到的位置并回弹,
+ * 全程不需要"推到固定位置才停"的判定。
+ *
+ * 剩余行程系数(与 [capPx] 的差距成正比)只在位移接近上限时才起作用, 用于兜住极端速度;
+ * 常规速度下位移远不到 capPx, 该系数恒为 1, 位移只由惯性决定。
+ */
+private fun couixOverscrollFlingStep(delta: Float, capPx: Float, current: Float = 0f): Float {
+    if (capPx <= 0f) return 0f
+    val remaining = (capPx - abs(current)).coerceIn(0f, capPx)
+    return delta * COUIX_OVERSCROLL_DRAG_FLING * (remaining / capPx)
 }
 
 /** 标题栏底部分割线: 随 [progress] 从两端内缩逐渐延长至通栏。 */

@@ -51,6 +51,7 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.icon.extended.Backup
+import top.yukonga.miuix.kmp.icon.extended.Blocklist
 import top.yukonga.miuix.kmp.icon.extended.Community
 import top.yukonga.miuix.kmp.icon.extended.Copy
 import top.yukonga.miuix.kmp.icon.extended.GridView
@@ -103,7 +104,7 @@ class MainActivity : ComponentActivity() {
                     textStyles = couixTextStyles(),
                 ) {
                     CouixStatusBar()
-                    SettingsScreen()
+                    CouixOverscrollHost { SettingsScreen() }
                 }
             }
         }
@@ -246,8 +247,14 @@ private val CATEGORY_GROUPS: List<List<Category>> = listOf(
         Category("float_window", "应用小窗", MiuixIcons.Copy, FLOATWINDOW, hint = "更改小窗设置需重启 Zygote 生效"),
         Category("navigation", "导航与手势", MiuixIcons.Backup, NAV),
     ),
+    listOf(
+        Category(DISABLED_APPS_ID, "已停用应用", MiuixIcons.Blocklist, emptyList()),
+    ),
 )
 private val CATEGORIES = CATEGORY_GROUPS.flatten()
+
+// "停用应用"分类 id: 该分类没有开关项, 子页面在路由里特判渲染为只读列表。
+private const val DISABLED_APPS_ID = "disabled_apps"
 
 // 主开关切换后、落盘前的临时视觉覆盖。
 // scope = null 表示首页的全局主开关(覆盖所有分类), 否则只覆盖该 categoryId 的分类。
@@ -360,7 +367,10 @@ fun SettingsScreen() {
         label = "settings_pages",
     ) { targetId ->
         val category = CATEGORIES.firstOrNull { it.id == targetId }
-        if (category == null) {
+        if (targetId == DISABLED_APPS_ID) {
+            // 只读列表页, 不走开关列表的 CategoryScreen。
+            DisabledAppsScreen(ctx = ctx, onBack = { openCategoryId = null })
+        } else if (category == null) {
             val anyEnabled = remember(version) {
                 CATEGORIES.any { c -> c.items.switches.any { prefs.getBoolean(it.key, false) } }
             }
@@ -687,7 +697,7 @@ private fun launchApp(ctx: Context, command: String) {
 
 /** 标题栏右侧的重启菜单（首页与子页面共用）。 */
 @Composable
-private fun RestartMenu(ctx: Context) {
+internal fun RestartMenu(ctx: Context) {
     CouixActionMenu(
         icon = {
             Icon(
@@ -701,7 +711,6 @@ private fun RestartMenu(ctx: Context) {
         ),
     )
 }
-
 
 // 读取桌面上全部文件夹名, 供"新应用添加到"下拉使用。桌面数据库为 launcher.db(4x4 布局为
 // launcher_4x4.db), 条目表按桌面模式分三张, 文件夹 itemType=3、堆栈 105; 三张表都查并按 _id 去重。
@@ -844,7 +853,7 @@ private fun colorOSMonetAccent(context: Context): String? {
 
 // 以 root 执行 shell 命令并返回 stdout(无 root / su 不存在 / 出错时返回 null)。
 // 全程静默: 任何异常都吞掉、绝不向上抛, 保证首次安装无权限时不崩溃。
-private fun runRoot(command: String): String? {
+internal fun runRoot(command: String): String? {
     return runCatching {
         val p = Runtime.getRuntime().exec("su")
         DataOutputStream(p.outputStream).use { os ->
