@@ -3,6 +3,7 @@ package com.rikumi.colorosmod.hooks;
 import static com.rikumi.colorosmod.XposedInit.*;
 
 import android.content.ContentResolver;
+import android.content.Context;
 import android.content.res.Resources;
 import android.database.Cursor;
 import android.net.Uri;
@@ -28,6 +29,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
 import android.widget.TextSwitcher;
+import android.widget.Toast;
 
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedBridge;
@@ -85,6 +87,7 @@ public final class SystemServerHooks {
                                 sHungTaskIds.add(Integer.valueOf(taskId));
                                 sHungTasks.put(Integer.valueOf(taskId), new WeakReference<Object>(task));
                                 log(">>> edge_hang: skip moveTaskToBack, taskId=" + taskId);
+                                showEdgeHangToast();
                             } catch (Throwable t) {
                                 log("!!! edge_hang error: " + t);
                             }
@@ -238,7 +241,7 @@ public final class SystemServerHooks {
     // 把手宽度由 mViewContainerLayoutParams.width 控制(updateViewLayoutParams 应用), 不能用 margin。
     private static void hookFloatHandleWhiteBar(final XC_LoadPackage.LoadPackageParam lpparam) {
         final int BAR_WIDTH_DP = 4;   // 竖条宽度(细)
-        final int EDGE_DP = 16;       // 距屏幕右边界距离
+        final int EDGE_DP = 8;       // 距屏幕右边界距离
         try {
             final Class<?> fhvCls = XposedHelpers.findClass(
                     "com.android.server.wm.floathandle.FloatHandleView", lpparam.classLoader);
@@ -577,6 +580,8 @@ public final class SystemServerHooks {
     private static final Map<Integer, WeakReference<Object>> sHungTasks =
             Collections.synchronizedMap(new HashMap<Integer, WeakReference<Object>>());
 
+    // 贴边挂机中弹出的提示文案。
+    private static final String EDGE_HANG_TOAST_TEXT = "贴边挂机中";
     // prepareSurfaces 的 before/after 之间传递 Task.mLastSurfaceShowing 的附加字段键。
     private static final String LAST_SHOWING = "colorosModLastSurfaceShowing";
     private static volatile Object sPamExt;           // PlaybackActivityMonitorExtImpl 实例
@@ -806,6 +811,41 @@ public final class SystemServerHooks {
         } catch (Throwable t) {
             log("!!! edge_hang_mute postDelayed failed: " + t);
         }
+    }
+
+    // 贴边挂机提示: system_server 内没有 Activity 上下文, 用 system_server 自己的 system context
+    // (package="android") 弹 Toast, 系统 uid 的 toast 不受"通知权限"与速率限制影响。
+    // 必须抛到主线程执行: Toast 的 TN 在构造时取 Looper.myLooper(), 无 Looper 的线程会直接抛异常。
+    private static void showEdgeHangToast() {
+        postAsync(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Context ctx = systemContext();
+                    if (ctx == null) return;
+                    Toast.makeText(ctx, EDGE_HANG_TOAST_TEXT, Toast.LENGTH_SHORT).show();
+                } catch (Throwable t) {
+                    log("!!! edge_hang toast failed: " + t);
+                }
+            }
+        });
+    }
+
+    // system_server 的 system context: ActivityThread#currentActivityThread()#getSystemContext()。
+    // 取不到时回落到被 hook 进程的 Application。
+    private static Context systemContext() {
+        try {
+            Object at = XposedHelpers.callStaticMethod(
+                    XposedHelpers.findClass("android.app.ActivityThread", null),
+                    "currentActivityThread");
+            if (at != null) {
+                Object ctx = XposedHelpers.callMethod(at, "getSystemContext");
+                if (ctx instanceof Context) return (Context) ctx;
+            }
+        } catch (Throwable ignored) {
+            // 回落到 Application。
+        }
+        return currentApplication();
     }
 
     // 横屏应用小窗保持比例: 系统 fillFlexibleTaskInfo 对横屏应用硬编码 ratio=0.5625f(9:16)。
