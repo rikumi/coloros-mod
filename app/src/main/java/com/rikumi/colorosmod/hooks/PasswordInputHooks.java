@@ -403,7 +403,8 @@ public final class PasswordInputHooks {
     // / CANCEL 时恢复, 中途移出按键区域(甚至移出键盘)都保持缩小, 直到手指抬起。
     private static void hookSlideTouchTracking(Class<?> kbCls) {
         try {
-            XposedHelpers.findAndHookMethod(kbCls, "onTouchEvent", MotionEvent.class,
+            // 限定本类声明: onTouchEvent 在 View 里有实现, 上溯会命中所有 View。
+            XposedHelpers.findAndHookDeclaredMethod(kbCls, "onTouchEvent", MotionEvent.class,
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
@@ -784,7 +785,8 @@ public final class PasswordInputHooks {
     /** SIM 卡界面: 输入框与确定按钮的内阴影 + 确定按钮的光晕, 均先补纯色背景再去掉。 */
     private static void hookPwdInputNoLightEffect(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            XposedHelpers.findAndHookMethod(
+            // 限定本类声明: onDraw 在 View 里有实现, 上溯会命中所有 View。
+            XposedHelpers.findAndHookDeclaredMethod(
                     CLS_PWD_INPUT_VIEW, lpparam.classLoader, "onDraw", Canvas.class,
                     new XC_MethodHook() {
                         @Override
@@ -811,7 +813,8 @@ public final class PasswordInputHooks {
         }
 
         try {
-            XposedHelpers.findAndHookMethod(
+            // 限定本类声明: dispatchDraw 在 ViewGroup 里有实现, 上溯会命中所有容器。
+            XposedHelpers.findAndHookDeclaredMethod(
                     CLS_PWD_INPUT_LAYOUT, lpparam.classLoader, "dispatchDraw", Canvas.class,
                     new XC_MethodHook() {
                         @Override

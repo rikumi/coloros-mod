@@ -82,7 +82,8 @@ public final class LauncherHooks {
                     "com.android.launcher3.popup.OplusPopupContainerWithArrow",
                     lpparam.classLoader);
             sPopupContainerClass = popupClass;
-            XposedHelpers.findAndHookMethod(popupClass, "onAttachedToWindow",
+            // 限定本类声明: 上溯到 android.view.View 会让 hook 对 Launcher 内所有 View 生效。
+            XposedHelpers.findAndHookDeclaredMethod(popupClass, "onAttachedToWindow",
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -381,7 +382,8 @@ public final class LauncherHooks {
         try {
             Class<?> dragLayerClass = XposedHelpers.findClass(
                     "com.android.launcher3.dragndrop.DragLayer", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(dragLayerClass, "dispatchTouchEvent",
+            // 限定本类声明: dispatchTouchEvent 在 ViewGroup 里有实现, 上溯会命中所有容器。
+            XposedHelpers.findAndHookDeclaredMethod(dragLayerClass, "dispatchTouchEvent",
                     android.view.MotionEvent.class, new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {

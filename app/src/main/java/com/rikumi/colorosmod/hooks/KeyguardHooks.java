@@ -197,7 +197,8 @@ public final class KeyguardHooks {
 
         // 1) PIN/数字密码键盘下滑返回(COUINumericKeyboard)
         try {
-            XposedHelpers.findAndHookMethod(
+            // 限定本类声明: onTouchEvent 在 View 里有实现, 上溯会命中所有 View。
+            XposedHelpers.findAndHookDeclaredMethod(
                     CLS_COUI_NUMERIC_KEYBOARD, lpparam.classLoader, "onTouchEvent", MotionEvent.class,
                     new XC_MethodHook() {
                         @Override
@@ -252,7 +253,8 @@ public final class KeyguardHooks {
 
         // 2) 字母密码键盘下滑返回(SecurityKeyboardView)
         try {
-            XposedHelpers.findAndHookMethod(
+            // 限定本类声明: onTouchEvent 在 View 里有实现, 上溯会命中所有 View。
+            XposedHelpers.findAndHookDeclaredMethod(
                     CLS_SECURITY_KEYBOARD_VIEW, lpparam.classLoader, "onTouchEvent", MotionEvent.class,
                     new XC_MethodHook() {
                         @Override

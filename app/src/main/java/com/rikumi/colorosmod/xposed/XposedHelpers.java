@@ -92,6 +92,45 @@ public final class XposedHelpers {
         findAndHookMethod(findClass(className, classLoader), methodName, parameterTypesAndCallback);
     }
 
+    /**
+     * 只在目标类自己声明的方法里找, 不上溯父类、不查接口; 找不到直接抛 NoSuchMethodError。
+     *
+     * 用于 hook view / 框架生命周期回调(onAttachedToWindow、onDraw、onTouchEvent 等):
+     * 这些方法在 android.view.View 里都有实现, 一旦某个 ROM 版本的目标类没有覆写它,
+     * findMethodExact 会沿父类链一路找到 View, 于是 hook 变成对该进程内所有 View 生效。
+     * 更严重的是回调里若再 addView, 会触发 dispatchAttachedToWindow 重新进入同一个 hook,
+     * 直接栈溢出崩溃(实测 SystemUI 每 90s 崩一次、循环不停)。
+     * 因此"本意就是 hook 该类自己的覆写"的场景必须用这个版本, 缺失即放弃 hook。
+     * 需要靠上溯覆盖子类的场景(如 final 方法) 仍用 findAndHookMethod。
+     */
+    public static Method findMethodDeclared(Class<?> clazz, String methodName, Class<?>... parameterTypes) {
+        Class<?>[] types = (parameterTypes == null) ? new Class<?>[0] : parameterTypes;
+        try {
+            Method method = clazz.getDeclaredMethod(methodName, types);
+            method.setAccessible(true);
+            return method;
+        } catch (NoSuchMethodException e) {
+            throw new NoSuchMethodError(clazz.getName() + "#" + methodName + parametersString(types) + "#declared");
+        }
+    }
+
+    public static void findAndHookDeclaredMethod(Class<?> clazz, String methodName,
+                                                 Object... parameterTypesAndCallback) {
+        if (parameterTypesAndCallback.length == 0
+                || !(parameterTypesAndCallback[parameterTypesAndCallback.length - 1] instanceof XC_MethodHook)) {
+            throw new IllegalArgumentException("no callback defined");
+        }
+        XC_MethodHook callback = (XC_MethodHook) parameterTypesAndCallback[parameterTypesAndCallback.length - 1];
+        Object[] types = Arrays.copyOf(parameterTypesAndCallback, parameterTypesAndCallback.length - 1);
+        hookExecutable(findMethodDeclared(clazz, methodName,
+                getParameterClasses(clazz.getClassLoader(), types)), callback);
+    }
+
+    public static void findAndHookDeclaredMethod(String className, ClassLoader classLoader, String methodName,
+                                                 Object... parameterTypesAndCallback) {
+        findAndHookDeclaredMethod(findClass(className, classLoader), methodName, parameterTypesAndCallback);
+    }
+
     public static void findAndHookConstructor(Class<?> clazz, Object... parameterTypesAndCallback) {
         if (parameterTypesAndCallback.length == 0
                 || !(parameterTypesAndCallback[parameterTypesAndCallback.length - 1] instanceof XC_MethodHook)) {

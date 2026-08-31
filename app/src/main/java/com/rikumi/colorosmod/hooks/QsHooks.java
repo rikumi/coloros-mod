@@ -32,7 +32,8 @@ public final class QsHooks {
     // 不再 hook 分离模式的 SeparateQSFakeStatusController, 以免与经典模式叠加。
     public static void hookQsHideCarrier(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            XposedHelpers.findAndHookMethod(
+            // 限定本类声明: onFinishInflate 在 View 里有实现, 上溯会命中所有 View。
+            XposedHelpers.findAndHookDeclaredMethod(
                     "com.oplus.systemui.qs.OplusQuickStatusBarHeader",
                     lpparam.classLoader, "onFinishInflate",
                     new XC_MethodHook() {

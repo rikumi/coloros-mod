@@ -38,7 +38,8 @@ public final class NotificationHooks {
     public static void hookNotificationSubtitle(final XC_LoadPackage.LoadPackageParam lpparam,
                                                  final float density) {
         try {
-            XposedHelpers.findAndHookMethod(
+            // 限定本类声明: onFinishInflate 在 View 里有实现, 上溯会命中进程内所有 View。
+            XposedHelpers.findAndHookDeclaredMethod(
                     "com.android.systemui.statusbar.notification.stack.SectionHeaderView",
                     lpparam.classLoader, "onFinishInflate",
                     new XC_MethodHook() {
@@ -105,7 +106,8 @@ public final class NotificationHooks {
     public static void hookNotificationPadding(final XC_LoadPackage.LoadPackageParam lpparam,
                                                 final float density) {
         try {
-            XposedHelpers.findAndHookMethod(
+            // 限定本类声明: 上溯会命中父类, 影响面变大且语义不明确。
+            XposedHelpers.findAndHookDeclaredMethod(
                     "com.android.systemui.statusbar.notification.row.ExpandableNotificationRow",
                     lpparam.classLoader, "onNotificationUpdated",
                     new XC_MethodHook() {
@@ -159,7 +161,8 @@ public final class NotificationHooks {
                             }
                         });
 
-                XposedHelpers.findAndHookMethod(
+                // onMeasure / onLayout 在 View(ViewGroup) 里有实现, 限定本类声明。
+                XposedHelpers.findAndHookDeclaredMethod(
                         groupContainerClass, lpparam.classLoader, "onMeasure", int.class, int.class,
                         new XC_MethodHook() {
                             @Override
@@ -175,7 +178,7 @@ public final class NotificationHooks {
                             }
                         });
 
-                XposedHelpers.findAndHookMethod(
+                XposedHelpers.findAndHookDeclaredMethod(
                         groupContainerClass, lpparam.classLoader, "onLayout",
                         boolean.class, int.class, int.class, int.class, int.class,
                         new XC_MethodHook() {

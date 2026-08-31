@@ -276,7 +276,10 @@ public final class StatusBarLyricHooks {
 
     private static void hookStatusBarView(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            XposedHelpers.findAndHookMethod(
+            // 限定本类声明: 上溯到 android.view.View 会让 hook 对进程内所有 View 生效,
+            // 而 attachLyricView 内部 addView, 会再次触发 dispatchAttachedToWindow
+            // 重新进入本 hook, 直接栈溢出崩溃。
+            XposedHelpers.findAndHookDeclaredMethod(
                     CLS_PHONE_STATUS_BAR_VIEW, lpparam.classLoader, "onAttachedToWindow",
                     new XC_MethodHook() {
                         @Override

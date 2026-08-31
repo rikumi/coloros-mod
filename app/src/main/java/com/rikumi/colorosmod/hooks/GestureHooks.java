@@ -113,21 +113,46 @@ public final class GestureHooks {
                             param.setResult(null);
                         }
                     });
-            XposedHelpers.findAndHookMethod(handleClass, "onAttachedToWindow",
+        } catch (Throwable t) {
+            log("mback hook failed: " + t);
+        }
+        // 以下都是 view 生命周期回调, 必须限定本类声明: 上溯到 android.view.View 会让
+        // hook 对进程内所有 View 生效, 且 addView -> dispatchAttachedToWindow 会重新
+        // 进入 onAttachedToWindow 的 hook, 直接栈溢出。缺失即放弃(旧版 ROM 无覆写),
+        // 只失去视觉反馈层, 不影响上面的触摸接管。各自独立 try, 互不连累。
+        try {
+            Class<?> handleClass = XposedHelpers.findClass(
+                    "com.oplus.systemui.navigationbar.gesture.sidegesture.OplusNavigationHandle",
+                    lpparam.classLoader);
+            XposedHelpers.findAndHookDeclaredMethod(handleClass, "onAttachedToWindow",
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             syncMBackSurface((android.view.View) param.thisObject);
                         }
                     });
-            XposedHelpers.findAndHookMethod(handleClass, "onLayout", boolean.class,
+        } catch (Throwable t) {
+            log("mback surface attach hook failed: " + t);
+        }
+        try {
+            Class<?> handleClass = XposedHelpers.findClass(
+                    "com.oplus.systemui.navigationbar.gesture.sidegesture.OplusNavigationHandle",
+                    lpparam.classLoader);
+            XposedHelpers.findAndHookDeclaredMethod(handleClass, "onLayout", boolean.class,
                     int.class, int.class, int.class, int.class, new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             syncMBackSurface((android.view.View) param.thisObject);
                         }
                     });
-            XposedHelpers.findAndHookMethod(handleClass, "onDetachedFromWindow",
+        } catch (Throwable t) {
+            log("mback surface layout hook failed: " + t);
+        }
+        try {
+            Class<?> handleClass = XposedHelpers.findClass(
+                    "com.oplus.systemui.navigationbar.gesture.sidegesture.OplusNavigationHandle",
+                    lpparam.classLoader);
+            XposedHelpers.findAndHookDeclaredMethod(handleClass, "onDetachedFromWindow",
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -135,7 +160,7 @@ public final class GestureHooks {
                         }
                     });
         } catch (Throwable t) {
-            log("mback hook failed: " + t);
+            log("mback surface detach hook failed: " + t);
         }
     }
 
@@ -187,7 +212,8 @@ public final class GestureHooks {
             Class<?> handleClass = XposedHelpers.findClass(
                     "com.oplus.systemui.navigationbar.gesture.sidegesture.OplusNavigationHandle",
                     lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(handleClass, "onAttachedToWindow",
+            // 同 mBack: 限定本类声明, 避免上溯到 android.view.View。
+            XposedHelpers.findAndHookDeclaredMethod(handleClass, "onAttachedToWindow",
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -196,14 +222,28 @@ public final class GestureHooks {
                             syncGestureBlockSurface(handle);
                         }
                     });
-            XposedHelpers.findAndHookMethod(handleClass, "onLayout", boolean.class,
+        } catch (Throwable t) {
+            log("gesture touch-through attach hook failed: " + t);
+        }
+        try {
+            Class<?> handleClass = XposedHelpers.findClass(
+                    "com.oplus.systemui.navigationbar.gesture.sidegesture.OplusNavigationHandle",
+                    lpparam.classLoader);
+            XposedHelpers.findAndHookDeclaredMethod(handleClass, "onLayout", boolean.class,
                     int.class, int.class, int.class, int.class, new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             syncGestureBlockSurface((android.view.View) param.thisObject);
                         }
                     });
-            XposedHelpers.findAndHookMethod(handleClass, "onDetachedFromWindow",
+        } catch (Throwable t) {
+            log("gesture touch-through layout hook failed: " + t);
+        }
+        try {
+            Class<?> handleClass = XposedHelpers.findClass(
+                    "com.oplus.systemui.navigationbar.gesture.sidegesture.OplusNavigationHandle",
+                    lpparam.classLoader);
+            XposedHelpers.findAndHookDeclaredMethod(handleClass, "onDetachedFromWindow",
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -211,7 +251,7 @@ public final class GestureHooks {
                         }
                     });
         } catch (Throwable t) {
-            log("gesture touch-through hook failed: " + t);
+            log("gesture touch-through detach hook failed: " + t);
         }
         // 面板展开/收起时导航栏窗口不一定重算 insets, 靠 onComputeInternalInsets 无法及时撤销
         // 拦截。OplusNavigationBarView.updateSlippery 在 CentralSurfacesImpl 的展开 fraction
@@ -797,7 +837,8 @@ public final class GestureHooks {
             Class<?> handleClass = XposedHelpers.findClass(
                     "com.oplus.systemui.navigationbar.gesture.sidegesture.OplusNavigationHandle",
                     lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(handleClass, "onDraw", android.graphics.Canvas.class,
+            // view 生命周期 / 绘制回调限定本类声明, 避免上溯到 android.view.View。
+            XposedHelpers.findAndHookDeclaredMethod(handleClass, "onDraw", android.graphics.Canvas.class,
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
@@ -824,14 +865,7 @@ public final class GestureHooks {
                             }
                         }
                     });
-            XposedHelpers.findAndHookMethod(handleClass, "setVertical", boolean.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            applyGestureBarWidth((android.view.View) param.thisObject);
-                        }
-                    });
-            XposedHelpers.findAndHookMethod(handleClass, "onAttachedToWindow",
+            XposedHelpers.findAndHookDeclaredMethod(handleClass, "setVertical", boolean.class,
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -840,6 +874,21 @@ public final class GestureHooks {
                     });
         } catch (Throwable t) {
             log("gesture_bar hook (handle) failed: " + t);
+        }
+        // 单独 try: 旧版 ROM 无此覆写时不连累上面的 onDraw / setVertical。
+        try {
+            Class<?> handleClass = XposedHelpers.findClass(
+                    "com.oplus.systemui.navigationbar.gesture.sidegesture.OplusNavigationHandle",
+                    lpparam.classLoader);
+            XposedHelpers.findAndHookDeclaredMethod(handleClass, "onAttachedToWindow",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            applyGestureBarWidth((android.view.View) param.thisObject);
+                        }
+                    });
+        } catch (Throwable t) {
+            log("gesture_bar width attach hook failed: " + t);
         }
     }
 
