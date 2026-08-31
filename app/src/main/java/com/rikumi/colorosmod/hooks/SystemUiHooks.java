@@ -41,6 +41,10 @@ public final class SystemUiHooks {
 
         // Feature 10 — 合并控制中心背景压暗(半透明黑): 始终注入, 运行时按 KEY_QS_SCRIM_TRANSLUCENT_ENABLED 门控。
         QsHooks.hookQsBackgroundDim(lpparam);
+        // 控制中心背景模糊半径: 始终注入, 运行时按 KEY_QS_BLUR_RADIUS_ENABLED 门控。
+        QsHooks.hookQsBackgroundBlurRadius(lpparam);
+        // 控制中心背景缩小幅度: 始终注入, 运行时按 KEY_QS_BLUR_SCALE_ENABLED 门控。
+        QsHooks.hookQsBackgroundScale(lpparam);
         // Feature 13 — 控制中心 WLAN/蓝牙 名称单行省略: 始终注入, 运行时按 KEY_QS_TILE_NAME_ELLIPSIS_ENABLED 门控。
         QsHooks.hookQsTileNameEllipsis(lpparam);
         // 控制中心 Wi-Fi/蓝牙/音量/亮度 圆角: 始终注入, 运行时按 KEY_QS_NORMAL_CORNER_RADIUS_ENABLED 门控。

@@ -441,6 +441,97 @@ public final class QsHooks {
         }
     }
 
+    // 控制中心/通知中心背景模糊半径。系统在 ScrimControllerExImp#refreshBehindDrawable 里用
+    // NotifiAndQsPlatformBlurExKt.panelBlurRadius(context) 建 BlurConfig 交给 AutoBlurDrawable。
+    // 不能 hook panelBlurRadius: 它是静态方法, 通知卡片(ViewBlurManager)与锁屏堆叠
+    // (KeyguardStackingBlurConfig)也调它, 改了会连带影响这两处。这里在 refreshBehindDrawable
+    // 建好之后只改这一份 BlurConfig 的 blurRadius(public 可写字段), 再 applyBlurConfig 生效。
+    // refreshBehindDrawable 在初始化/主题变化/UI 模式变化等多处被调用(共 4 处), 且若 drawable
+    // 已是 AutoBlurDrawable 会提前 return, 故这里必须放在 after, 对两种情形都成立。
+    public static void hookQsBackgroundBlurRadius(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> exImpClass = XposedHelpers.findClass(
+                    "com.oplus.systemui.statusbar.phone.ScrimControllerExImp", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(exImpClass, "refreshBehindDrawable",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_QS_BLUR_RADIUS_ENABLED, false)) return;
+                                // 界面滑条以 10 为刻度(0-80), 写入时乘 QS_BLUR_RADIUS_SCALE 得 0-800。
+                                // clamp 是为兼容改动前已落盘的实际值(存的就是 800 之类), 否则会乘出超大半径。
+                                int value = readInt(KEY_QS_BLUR_RADIUS, QS_BLUR_RADIUS_DEFAULT);
+                                value = Math.max(0, Math.min(QS_BLUR_RADIUS_MAX, value));
+                                int radius = value * QS_BLUR_RADIUS_SCALE;
+                                Object controller = XposedHelpers.callMethod(param.thisObject, "getScrimController");
+                                if (controller == null) return;
+                                Object scrimBehind = XposedHelpers.callMethod(controller, "getScrimBehind");
+                                if (scrimBehind == null) return;
+                                Object drawable = XposedHelpers.callMethod(scrimBehind, "getDrawable");
+                                if (drawable == null) return;
+                                // 壁纸模糊分支(WallpaperBlurDrawable)不承载平台模糊半径, 跳过。
+                                if (!drawable.getClass().getName().endsWith("AutoBlurDrawable")) return;
+                                Object proxy = XposedHelpers.callMethod(drawable, "getViewBlurProxy");
+                                if (proxy == null) return;
+                                Object config = XposedHelpers.callMethod(proxy, "getBlurConfig");
+                                if (config == null) return;
+                                XposedHelpers.setIntField(config, "blurRadius", radius);
+                                XposedHelpers.callMethod(proxy, "applyBlurConfig");
+                            } catch (Throwable t) {
+                                log("qs_blur_radius apply error: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK ScrimControllerExImp#refreshBehindDrawable (qs_blur_radius)");
+        } catch (Throwable t) {
+            log("HOOK FAIL refreshBehindDrawable :: " + Log.getStackTraceString(t));
+        }
+    }
+
+    // 控制中心/通知中心背景缩小幅度。系统由 ScrimViewExImp#setBlurAndScaleAmount /
+    // setScaleAmount 调 NotifiAndQsPlatformBlurExKt.applyPanelMirrorScale, 把 mirrorScale
+    // 设成 z ? lerp(1.0f, 0.9f, f) : 1.0f —— 完全展开(f=1)时 0.9, 即缩小 10%; 缩小量 = 1-mirrorScale。
+    // 这个方法只被上述两处调用, 且调用前都判了 this.isBehind, 所以只作用于控制中心背景,
+    // 不会波及通知卡片 / 锁屏堆叠等其它模糊(与 panelBlurRadius 那种三处共用的静态方法不同)。
+    // 这里按滑条比例缩放"缩小量"再写回 mirrorScale: ratio=0 不缩小, 1 为系统默认, 0.5 为系统一半。
+    // 因为是对 f 的当前值做变换, 原生"随下拉逐渐缩小"的动画保留。
+    // 注意 z=false 时系统给 1.0, 缩小量为 0, 算出仍是 1.0, 无副作用。
+    public static void hookQsBackgroundScale(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> proxyClass = XposedHelpers.findClass(
+                    "com.oplusos.systemui.common.blurability.ViewBlurProxy", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(
+                    "com.oplusos.systemui.common.util.NotifiAndQsPlatformBlurExKt", lpparam.classLoader,
+                    "applyPanelMirrorScale", boolean.class, float.class, proxyClass,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_QS_BLUR_SCALE_ENABLED, false)) return;
+                                Object proxy = param.args[2];
+                                if (proxy == null) return;
+                                Object config = XposedHelpers.callMethod(proxy, "getBlurConfig");
+                                if (config == null) return;
+                                Object mixConfig = XposedHelpers.callMethod(config, "getPlatformMixConfig");
+                                if (mixConfig == null) return;
+                                // 取系统刚写入的值, 免得重复实现 lerp, 也自动跟随不同版本的 0.9 常量。
+                                float systemScale = (Float) XposedHelpers.callMethod(mixConfig, "getMirrorScale");
+                                int percent = readInt(KEY_QS_BLUR_SCALE, QS_BLUR_SCALE_DEFAULT);
+                                percent = Math.max(0, Math.min(QS_BLUR_SCALE_MAX, percent));
+                                float ratio = percent / 100f;
+                                float newScale = 1f - ratio * (1f - systemScale);
+                                XposedHelpers.callMethod(mixConfig, "setMirrorScale", newScale);
+                            } catch (Throwable t) {
+                                log("qs_blur_scale apply error: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK NotifiAndQsPlatformBlurExKt#applyPanelMirrorScale (qs_blur_scale)");
+        } catch (Throwable t) {
+            log("HOOK FAIL applyPanelMirrorScale :: " + Log.getStackTraceString(t));
+        }
+    }
+
     // 控制中心 WLAN/蓝牙 名称单行省略, 分离版与合并版都生效。
     // 分离版(2x1 可伸缩磁贴 OplusQSResizeableTileViewTwoXOne): WLAN 的 SSID 写在主标题
     // labelTitle(R.id.tile_label), 由 handleTileStateChange 经 TextSwitcherExtKt.setContent 写入;

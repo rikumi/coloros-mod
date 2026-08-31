@@ -103,8 +103,25 @@ public class XposedInit extends XposedModule {
     public static final String KEY_EDIT_MODE_BG_TRANSPARENT_ENABLED = "edit_mode_bg_transparent_enabled";
     // Feature 10 — 合并控制中心背景 scrim 亮度 (com.android.systemui)
     public static final String KEY_QS_SCRIM_TRANSLUCENT_ENABLED = "qs_scrim_translucent_enabled";
-    // 背景亮度滑条键(0-20, 默认 5): 0=全黑, 20=系统默认 lumin(不压暗)。
+    // 背景亮度滑条键(0-20, 默认 0): 0=全黑, 20=系统默认 lumin(不压暗)。
     public static final String KEY_QS_SCRIM_BRIGHTNESS = "qs_scrim_brightness";
+    // 控制中心背景模糊半径: 界面滑条以 10 为刻度单位, 取 0-QS_BLUR_RADIUS_MAX,
+    // 实际写入 BlurConfig.blurRadius 时乘 QS_BLUR_RADIUS_SCALE, 即 0-80 对应 0-800。
+    // 最终半径 = blurRadius * blurAmount(展开进度), 故原生"随下拉逐渐变模糊"的行为保留。
+    // 系统默认取自 R.integer: 旧版 blur_radius_platform = 800, 新版 blur_radius_platform_config
+    // = 450。滑条默认 40(即 400)。
+    public static final String KEY_QS_BLUR_RADIUS_ENABLED = "qs_blur_radius_enabled";
+    public static final String KEY_QS_BLUR_RADIUS = "qs_blur_radius";
+    public static final int QS_BLUR_RADIUS_DEFAULT = 40;
+    public static final int QS_BLUR_RADIUS_MAX = 80;
+    public static final int QS_BLUR_RADIUS_SCALE = 10;
+    // 控制中心背景缩小幅度: 滑条是"相对系统默认缩小量的百分比", 100=系统默认, 50=系统的一半。
+    // 系统原始缩小量为 1-mirrorScale(完全展开时 mirrorScale=0.9, 即缩小 10%),
+    // 这里把缩小量乘以 ratio 后写回 mirrorScale, 从而保留"随下拉逐渐缩小"的动画。
+    public static final String KEY_QS_BLUR_SCALE_ENABLED = "qs_blur_scale_enabled";
+    public static final String KEY_QS_BLUR_SCALE = "qs_blur_scale";
+    public static final int QS_BLUR_SCALE_DEFAULT = 50;
+    public static final int QS_BLUR_SCALE_MAX = 100;
     // 控制中心 WLAN/蓝牙 名称单行省略: 可伸缩 tile 的次级名称(SSID / 蓝牙设备名)承载在
     // labelDesc(TextSwitcher, R.id.tile_label_desc), 由 updateLabelDescText 经 TextSwitcherExtKt
     // .setContent 写入; 这里在每次 setContent 之后强制单行 + 行尾省略号。
@@ -339,8 +356,8 @@ public class XposedInit extends XposedModule {
     public static final float SUBTITLE_OFFSET_DP = 8f; // move subtitle up & right by 8dp each (at default reduction)
     public static final int SUBTITLE_PAD_DP = 4; // extra top & bottom padding for the subtitle tv (at default reduction)
     public static final int NOTIFICATION_PADDING_DP = 4; // extra top & bottom padding for non-minimized (non-silent) notifications
-    // 控制中心背景亮度: 默认 5(对应约 25% 系统默认 lumin); 系统默认 lumin 的 RGB 值为 0x33(51)。
-    public static final int QS_SCRIM_BRIGHTNESS_DEFAULT = 5;
+    // 控制中心背景亮度: 默认 0(全黑); 系统默认 lumin 的 RGB 值为 0x33(51), 对应滑条 20。
+    public static final int QS_SCRIM_BRIGHTNESS_DEFAULT = 0;
     public static final int QS_SCRIM_LUMIN_MAX = 0x33;
     // 密码界面背景亮度: 默认 0(全黑, 即去掉系统给模糊加的最低亮度); 上限 5 = 系统默认效果。
     // 实现按 overColor RGB 的比例缩放, 无需硬编码目标亮度。

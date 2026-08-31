@@ -68,6 +68,8 @@ public final class LauncherHooks {
 
     static volatile Object sNormalState;
 
+    static volatile Object sBackgroundAppState;
+
     // 缩小桌面图标长按菜单。该菜单尺寸由布局与主题属性决定, 不在运行时经 Resources.getDimension* 解析
     // (实测长按时无相关 dimen 被读取), 故资源钩子无效; 改为监听菜单根容器 deep_shortcuts_container 的
     // onAttachedToWindow, 对内部卡片容器做整体 scaleX/scaleY。
@@ -512,7 +514,13 @@ public final class LauncherHooks {
                                 if (!isLauncherFolderOpen(launcher, lpparam.classLoader)) return;
                                 // 只在停留/前往桌面时生效, 否则(详见 isLauncherOnWorkspace)打开文件夹后
                                 // 上滑进多任务会连多任务的遮罩一起去掉。
-                                if (!isLauncherOnWorkspace(launcher, lpparam.classLoader)) return;
+                                // 进入后台(BACKGROUND_APP)时同样必须归零: 从文件夹点应用启动时
+                                // setState 仍按"文件夹开着"把 blur 取成 getFolderBlur()=1.0,
+                                // 若不归零, 这个 1.0 会留在 mBlur 里; 从应用返回桌面时若正好
+                                // handleInvalidSurface 成立(直接 return, 且 onDraw 里 surface
+                                // 设置失败会再按文件夹开着置回 1.0), 模糊就被带了回来。
+                                if (!isLauncherOnWorkspace(launcher, lpparam.classLoader)
+                                        && !isLauncherBackgroundApp(launcher, lpparam.classLoader)) return;
                                 param.args[0] = 0f;
                             } catch (Throwable t) {
                                 log("folder bg blur hook error: " + t);
@@ -536,6 +544,15 @@ public final class LauncherHooks {
         if (state == null) state = launcherCurrentState(launcher);
         if (state == null) return false;
         return state == launcherNormalState(cl);
+    }
+
+    // 桌面是否正在进入后台(BACKGROUND_APP: 从文件夹启动应用, 或按 Home 离开桌面)。
+    // 此时 Launcher 窗口被应用盖住, 模糊值本身没有视觉影响, 但会被记进 mBlur。
+    static boolean isLauncherBackgroundApp(Object launcher, ClassLoader cl) {
+        Object state = launcherTargetState(cl);
+        if (state == null) state = launcherCurrentState(launcher);
+        if (state == null) return false;
+        return state == launcherBackgroundAppState(cl);
     }
 
     static Class<?> sOplusBaseStateClass;
@@ -572,6 +589,22 @@ public final class LauncherHooks {
                 sNormalState = XposedHelpers.getStaticObjectField(sLauncherStateClass, "NORMAL");
             }
             return sNormalState;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static Object launcherBackgroundAppState(ClassLoader cl) {
+        try {
+            if (sLauncherStateClass == null) {
+                sLauncherStateClass = XposedHelpers.findClass(
+                        "com.android.launcher3.LauncherState", cl);
+            }
+            if (sBackgroundAppState == null) {
+                sBackgroundAppState = XposedHelpers.getStaticObjectField(
+                        sLauncherStateClass, "BACKGROUND_APP");
+            }
+            return sBackgroundAppState;
         } catch (Throwable t) {
             return null;
         }

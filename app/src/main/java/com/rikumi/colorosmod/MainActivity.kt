@@ -159,7 +159,9 @@ private val DESKTOP: List<SettingsItem> = listOf(
 
 private val QS: List<SettingsItem> = listOf(
     GroupTitleItem("通控中心通用设置"),
-    SwitchItem("qs_scrim_translucent_enabled", "自定义背景亮度", sliderKey = "qs_scrim_brightness", sliderMax = 20, sliderDefault = 5, sliderUnit = "%"),
+    SwitchItem("qs_scrim_translucent_enabled", "自定义背景亮度", sliderKey = "qs_scrim_brightness", sliderMax = 20, sliderDefault = 0, sliderUnit = "%"),
+    SwitchItem("qs_blur_radius_enabled", "自定义背景模糊半径", sliderKey = "qs_blur_radius", sliderMax = 80, sliderDefault = 40, sliderUnit = ""),
+    SwitchItem("qs_blur_scale_enabled", "自定义背景缩小幅度", sliderKey = "qs_blur_scale", sliderMax = 100, sliderDefault = 50, sliderUnit = "%"),
     SwitchItem("qs_carrier_enabled", "去除运营商显示"),
     SwitchItem("qs_topmargin_enabled", "隐藏顶部状态图标簇"),
     SwitchItem("qs_panel_switch_no_cut_enabled", "分离版左右平移切换"),
