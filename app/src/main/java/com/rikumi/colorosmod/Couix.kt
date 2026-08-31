@@ -232,11 +232,11 @@ private val COUIX_CATEGORY_SUBTITLE_GAP = 12.dp
 // 分类入口行标题左边缘相对卡片左缘的距离: 带图标 item 的分割线从此处起，避开图标。
 internal val COUIX_CATEGORY_TEXT_START = COUIX_ROW_HPADDING + COUIX_CATEGORY_ICON + COUIX_CATEGORY_ICON_GAP
 
-/** 列表项标题采用粗体文字。 */
+/** 列表项标题采用中等字重(比常规体略粗)。 */
 fun couixTextStyles(): TextStyles {
     val base = defaultTextStyles()
     return base.copy(
-        body1 = base.body1.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold),
+        body1 = base.body1.copy(fontSize = 16.sp, fontWeight = FontWeight.Medium),
         body2 = base.body2.copy(fontSize = 14.sp, lineHeight = COUIX_SUBTITLE_LINE_HEIGHT),
     )
 }
@@ -256,18 +256,18 @@ fun CouixSmallTitle(
         style = androidx.compose.ui.text.TextStyle(
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.Medium,
         ),
         modifier = modifier.padding(start = 32.dp, end = 32.dp, top = 12.dp, bottom = 6.dp),
     )
 }
 
-/** 标题栏标题文字样式: 首页与子页面完全一致(title3 加粗)。 */
+/** 标题栏标题文字样式: 首页与子页面完全一致(title3 中等字重)。 */
 @Composable
 private fun couixTopBarTitleStyle(): TextStyle =
     MiuixTheme.textStyles.title3.copy(
         color = MiuixTheme.colorScheme.onSurface,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.Medium,
     )
 
 // 标题栏外框: 首页大标题与子页面标题共用, 统一状态栏 inset、垂直内边距与底部分割线,
@@ -783,7 +783,7 @@ internal fun CouixDeviceHeader(
                 text = model,
                 style = MiuixTheme.textStyles.title1.copy(
                     color = textColor,
-                    fontWeight = FontWeight.ExtraBold,
+                    fontWeight = FontWeight.Medium,
                 ),
             )
         }
@@ -799,7 +799,7 @@ internal fun CouixDeviceHeader(
                     text = system,
                     style = MiuixTheme.textStyles.body1.copy(
                         color = textColor.copy(alpha = COUIX_HEADER_SYSTEM_ALPHA),
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Medium,
                     ),
                 )
             }
@@ -1546,7 +1546,7 @@ fun CouixConfirmDialog(
                     text = title,
                     style = MiuixTheme.textStyles.body1.copy(
                         color = MiuixTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Medium,
                     ),
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -1582,7 +1582,7 @@ fun CouixConfirmDialog(
                             text = confirmLabel,
                             style = MiuixTheme.textStyles.body2.copy(
                                 color = MiuixTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Medium,
                             ),
                         )
                     }
@@ -1651,7 +1651,7 @@ private fun CouixSwitchRow(
                         style = MiuixTheme.textStyles.body2.copy(
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             textAlign = androidx.compose.ui.text.style.TextAlign.End,
-                            fontWeight = if (intVal != item.sliderDefault) FontWeight.Bold else null,
+                            fontWeight = if (intVal != item.sliderDefault) FontWeight.Medium else null,
                         ),
                         modifier = Modifier
                             .padding(start = 12.dp),

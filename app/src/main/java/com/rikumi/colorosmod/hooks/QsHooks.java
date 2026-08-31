@@ -397,18 +397,34 @@ public final class QsHooks {
                                     if (!readBool(KEY_QS_SCRIM_TRANSLUCENT_ENABLED, false)) return;
                                     Object cfg = param.getResult();
                                     if (cfg == null) return;
-                                    if (!cfg.getClass().getName().contains("BlurMixSingleWithShader")) return;
-                                    Object bg = XposedHelpers.getObjectField(cfg, "backgroundShaderParam");
+                                    // 两类 ROM 的单层混色配置类名都含 BlurMixSingle。
+                                    if (!cfg.getClass().getName().contains("BlurMixSingle")) return;
+                                    // 字段名随版本不同: 新版 backgroundShaderParam, 旧版 mixColor。
+                                    Object bg = null;
+                                    String field = null;
+                                    try {
+                                        bg = XposedHelpers.getObjectField(cfg, "backgroundShaderParam");
+                                        field = "backgroundShaderParam";
+                                    } catch (Throwable ignored) {
+                                    }
+                                    if (bg == null) {
+                                        try {
+                                            bg = XposedHelpers.getObjectField(cfg, "mixColor");
+                                            field = "mixColor";
+                                        } catch (Throwable ignored) {
+                                        }
+                                    }
                                     if (bg == null) return;
-                                    // top=LUMINOSITY(5) 把亮度归一化到该层 RGB 亮度; bottom=OVERLAY(2) 关闭。
+                                    // top=LUMINOSITY(5) 把亮度归一化到该层 RGB 亮度; bottom 关闭。
                                     // alpha=0x99(与系统默认同强度)使结果亮度直接等于 top 层 RGB 亮度。
                                     // 亮度由滑条 qs_scrim_brightness 控制: 0=全黑, 20=系统默认(不压暗), 10≈50%。
                                     int brightness = readInt(KEY_QS_SCRIM_BRIGHTNESS, QS_SCRIM_BRIGHTNESS_DEFAULT);
                                     brightness = Math.max(0, Math.min(20, brightness));
                                     int gray = Math.round(brightness * QS_SCRIM_LUMIN_MAX / 20f);
                                     int darkTop = Color.argb(0x99, gray, gray, gray);
-                                    Object dark = XposedHelpers.newInstance(bg.getClass(), 5, darkTop, 2, 0);
-                                    XposedHelpers.setObjectField(cfg, "backgroundShaderParam", dark);
+                                    Object dark = newQsMixColor(bg.getClass(), darkTop);
+                                    if (dark == null) return;
+                                    XposedHelpers.setObjectField(cfg, field, dark);
                                 } catch (Throwable t) {
                                     log("qs_scrim mixconfig error: " + t);
                                 }
@@ -517,6 +533,32 @@ public final class QsHooks {
         } catch (Throwable t) {
             log("HOOK FAIL OplusQsBaseToggleSliderLayout#setCornerRadius :: " + Log.getStackTraceString(t));
         }
+        // 旧版 ROM: 半径经 updateRadius(seekbar, radius) 落到 seekbar, 无 setCornerRadius。
+        // 合并式(com.oplus.systemui.qs.widget)与分离式(com.oplus.systemui.plugins.qs.widget)
+        // 都在 onShapeChanged 里调基类的它, 与上面二选一命中。
+        try {
+            Class<?> baseSliderClass = XposedHelpers.findClass(
+                    "com.oplus.systemui.qs.base.seek.OplusQsBaseToggleSliderLayout", lpparam.classLoader);
+            Class<?> seekBarClass = XposedHelpers.findClass(
+                    "com.oplus.systemui.qs.base.seek.OplusQsVerticalSeekBar", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(baseSliderClass, "updateRadius", seekBarClass, float.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_QS_NORMAL_CORNER_RADIUS_ENABLED, false)) return;
+                                Float px = resolveQsCornerRadiusPx(param.thisObject);
+                                if (px == null) return;
+                                param.args[1] = px;
+                            } catch (Throwable t) {
+                                log("qs_radius slider fail: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK OplusQsBaseToggleSliderLayout#updateRadius");
+        } catch (Throwable t) {
+            log("HOOK FAIL OplusQsBaseToggleSliderLayout#updateRadius :: " + Log.getStackTraceString(t));
+        }
 
         // 高亮磁贴(Wi-Fi / 蓝牙)轮廓: 合并式 StdQSTileResInteractor 与分离式 SepQSTileResInteractor
         // 各自产出一个 RoundRectOutlineProvider, 分别写入 StdQSResPool / SepQSResPool,
@@ -526,6 +568,38 @@ public final class QsHooks {
                 + "StdQSTileResInteractor$startHighlightTileOutlineCollection$2");
         hookQsHighlightTileOutline(lpparam, "com.oplus.systemui.qs.res.domain.interactor."
                 + "SepQSTileResInteractor$startHighlightTileOutlineCollection$2");
+        // 旧版 ROM 无上述 Interactor; 半径统一由 PersonalityManager#getHighlightRadius 产出,
+        // 判定同样是 isFlavorTwoDeviceExp() && 圆形 -> 60dp, 否则 16dp。
+        // 调用方 QsUtil(普通磁贴) / QsViewOutlineProviderKt(轮廓) 都走这里。
+        hookQsHighlightRadius(lpparam);
+    }
+
+    // 旧版 ROM 的磁贴圆角入口: 直接改返回的半径(px), 比替换 outline provider 更靠上游。
+    static void hookQsHighlightRadius(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.oplus.systemui.qs.personality.PersonalityManager", lpparam.classLoader,
+                    "getHighlightRadius", Context.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!readBool(KEY_QS_NORMAL_CORNER_RADIUS_ENABLED, false)) return;
+                                Context context = (Context) param.args[0];
+                                if (context == null) return;
+                                int dimenId = context.getResources()
+                                        .getIdentifier(QS_CORNER_RADIUS_DIMEN, "dimen", "com.android.systemui");
+                                if (dimenId == 0) return;
+                                param.setResult(Float.valueOf(context.getResources().getDimension(dimenId)));
+                            } catch (Throwable t) {
+                                log("qs_radius outline fail: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK PersonalityManager#getHighlightRadius");
+        } catch (Throwable t) {
+            log("HOOK FAIL PersonalityManager#getHighlightRadius :: " + Log.getStackTraceString(t));
+        }
     }
 
     static void hookQsHighlightTileOutline(final XC_LoadPackage.LoadPackageParam lpparam,
@@ -560,6 +634,27 @@ public final class QsHooks {
         } catch (Throwable t) {
             log("HOOK FAIL " + clsName + " :: " + Log.getStackTraceString(t));
         }
+    }
+
+    // 构造"只保留 top 层压暗"的混色对象。两类 ROM 的混色类随版本不同:
+    //   新版 MixColorWithShader(topMode, topLayerColor, bottomMode, bottomLayerColor) 四参,
+    //        bottom 需显式给 OVERLAY(2) + 0 才算关闭;
+    //   旧版 MixColor(mode, topLayerColor, bottomLayerColor) 三参, 没有 bottomMode,
+    //        一个 mode 同时作用于两层, bottomLayerColor 置 0 即关闭该层。
+    // 因此按构造器参数个数二选一, 两种构造的压暗语义一致。
+    static Object newQsMixColor(Class<?> cls, int darkTop) throws Exception {
+        for (java.lang.reflect.Constructor<?> c : cls.getConstructors()) {
+            Class<?>[] types = c.getParameterTypes();
+            boolean allInt = true;
+            for (Class<?> t : types) {
+                if (t != int.class) allInt = false;
+            }
+            if (!allInt) continue;
+            c.setAccessible(true);
+            if (types.length == 4) return c.newInstance(5, darkTop, 2, 0);
+            if (types.length == 3) return c.newInstance(5, darkTop, 0);
+        }
+        return null;
     }
 
     // 解析要强制的圆角(px); 资源不存在时返回 null, 保持系统原值。
