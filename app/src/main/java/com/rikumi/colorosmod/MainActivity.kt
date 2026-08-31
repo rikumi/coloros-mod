@@ -649,10 +649,21 @@ private fun systemName(): String? = when {
     else -> null
 }
 
+// 首页机型横幅的系统行: "<系统名> <地区标识> <版本>", 如 "ColorOS CN 16.0"。
+// 地区标识只在版本取到时才插入 —— 单独一个 "ColorOS CN" 既没有信息量也不好看,
+// 且 romVersion() 取不到时说明属性读取整体失败, 地区判断同样不可信。
 private fun systemLabel(): String? {
     val name = systemName() ?: return null
     val version = romVersion() ?: return name
-    return "$name $version"
+    val region = regionLabel(name) ?: return "$name $version"
+    return "$name $region $version"
+}
+
+// 销售地区标识: 国行 CN、海外 EX。判定复用一加分支那套 isCnRegion(见上)。
+// OxygenOS 本身就只有海外版(一加国内版刷的是 ColorOS), 再标 EX 是废话, 故返回 null 省略。
+private fun regionLabel(name: String): String? {
+    if (name == "OxygenOS") return null
+    return if (isCnRegion()) "CN" else "EX"
 }
 
 /**
