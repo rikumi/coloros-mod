@@ -250,7 +250,7 @@ private val CATEGORY_GROUPS: List<List<Category>> = listOf(
         Category("navigation", "导航与手势", MiuixIcons.Backup, NAV),
     ),
     listOf(
-        Category(DISABLED_APPS_ID, "已停用应用", MiuixIcons.Blocklist, emptyList()),
+        Category(DISABLED_APPS_ID, "停用应用", MiuixIcons.Blocklist, emptyList()),
     ),
 )
 private val CATEGORIES = CATEGORY_GROUPS.flatten()

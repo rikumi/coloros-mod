@@ -77,6 +77,13 @@ public class XposedInit extends XposedModule {
     public static final String KEY_RECENTS_HIDE_FREEFORM_ENABLED = "recents_hide_freeform_enabled";
     public static final String KEY_HIDE_APPS_NOVERIFY_ENABLED = "hide_apps_noverify_enabled";
     public static final String KEY_HIDE_APPS_TITLE_FOLDER_ENABLED = "hide_apps_title_folder_enabled";
+    // 停用应用免密码: 设置里停用"受生物识别保护"的应用(config_biometric_protected_package_names)
+    // 前会强制做一次生物识别/锁屏验证。开启后跳过该验证(见 SettingsHooks#hookDisableAppsNoVerify)。
+    public static final String KEY_DISABLE_APPS_NOVERIFY_ENABLED = "disable_apps_noverify_enabled";
+    // 在设置的应用管理页隐藏已停用的应用。应用列表默认 filterType=4, 用的是 Oplus 自己的
+    // FILTER_EVERYTHING_OPLUS, 它不像 AOSP 的"所有应用"(filterType=1)那样排除用户级停用的包,
+    // 所以停用后仍会在列表里出现(见 SettingsHooks#hookHideDisabledApps)。
+    public static final String KEY_HIDE_DISABLED_APPS_ENABLED = "hide_disabled_apps_enabled";
     // 通用设置 — 设置首页图标样式: 0=系统默认, 1=不规则图标, 2=圆形图标。
     public static final String KEY_SETTINGS_HOME_ICON_STYLE = "settings_home_icon_style";
     public static final int SETTINGS_HOME_ICON_STYLE_DEFAULT = 0;

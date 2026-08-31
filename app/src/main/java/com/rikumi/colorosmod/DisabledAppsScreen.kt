@@ -1,6 +1,11 @@
 package com.rikumi.colorosmod
 
 import android.content.Context
+import android.content.Intent
+import android.content.ActivityNotFoundException
+import android.net.Uri
+import android.provider.Settings
+import androidx.compose.foundation.clickable
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
@@ -36,8 +41,12 @@ import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.icon.extended.ChevronForward
 import top.yukonga.miuix.kmp.icon.extended.Share
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+
+import com.rikumi.colorosmod.XposedInit.KEY_DISABLE_APPS_NOVERIFY_ENABLED
+import com.rikumi.colorosmod.XposedInit.KEY_HIDE_DISABLED_APPS_ENABLED
 
 // 页面顶部说明: 本页不提供直接停用的入口, 只做只读展示与脚本导出。
 private const val DISABLED_APPS_HINT =
@@ -169,7 +178,7 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
     Scaffold(
         topBar = {
             CouixTopAppBar(
-                title = "已停用应用",
+                title = "停用应用",
                 dividerProgress = couixTopBarDividerProgress(listState, overscrollOffset),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -209,6 +218,15 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
         ) {
             // 第一个 group: 功能说明, 标题 + subtitle 形式(行内边距与设置项一致)。
             item { CouixCard { DisabledAppsHintRow() } }
+            item { CouixSmallTitle(text = "停用应用设置") }
+            item {
+                CouixCard {
+                    DisableAppsNoVerifyRow(ctx)
+                    CouixItemDivider()
+                    HideDisabledAppsRow(ctx)
+                }
+            }
+            item { CouixSmallTitle(text = "已停用的应用") }
             val current = apps
             when {
                 current == null -> item { CouixSmallTitle(text = "加载中…") }
@@ -217,7 +235,7 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
                     CouixCard {
                         current.forEachIndexed { index, entry ->
                             if (index > 0) CouixItemDivider()
-                            DisabledAppRow(entry)
+                            DisabledAppRow(entry) { openAppDetails(ctx, entry.pkg) }
                         }
                     }
                 }
@@ -225,6 +243,38 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
             item { Box(Modifier.height(24.dp)) }
         }
     }
+}
+
+/** 停用应用免密码开关: 开启后设置里停用受保护应用不再要求生物识别/锁屏验证。 */
+@Composable
+private fun DisableAppsNoVerifyRow(ctx: Context) {
+    var checked by remember {
+        mutableStateOf(ctx.settingsPrefs().getBoolean(KEY_DISABLE_APPS_NOVERIFY_ENABLED, false))
+    }
+    CouixSwitchPreference(
+        checked = checked,
+        onCheckedChange = {
+            checked = it
+            setBool(ctx, KEY_DISABLE_APPS_NOVERIFY_ENABLED, it)
+        },
+        title = "停用应用无需输入密码",
+    )
+}
+
+/** 隐藏已停用应用开关: 开启后设置的应用管理页不再列出已停用的应用。 */
+@Composable
+private fun HideDisabledAppsRow(ctx: Context) {
+    var checked by remember {
+        mutableStateOf(ctx.settingsPrefs().getBoolean(KEY_HIDE_DISABLED_APPS_ENABLED, false))
+    }
+    CouixSwitchPreference(
+        checked = checked,
+        onCheckedChange = {
+            checked = it
+            setBool(ctx, KEY_HIDE_DISABLED_APPS_ENABLED, it)
+        },
+        title = "在应用管理中隐藏",
+    )
 }
 
 /** 功能说明行: 标题 + subtitle(与设置项同款文字样式与行内边距)。 */
@@ -260,14 +310,29 @@ private fun DisabledAppsHintRow() {
     }
 }
 
-/** 停用应用列表行: 左侧应用名(取不到时只显示包名)与包名, 右侧灰色状态文字。 */
+// 跳转到设置的应用详情页。标准 Intent 由 com.android.settings.applications
+// .InstalledAppDetails 响应(实测停用与用户级卸载的包都能解析到它)。用户级卸载的包已不在当前
+// 用户下, 设置可能打不开, 因此兜住 ActivityNotFoundException 并提示。
+private fun openAppDetails(ctx: Context, pkg: String) {
+    try {
+        ctx.startActivity(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg"))
+        )
+    } catch (_: ActivityNotFoundException) {
+        android.widget.Toast.makeText(ctx, "无法打开该应用的设置页", android.widget.Toast.LENGTH_SHORT)
+            .show()
+    }
+}
+
+/** 停用应用列表行: 左侧应用名(取不到时只显示包名)与包名, 右侧灰色状态文字与前进箭头; 点击跳转设置。 */
 @Composable
-private fun DisabledAppRow(entry: DisabledAppEntry) {
+private fun DisabledAppRow(entry: DisabledAppEntry, onClick: () -> Unit) {
     val onSurface = MiuixTheme.colorScheme.onSurface
     val summary = MiuixTheme.colorScheme.onSurfaceVariantSummary
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable { onClick() }
             .padding(horizontal = 16.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -293,6 +358,15 @@ private fun DisabledAppRow(entry: DisabledAppEntry) {
             text = if (entry.uninstalled) "用户级卸载" else "停用",
             style = MiuixTheme.textStyles.body2.copy(color = summary),
             modifier = Modifier.padding(start = 12.dp),
+        )
+        Icon(
+            imageVector = MiuixIcons.ChevronForward,
+            contentDescription = null,
+            // 与分类入口行同款: 在 summary 之上再压低透明度, 只作指示不抢视觉。
+            tint = summary.copy(alpha = summary.alpha * 0.6f),
+            modifier = Modifier
+                .padding(start = 12.dp)
+                .size(16.dp),
         )
     }
 }
