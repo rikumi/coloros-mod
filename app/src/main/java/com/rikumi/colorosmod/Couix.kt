@@ -81,6 +81,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
@@ -609,6 +610,49 @@ internal fun CouixCard(
         ),
         cornerRadius = COUIX_CARD_CORNER,
         colors = cardColors,
+        content = content,
+    )
+}
+
+// 超长列表用的单行卡片容器: 与 CouixCard 同款外观(圆角/底色/边距), 但每行各占一个独立容器。
+// 上百行若塞进同一个 Card, 该容器会变成上万像素高, 首屏要一次性组合全部行, 且滚动到后半段时
+// 命中测试会失效(表现为"前面能点、后面点不动")。故长列表应逐行使用本容器。
+@Composable
+internal fun CouixCardRow(
+    first: Boolean,
+    last: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val baseCard = CardDefaults.defaultColors()
+    val cardColor = baseCard.color.copy(alpha = 0.8f)
+    val shape = when {
+        first && last -> RoundedCornerShape(COUIX_CARD_CORNER)
+        first -> RoundedCornerShape(
+            topStart = COUIX_CARD_CORNER,
+            topEnd = COUIX_CARD_CORNER,
+            bottomStart = 0.dp,
+            bottomEnd = 0.dp,
+        )
+        last -> RoundedCornerShape(
+            topStart = 0.dp,
+            topEnd = 0.dp,
+            bottomStart = COUIX_CARD_CORNER,
+            bottomEnd = COUIX_CARD_CORNER,
+        )
+        else -> RectangleShape
+    }
+    Column(
+        modifier = modifier
+            .padding(
+                start = COUIX_GROUP_HMARGIN,
+                end = COUIX_GROUP_HMARGIN,
+                top = if (first) 2.dp else 0.dp,
+                bottom = if (last) COUIX_CARD_BOTTOM_GAP else 0.dp,
+            )
+            .background(cardColor, shape)
+            // 只有带圆角的首尾行需要裁剪(水波纹不溢出圆角); 中间行是矩形, 免掉一层。
+            .then(if (first || last) Modifier.clip(shape) else Modifier),
         content = content,
     )
 }

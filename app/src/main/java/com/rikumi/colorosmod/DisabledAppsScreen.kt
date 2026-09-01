@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
@@ -231,12 +232,11 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
             when {
                 current == null -> item { CouixSmallTitle(text = "加载中…") }
                 current.isEmpty() -> item { CouixSmallTitle(text = "无已停用或用户级卸载的应用") }
-                else -> item {
-                    CouixCard {
-                        current.forEachIndexed { index, entry ->
-                            if (index > 0) CouixItemDivider()
-                            DisabledAppRow(entry) { openAppDetails(ctx, entry.pkg) }
-                        }
+                // 每行一个独立的惰性 item: 行数上百时不能共用一个容器(见 CouixCardRow 注释)。
+                else -> itemsIndexed(current, key = { _, entry -> entry.pkg }) { index, entry ->
+                    CouixCardRow(first = index == 0, last = index == current.lastIndex) {
+                        if (index > 0) CouixItemDivider()
+                        DisabledAppRow(entry) { openAppDetails(ctx, entry.pkg) }
                     }
                 }
             }
