@@ -182,6 +182,9 @@ public class XposedInit extends XposedModule {
     public static final String KEY_GESTURE_BAR_WIDTH_ENABLED = "gesture_bar_width_enabled";
     public static final String KEY_GESTURE_BAR_WIDTH_DP = "gesture_bar_width_dp";
     public static final String KEY_MBACK_ENABLED = "mback_enabled";
+    // 将旋转建议按钮固定在自然竖屏时的物理左下角，并沿屏幕圆角平分线放置。
+    public static final String KEY_ROTATION_BUTTON_FIXED_POSITION_ENABLED =
+            "rotation_button_fixed_position_enabled";
     public static final String KEY_GESTURE_TOUCH_THROUGH_ENABLED =
             "gesture_touch_through_enabled";
     public static final String KEY_GESTURE_BAR_LONG_PRESS_DISABLE_ENABLED =
