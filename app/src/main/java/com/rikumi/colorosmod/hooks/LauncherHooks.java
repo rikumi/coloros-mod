@@ -77,7 +77,7 @@ public final class LauncherHooks {
 
     // 缩小桌面图标长按菜单: 对 OplusPopupContainerWithArrow 内部的卡片容器(mAllPopupShortcutContainer)
     // 做整体 scaleX/scaleY。该容器承载卡片背景与所有菜单项, 而 popup 打开动画只缩放外层容器、不触碰它,
-    // 所以变换恒定生效。轴心设在箭头一侧, 缩放后箭头仍精确指向图标。
+    // 所以变换恒定生效。"更多功能"使用独立 PopupWindow；保留其动画外层, 只缩放内部视觉卡片。
     public static void hookPopupMenuDimens(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             final Class<?> popupClass = XposedHelpers.findClass(
@@ -103,7 +103,43 @@ public final class LauncherHooks {
                             v.post(() -> scalePopupContainer(v));
                         }
                     });
-            log("hooked popup menu container scaling");
+            // "更多功能"的二级菜单属于独立 PopupWindow, 并不在 mAllPopupShortcutContainer 内。
+            // 构造完成后子菜单 ListView 和外层卡片均已初始化。hook 全部构造函数可避免依赖
+            // OplusPopupContainerWithArrow#setSubPopWindow 的具体签名, 提高 Launcher 小版本兼容性。
+            try {
+                final Class<?> subPopupClass = XposedHelpers.findClass(
+                        "com.android.launcher3.popup.MoreFunctionsPopupListWindow",
+                        lpparam.classLoader);
+                XposedBridge.hookAllConstructors(subPopupClass,
+                        new XC_MethodHook() {
+                            @Override
+                            protected void afterHookedMethod(MethodHookParam param) {
+                                if (!readBool(KEY_SHRINK_POPUP_MENU, false)) {
+                                    return;
+                                }
+                                try {
+                                    Object list = XposedHelpers.callMethod(
+                                            param.thisObject, "getSubMenuListView");
+                                    if (!(list instanceof android.view.View)) {
+                                        return;
+                                    }
+                                    android.view.View content = (android.view.View) list;
+                                    android.view.ViewParent parent = content.getParent();
+                                    if (!(parent instanceof android.view.View)) {
+                                        return;
+                                    }
+                                    android.view.View wrapper = (android.view.View) parent;
+                                    wrapper.post(() -> scalePopupSubMenu(wrapper, content));
+                                } catch (Throwable t) {
+                                    log("scale popup submenu failed: " + t);
+                                }
+                            }
+                        });
+                log("hooked popup submenu scaling");
+            } catch (Throwable t) {
+                log("hook popup submenu failed: " + t);
+            }
+            log("hooked popup menu scaling");
         } catch (Throwable t) {
             log("hook popup menu container failed: " + t);
         }
@@ -113,9 +149,6 @@ public final class LauncherHooks {
         if (!readBool(KEY_SHRINK_POPUP_MENU, false)) {
             return;
         }
-        int pct = Math.max(0, Math.min(20,
-                readInt(KEY_POPUP_SCALE_PERCENT, POPUP_SHRINK_PERCENT_DEFAULT)));
-        float scale = 1f - pct / 100f;
         android.view.View target;
         try {
             Object inner = XposedHelpers.getObjectField(popupContainer, "mAllPopupShortcutContainer");
@@ -126,6 +159,16 @@ public final class LauncherHooks {
         if (target == null) {
             return;
         }
+        scalePopupTarget(popupContainer, target);
+    }
+
+    static void scalePopupTarget(android.view.View popupContainer, android.view.View target) {
+        if (!readBool(KEY_SHRINK_POPUP_MENU, false)) {
+            return;
+        }
+        int pct = Math.max(0, Math.min(20,
+                readInt(KEY_POPUP_SCALE_PERCENT, POPUP_SHRINK_PERCENT_DEFAULT)));
+        float scale = 1f - pct / 100f;
         int w = target.getWidth();
         int h = target.getHeight();
 
@@ -162,6 +205,78 @@ public final class LauncherHooks {
         fixPopupDividerThickness(target, scale);
         log("popup menu scaled: scale=" + scale + " w=" + w + " h=" + h + " pivotX=" + pivotX
                 + " pivotY=" + pivotY + " above=" + above);
+    }
+
+    // 外层 RoundFrameLayout 是 COUI 原生动画直接控制的对象, 不能缩放它。保持外层的位置、裁切、
+    // translation 与动画完全不变, 仅缩放内部 ListView。把卡片背景移到 ListView 后, 视觉上仍是整张
+    // 卡片缩小。原生窗口左上角已与一级卡片的原始左上角对齐, 因此使用同一个局部缩放矩阵
+    // (pivot=0,0), 菜单项的内距也会按相同比例变化；无需追踪或补偿任何其它元素的位置。
+    static void scalePopupSubMenu(android.view.View wrapper, android.view.View content) {
+        if (!readBool(KEY_SHRINK_POPUP_MENU, false)) {
+            return;
+        }
+        int pct = Math.max(0, Math.min(20,
+                readInt(KEY_POPUP_SCALE_PERCENT, POPUP_SHRINK_PERCENT_DEFAULT)));
+        float scale = 1f - pct / 100f;
+        float pivotX = 0f;
+        try {
+            android.graphics.drawable.Drawable background = wrapper.getBackground();
+            if (background != null) {
+                android.graphics.drawable.Drawable.ConstantState state = background.getConstantState();
+                content.setBackground(state == null
+                        ? background.mutate()
+                        : state.newDrawable(wrapper.getResources()).mutate());
+                android.view.ViewOutlineProvider outlineProvider = wrapper.getOutlineProvider();
+                content.setOutlineProvider(outlineProvider);
+                content.setClipToOutline(true);
+                syncPopupSubMenuOutline(wrapper, content, outlineProvider);
+                // RoundFrameLayout.dispatchDraw() 无空值检查地调用 background.setBounds(),
+                // 因此外层必须保留一个非空背景；透明 ColorDrawable 不参与视觉绘制。
+                wrapper.setBackground(new android.graphics.drawable.ColorDrawable(
+                        android.graphics.Color.TRANSPARENT));
+            }
+        } catch (Throwable t) {
+            log("popup submenu scale failed: " + t);
+            pivotX = content.getWidth() / 2f;
+        }
+        content.setPivotX(pivotX);
+        content.setPivotY(0f);
+        content.setScaleX(scale);
+        content.setScaleY(scale);
+        fixPopupDividerThickness(content, scale);
+        log("popup submenu scaled: scale=" + scale + " w=" + content.getWidth()
+                + " h=" + content.getHeight() + " pivotX=" + pivotX + " pivotY=0.0");
+    }
+
+    // RoundFrameLayout 的原生动画会更新自身 Outline, 但复用同一 provider 的 ListView 不会自动收到
+    // invalidateOutline。通过公开 View API 比较它自己的轮廓, 仅在矩形或透明度变化时刷新内层缓存；
+    // 不依赖 COUI 动画控制器的混淆方法名和字段名, 动画结束后也不会持续触发重绘。
+    static void syncPopupSubMenuOutline(android.view.View wrapper, android.view.View content,
+                                        android.view.ViewOutlineProvider outlineProvider) {
+        content.getViewTreeObserver().addOnPreDrawListener(
+                new android.view.ViewTreeObserver.OnPreDrawListener() {
+                    final android.graphics.Outline outline = new android.graphics.Outline();
+                    final android.graphics.Rect currentRect = new android.graphics.Rect();
+                    final android.graphics.Rect previousRect = new android.graphics.Rect();
+                    boolean hadRect;
+                    int previousAlpha = Integer.MIN_VALUE;
+
+                    @Override
+                    public boolean onPreDraw() {
+                        outline.setEmpty();
+                        outlineProvider.getOutline(wrapper, outline);
+                        boolean hasRect = outline.getRect(currentRect);
+                        int alpha = Float.floatToIntBits(outline.getAlpha());
+                        if (hasRect != hadRect || (hasRect && !currentRect.equals(previousRect))
+                                || alpha != previousAlpha) {
+                            hadRect = hasRect;
+                            previousRect.set(currentRect);
+                            previousAlpha = alpha;
+                            content.invalidateOutline();
+                        }
+                        return true;
+                    }
+                });
     }
 
     // 每个 DeepShortcutView 内的 R.id.divider 是列表项之间的分割线, 其高度来自
