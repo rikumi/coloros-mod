@@ -25,14 +25,16 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 public final class GestureHooks {
     // 判定为向左/右/上划动的阈值（dp），超过则放弃 MBack 接管。
     static final int MBACK_SWIPE_DP = 20;
-    // 旋转按钮横向与纵向使用相同边距，使按钮中心落在屏幕圆角的 45° 平分线上。
-    static final float ROTATION_BUTTON_MARGIN_DP = 16f;
+    // 旋转按钮到屏幕两边的边距(dp)，与系统侧边距 oplus_floating_rotation_button_side_margin 同值，
+    // 使按钮中心落在屏幕圆角的 45° 平分线上。
+    static final float ROTATION_BUTTON_MARGIN_DP = 12f;
 
     static final java.util.WeakHashMap<Object, Boolean> sBarExtraApplied =
             new java.util.WeakHashMap<>();
 
-    // 将自然竖屏的物理左下角映射到各旋转方向的逻辑坐标角：左下、右下、右上、左上。
-    public static void hookRotationButtonFixedPortraitBottomLeft(
+    // 恢复原生旋转按钮位置：按钮落在「当前屏幕底边」与「建议旋转方向下屏幕底边」的夹角，
+    // 即当前屏幕的左下角或右下角，取决于建议的旋转方向。
+    public static void hookRotationButtonNativePosition(
             final XC_LoadPackage.LoadPackageParam lpparam) {
         final Class<?> buttonClass;
         try {
@@ -51,8 +53,11 @@ public final class GestureHooks {
                         protected void afterHookedMethod(MethodHookParam param) {
                             if (!readBool(KEY_ROTATION_BUTTON_FIXED_POSITION_ENABLED, false)) return;
                             try {
-                                int gravity = rotationButtonGravity(
-                                        XposedHelpers.getIntField(param.thisObject, "mDisplayRotation"));
+                                int rotation = XposedHelpers.getIntField(
+                                        param.thisObject, "mDisplayRotation");
+                                int gravity = rotationButtonGravity(rotation,
+                                        rotationButtonSuggestedRotation(
+                                                param.thisObject, rotation));
                                 android.view.WindowManager.LayoutParams windowParams =
                                         (android.view.WindowManager.LayoutParams) param.getResult();
                                 if (windowParams != null) {
@@ -94,7 +99,11 @@ public final class GestureHooks {
                                         "rotation_button_side_margin", originalMargin);
                                 int margin = Math.round(
                                         ROTATION_BUTTON_MARGIN_DP * readDensity());
-                                if (rotation == 1 || rotation == 2) margin = -margin;
+                                if (isRotationButtonOnRight(rotation,
+                                        rotationButtonSuggestedRotation(
+                                                param.thisObject, rotation))) {
+                                    margin = -margin;
+                                }
                                 XposedHelpers.setIntField(
                                         param.thisObject, "mSideMargin", margin);
                             } catch (Throwable t) {
@@ -120,17 +129,33 @@ public final class GestureHooks {
         }
     }
 
-    static int rotationButtonGravity(int rotation) {
-        switch (rotation) {
-            case 1:
-                return android.view.Gravity.BOTTOM | android.view.Gravity.RIGHT;
-            case 2:
-                return android.view.Gravity.TOP | android.view.Gravity.RIGHT;
-            case 3:
-                return android.view.Gravity.TOP | android.view.Gravity.LEFT;
-            default:
-                return android.view.Gravity.BOTTOM | android.view.Gravity.LEFT;
+    // 建议旋转方向(RotationButtonController#mLastRotationSuggestion)，由
+    // NavigationBar#onRotationProposal 在显示按钮之前写入。取不到时退回当前方向，
+    // 即保持系统默认的左下角。
+    static int rotationButtonSuggestedRotation(Object button, int rotation) {
+        try {
+            Object controller = XposedHelpers.getObjectField(
+                    button, "mRotationButtonController");
+            if (controller == null) return rotation;
+            return XposedHelpers.getIntField(controller, "mLastRotationSuggestion");
+        } catch (Throwable t) {
+            return rotation;
         }
+    }
+
+    // rotation 值增大 = 渲染内容顺时针旋转(设备逆时针转动)，已用 onRotationProposal 的图标分支
+    // 核对: suggested == rotation + 1 走 CW 图标、rotation + 3 走 CCW 图标。内容顺时针转 90 度后
+    // 新的屏幕底边落在当前屏幕的左侧边，故 +1 时夹角在左下(系统默认的那一侧)；
+    // +3 时新的底边落在当前屏幕的右侧边，夹角在右下。相差 180 度时两条底边平行，无夹角，保持左下。
+    static boolean isRotationButtonOnRight(int rotation, int suggested) {
+        return (suggested - rotation + 4) % 4 == 3;
+    }
+
+    // 按钮恒贴当前屏幕底边(BOTTOM): 两条底边的夹角只能落在下边，不会跑到屏幕顶部。
+    static int rotationButtonGravity(int rotation, int suggested) {
+        return android.view.Gravity.BOTTOM | (isRotationButtonOnRight(rotation, suggested)
+                ? android.view.Gravity.RIGHT
+                : android.view.Gravity.LEFT);
     }
 
     public static void hookGestureBarLongPressDisable(

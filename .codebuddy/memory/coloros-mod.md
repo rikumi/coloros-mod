@@ -104,6 +104,7 @@
 | 导航与手势 | 禁止手势条动画效果 | `gesture_bar_long_press_disable_enabled` | — |
 | 导航与手势 | 启用 mBack | `mback_enabled` | — |
 | 导航与手势 | 避免手势区域点击穿透 | `gesture_touch_through_enabled` | — |
+| 导航与手势 | 恢复原生旋转按钮位置 | `rotation_button_fixed_position_enabled` | — |
 
 未在设置界面暴露、仅存于 prefs 的键：
 
@@ -445,6 +446,31 @@ COUI 给锁屏密码控件叠了三类非纯色绘制，分别跳过，去掉后
   `com.oplusos.systemui.navigationbar.OplusNavigationBarView#updateSlippery`，after 里同步拦截层并 `requestLayout()`
   触发 traversal 重算 `touchableRegion`。
 - 拦截层严格跟随开关运行期取值：关则立即从视图树移除（否则残留到下次 SystemUI 重启）。
+
+### 旋转按钮（GestureHooks.hookRotationButtonNativePosition）
+
+**恢复原生旋转按钮位置** `rotation_button_fixed_position_enabled`（key 沿用 PR #5 的旧名，功能语义已改）
+
+- 位置判据：`FloatingRotationButton.mDisplayRotation`（当前方向）与
+  `mRotationButtonController.mLastRotationSuggestion`（建议方向，由 `NavigationBar#onRotationProposal`
+  在显示按钮**之前**写入，故在 `adjustViewPositionAndCreateLayoutParams` 的 after 里已可读；
+  取不到时退回当前方向 → 保持系统默认左下）。
+- `isRotationButtonOnRight`：`(suggested - rotation + 4) % 4 == 3` 时夹角在右下，其余在左下。
+  rotation 增大 = 渲染内容顺时针旋转（设备逆时针转），已用 `onRotationProposal` 的图标分支核对：
+  `suggested == rotation+1` 走 CW 图标、`rotation+3` 走 CCW 图标。内容顺时针转 90° 后新底边落在
+  当前屏幕**左侧**边 → 夹角在左下（系统默认那侧）；`+3` 时新底边落在右侧边 → 右下。
+  相差 180° 两底边平行，无夹角，保持左下。
+- gravity 恒为 `BOTTOM`（窗口与容器内 `FrameLayout.LayoutParams` 两处都设）：两条底边的夹角只能
+  落在下边，不会跑到屏幕顶部（PR #5 原实现按 rotation 固定到自然竖屏物理左下角，rotation 2/3 时
+  落到 `TOP`，与"底边夹角"语义不符，已废弃）。
+- 边距：`ROTATION_BUTTON_MARGIN_DP = 12`（与系统 `oplus_floating_rotation_button_side_margin` 同值）。
+  两处配合才等距：
+  1. `adjustViewPositionAndCreateLayoutParams` after 里 `lp.y = 12dp`
+     （系统 `mBottomMargin` = `oplus_floating_rotation_button_bottom_margin` = 72dp，被当作 `lp.y` 用，
+     gravity=BOTTOM 时 y 为正 = 向上偏移，72dp 离底边过远）；
+  2. `updateTranslation(boolean)` before 里临时把 `mSideMargin` 换成 ±12dp（右下时取反，按钮才朝屏幕
+     内侧偏移），after 还原 —— Oplus 的 `updateTranslation` 忽略 Position、只读 `mSideMargin`。
+- 注：PR #5 原版用 16dp，用户要求与系统侧边距同值，改 12dp。
 
 ## 四、桌面（com.android.launcher）
 
