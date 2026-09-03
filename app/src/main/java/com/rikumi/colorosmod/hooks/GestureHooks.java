@@ -25,9 +25,113 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 public final class GestureHooks {
     // 判定为向左/右/上划动的阈值（dp），超过则放弃 MBack 接管。
     static final int MBACK_SWIPE_DP = 20;
+    // 旋转按钮横向与纵向使用相同边距，使按钮中心落在屏幕圆角的 45° 平分线上。
+    static final float ROTATION_BUTTON_MARGIN_DP = 16f;
 
     static final java.util.WeakHashMap<Object, Boolean> sBarExtraApplied =
             new java.util.WeakHashMap<>();
+
+    // 将自然竖屏的物理左下角映射到各旋转方向的逻辑坐标角：左下、右下、右上、左上。
+    public static void hookRotationButtonFixedPortraitBottomLeft(
+            final XC_LoadPackage.LoadPackageParam lpparam) {
+        final Class<?> buttonClass;
+        try {
+            buttonClass = XposedHelpers.findClass(
+                    "com.android.systemui.shared.rotation.FloatingRotationButton",
+                    lpparam.classLoader);
+        } catch (Throwable t) {
+            log("rotation button fixed position class failed: " + t);
+            return;
+        }
+
+        try {
+            XposedHelpers.findAndHookMethod(buttonClass,
+                    "adjustViewPositionAndCreateLayoutParams", new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (!readBool(KEY_ROTATION_BUTTON_FIXED_POSITION_ENABLED, false)) return;
+                            try {
+                                int gravity = rotationButtonGravity(
+                                        XposedHelpers.getIntField(param.thisObject, "mDisplayRotation"));
+                                android.view.WindowManager.LayoutParams windowParams =
+                                        (android.view.WindowManager.LayoutParams) param.getResult();
+                                if (windowParams != null) {
+                                    windowParams.gravity = gravity;
+                                    windowParams.y = Math.round(
+                                            ROTATION_BUTTON_MARGIN_DP * readDensity());
+                                }
+
+                                android.view.View button = (android.view.View)
+                                        XposedHelpers.getObjectField(param.thisObject, "mKeyButtonView");
+                                android.view.ViewGroup.LayoutParams raw = button.getLayoutParams();
+                                if (raw instanceof android.widget.FrameLayout.LayoutParams) {
+                                    ((android.widget.FrameLayout.LayoutParams) raw).gravity = gravity;
+                                    button.setLayoutParams(raw);
+                                }
+                            } catch (Throwable t) {
+                                log("rotation button fixed position apply failed: " + t);
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            log("rotation button fixed position layout hook failed: " + t);
+        }
+
+        // Oplus 的 updateTranslation 始终读取 mSideMargin；执行期间替换为统一边距，
+        // 右侧重力下同时取反，让按钮和任务栏切换动画都朝屏幕内侧偏移。
+        try {
+            XposedHelpers.findAndHookMethod(buttonClass, "updateTranslation", boolean.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!readBool(KEY_ROTATION_BUTTON_FIXED_POSITION_ENABLED, false)) return;
+                            try {
+                                int rotation = XposedHelpers.getIntField(
+                                        param.thisObject, "mDisplayRotation");
+                                int originalMargin = XposedHelpers.getIntField(
+                                        param.thisObject, "mSideMargin");
+                                param.setObjectExtra(
+                                        "rotation_button_side_margin", originalMargin);
+                                int margin = Math.round(
+                                        ROTATION_BUTTON_MARGIN_DP * readDensity());
+                                if (rotation == 1 || rotation == 2) margin = -margin;
+                                XposedHelpers.setIntField(
+                                        param.thisObject, "mSideMargin", margin);
+                            } catch (Throwable t) {
+                                log("rotation button side margin apply failed: " + t);
+                            }
+                        }
+
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            Object margin = param.getObjectExtra("rotation_button_side_margin");
+                            if (margin instanceof Integer) {
+                                try {
+                                    XposedHelpers.setIntField(param.thisObject, "mSideMargin",
+                                            (Integer) margin);
+                                } catch (Throwable t) {
+                                    log("rotation button side margin restore failed: " + t);
+                                }
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            log("rotation button fixed position translation hook failed: " + t);
+        }
+    }
+
+    static int rotationButtonGravity(int rotation) {
+        switch (rotation) {
+            case 1:
+                return android.view.Gravity.BOTTOM | android.view.Gravity.RIGHT;
+            case 2:
+                return android.view.Gravity.TOP | android.view.Gravity.RIGHT;
+            case 3:
+                return android.view.Gravity.TOP | android.view.Gravity.LEFT;
+            default:
+                return android.view.Gravity.BOTTOM | android.view.Gravity.LEFT;
+        }
+    }
 
     public static void hookGestureBarLongPressDisable(
             final XC_LoadPackage.LoadPackageParam lpparam) {

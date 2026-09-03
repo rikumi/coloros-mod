@@ -209,6 +209,7 @@ private val NAV: List<SettingsItem> = listOf(
     SwitchItem("gesture_bar_height_enabled", "增大底部手势区高度", "缓解屏幕底部圆角区域吃掉应用内容", "gesture_bar_height_dp", 24, 12),
     SwitchItem("mback_enabled", "启用 mBack", "点击手势条返回，长按回桌面"),
     SwitchItem("gesture_touch_through_enabled", "避免手势区域点击穿透"),
+    SwitchItem("rotation_button_fixed_position_enabled", "固定旋转屏幕按钮位置", "始终位于默认竖屏左下角，并对齐屏幕圆角平分线"),
     GroupTitleItem("手势视觉"),
     SwitchItem("gesture_bar_width_enabled", "调整手势滑动条宽度", sliderKey = "gesture_bar_width_dp", sliderMax = 120, sliderDefault = 100, sliderUnit = "dp", sliderMin = 80),
     SwitchItem("gesture_bar_long_press_disable_enabled", "禁止手势条动画效果", "理论可解决 OxygenOS 关不掉助手动画的问题"),

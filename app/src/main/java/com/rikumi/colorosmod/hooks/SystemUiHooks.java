@@ -59,6 +59,8 @@ public final class SystemUiHooks {
         GestureHooks.hookGestureBarHeight(lpparam);
         GestureHooks.hookGestureBarLongPressDisable(lpparam);
         GestureHooks.hookMBack(lpparam);
+        // 旋转建议按钮固定在自然竖屏的物理左下角: 运行时按独立开关门控。
+        GestureHooks.hookRotationButtonFixedPortraitBottomLeft(lpparam);
         // 独立功能 — 避免手势区域点击穿透: 与 mBack 解耦, 各自独立开关。
         GestureHooks.hookGestureTouchThrough(lpparam);
         // 解锁时关机无需校验密码: 与手势无关, 始终注入, 运行时门控。
