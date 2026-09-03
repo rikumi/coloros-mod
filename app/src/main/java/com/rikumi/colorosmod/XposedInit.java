@@ -234,6 +234,9 @@ public class XposedInit extends XposedModule {
     // 放行系统侧滑返回手势; 并把"上滑使用指纹解锁"提示改为"下滑返回指纹解锁"。
     // 状态栏歌词: 数据源是 ColorOS 媒体接口的 metadata.lyricInfo, 无需注入音乐软件/伪装机型。
     public static final String KEY_STATUSBAR_LYRIC_ENABLED = "statusbar_lyric_enabled";
+    // 控制中心蓝牙磁贴显示降噪控制: 有可控制的降噪耳机时把蓝牙磁贴改成三段式(降噪/关闭/通透),
+    // 复用系统三段式静音磁贴的整套渲染, 状态走欢律 EarphoneControlProvider。见 AncTileHooks。
+    public static final String KEY_ANC_TILE_ENABLED = "anc_tile_enabled";
 
     // 系统设置"通知栏显示方式"(Settings.Secure, StatusBarSettingsValueProxy#KEY_NOTIFICATION_PROMPT_MODE)。
     // 通知图标区显示模式的下发由 NotificationHooks 统一负责, 状态栏歌词显示时用它强制"显示数字"。

@@ -169,6 +169,7 @@ private val QS: List<SettingsItem> = listOf(
     SwitchItem("qs_tile_name_ellipsis_enabled", "Wi-Fi / 蓝牙名称单行省略"),
     SwitchItem("qs_normal_corner_radius_enabled", "OxygenOS 恢复正常圆角"),
     SwitchItem("qs_clock_no_expand_anim_enabled", "合并版时间日期固定单行"),
+    SwitchItem("anc_tile_enabled", "音量条显示切换降噪模式图标"),
 )
 private val NOTIF: List<SettingsItem> = listOf(
     GroupTitleItem("通知中心设置"),
@@ -209,7 +210,7 @@ private val NAV: List<SettingsItem> = listOf(
     SwitchItem("gesture_bar_height_enabled", "增大底部手势区高度", "缓解屏幕底部圆角区域吃掉应用内容", "gesture_bar_height_dp", 24, 12),
     SwitchItem("mback_enabled", "启用 mBack", "点击手势条返回，长按回桌面"),
     SwitchItem("gesture_touch_through_enabled", "避免手势区域点击穿透"),
-    SwitchItem("rotation_button_fixed_position_enabled", "恢复原生旋转按钮位置", "位于当前屏幕底边与建议旋转方向下屏幕底边的夹角"),
+    SwitchItem("rotation_button_fixed_position_enabled", "优化屏幕旋转建议按钮位置", "位于建议旋转前后屏幕底边的夹角"),
     GroupTitleItem("手势视觉"),
     SwitchItem("gesture_bar_width_enabled", "调整手势滑动条宽度", sliderKey = "gesture_bar_width_dp", sliderMax = 120, sliderDefault = 100, sliderUnit = "dp", sliderMin = 80),
     SwitchItem("gesture_bar_long_press_disable_enabled", "禁止手势条动画效果", "理论可解决 OxygenOS 关不掉助手动画的问题"),

@@ -78,5 +78,8 @@ public final class SystemUiHooks {
         PasswordInputHooks.hookKeyguardSlideInput(lpparam);
         // 支持魅族状态栏歌词: 运行时按 KEY_STATUSBAR_LYRIC_ENABLED 门控。
         StatusBarLyricHooks.hookStatusBarLyric(lpparam);
+        // 控制中心蓝牙磁贴显示降噪控制: 运行时按 KEY_ANC_TILE_ENABLED 门控, 另需当前耳机支持
+        // 降噪/关闭/通透三档; 不满足时蓝牙磁贴保持系统原样。
+        AncTileHooks.hookAncTile(lpparam);
     }
 }
