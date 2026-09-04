@@ -52,6 +52,16 @@ public class XposedInit extends XposedModule {
 
     public static final String KEY_ICON_GAP_ENABLED = "icon_gap_enabled";
     public static final String KEY_ICON_GAP_DP = "icon_gap_dp";
+    // 调整抽屉每行图标数量: 只改 AllAppsParam(应用抽屉)的列数与图标尺寸,
+    // 不碰 IconParam / 桌面网格。系统原生 getNumAllAppsColumns 在手机上会读
+    // drawer_layout_columns(默认 4), 开启后按滑条 4-6 列强制, 并把抽屉图标按 4/列数缩放,
+    // 使每个格子里图标占比与原来 4 列时一致。同时减小左侧 padding, 抵消右侧字母索引条
+    // 造成的"左边空白看起来更大"。
+    public static final String KEY_DRAWER_COLUMNS_ENABLED = "drawer_columns_enabled";
+    public static final String KEY_DRAWER_COLUMNS = "drawer_columns";
+    public static final int DRAWER_COLUMNS_MIN = 4;
+    public static final int DRAWER_COLUMNS_MAX = 6;
+    public static final int DRAWER_COLUMNS_DEFAULT = 5;
     public static final String KEY_INDICATOR_DP = "indicator_dp";
     public static final String KEY_POPUP_SCALE_PERCENT = "popup_scale_percent";
     public static final String KEY_NOTIFICATION_SUBTITLE_SP = "notification_subtitle_sp";
