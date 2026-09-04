@@ -1489,8 +1489,34 @@ public final class LauncherHooks {
                                 if (lm == null) return;
                                 android.view.View rv = (android.view.View) param.thisObject;
                                 XposedHelpers.callMethod(rv, "stopScroll");
-                                XposedHelpers.callMethod(lm, "scrollToPositionWithOffset", pos,
-                                        drawerLetterScrollTopOffset(rv));
+                                // 复用桌面自己的 TopSmoothScroller。START + margin 会让目标行
+                                // 平滑停在浮动 header/顶部虚化层下方，同时避免按估算行高累加
+                                // 导致字母定位偏一行。
+                                Object scroller = XposedHelpers.getObjectField(
+                                        param.thisObject, "mSmoothScroller");
+                                int topOffset = drawerLetterScrollTopOffset(rv);
+                                XposedHelpers.callMethod(scroller, "setGravity",
+                                        android.view.Gravity.START);
+                                XposedHelpers.callMethod(scroller, "setMargin", topOffset);
+                                XposedHelpers.callMethod(scroller, "setTargetPosition", pos);
+                                // LinearSmoothScroller 的减速阶段约为线性滚动时间 / 0.3356。
+                                // 按目标距离动态提速，使完整的近距离减速动画最长为 350ms；
+                                // 长距离寻位阶段也会随距离同比提速。
+                                int currentY = (Integer) XposedHelpers.callMethod(
+                                        param.thisObject, "getCurrentScrollY");
+                                int targetY = (Integer) XposedHelpers.callMethod(
+                                        param.thisObject, "getCurrentScrollY", pos, topOffset);
+                                int availableY = (Integer) XposedHelpers.callMethod(
+                                        param.thisObject, "getAvailableScrollHeight");
+                                targetY = Math.max(0, Math.min(availableY, targetY));
+                                int distance = Math.abs(targetY - currentY);
+                                float millisPerPixel = distance == 0 ? 0.05f
+                                        : Math.min(0.05f, 117f / distance);
+                                XposedHelpers.setAdditionalInstanceField(scroller,
+                                        "colorosmod_drawer_vertical_scroll", Boolean.TRUE);
+                                XposedHelpers.setAdditionalInstanceField(scroller,
+                                        "colorosmod_drawer_scroll_ms_per_px", millisPerPixel);
+                                XposedHelpers.callMethod(lm, "startSmoothScroll", scroller);
                             } catch (Throwable t) {
                                 log("drawer letter scroll error: " + t);
                             }
@@ -1499,6 +1525,72 @@ public final class LauncherHooks {
             log("HOOK OK OplusAllAppsRecyclerView#injectScrollToPositionAtProgress (letter scroll)");
         } catch (Throwable t) {
             log("HOOK FAIL injectScrollToPositionAtProgress: " + t);
+        }
+
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher.locateaction.TopSmoothScroller",
+                    lpparam.classLoader, "calculateDxToMakeVisible",
+                    android.view.View.class, int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(
+                                    param.thisObject, "colorosmod_drawer_vertical_scroll"))) {
+                                return;
+                            }
+                            XposedHelpers.removeAdditionalInstanceField(param.thisObject,
+                                    "colorosmod_drawer_vertical_scroll");
+                            param.setResult(0);
+                        }
+                    });
+            log("HOOK OK TopSmoothScroller#calculateDxToMakeVisible (letter scroll)");
+        } catch (Throwable t) {
+            log("HOOK FAIL TopSmoothScroller#calculateDxToMakeVisible: " + t);
+        }
+
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "androidx.recyclerview.widget.c0",
+                    lpparam.classLoader, "calculateTimeForScrolling", int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            Object speed = XposedHelpers.getAdditionalInstanceField(
+                                    param.thisObject, "colorosmod_drawer_scroll_ms_per_px");
+                            if (speed instanceof Float) {
+                                int distance = Math.abs((Integer) param.args[0]);
+                                param.setResult((int) Math.ceil(distance * (Float) speed));
+                            }
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(
+                    "androidx.recyclerview.widget.c0",
+                    lpparam.classLoader, "calculateTimeForDeceleration", int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (XposedHelpers.getAdditionalInstanceField(param.thisObject,
+                                    "colorosmod_drawer_scroll_ms_per_px") != null) {
+                                param.setResult(Math.min(350, (Integer) param.getResult()));
+                            }
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(
+                    "androidx.recyclerview.widget.c0",
+                    lpparam.classLoader, "onStop",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            XposedHelpers.removeAdditionalInstanceField(param.thisObject,
+                                    "colorosmod_drawer_vertical_scroll");
+                            XposedHelpers.removeAdditionalInstanceField(param.thisObject,
+                                    "colorosmod_drawer_scroll_ms_per_px");
+                        }
+                    });
+            log("HOOK OK LinearSmoothScroller duration (letter scroll)");
+        } catch (Throwable t) {
+            log("HOOK FAIL LinearSmoothScroller duration: " + t);
         }
 
         try {
