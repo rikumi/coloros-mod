@@ -62,6 +62,9 @@ public class XposedInit extends XposedModule {
     public static final int DRAWER_COLUMNS_MIN = 4;
     public static final int DRAWER_COLUMNS_MAX = 6;
     public static final int DRAWER_COLUMNS_DEFAULT = 5;
+    // 抽屉右侧字母索引: 系统点字母会切到 ClusterAppsContainer, 弹出该字母的图标分组。
+    // 开启后改为滚动列表到对应分区, 不再弹出分组。
+    public static final String KEY_DRAWER_LETTER_SCROLL_ENABLED = "drawer_letter_scroll_enabled";
     public static final String KEY_INDICATOR_DP = "indicator_dp";
     public static final String KEY_POPUP_SCALE_PERCENT = "popup_scale_percent";
     public static final String KEY_NOTIFICATION_SUBTITLE_SP = "notification_subtitle_sp";

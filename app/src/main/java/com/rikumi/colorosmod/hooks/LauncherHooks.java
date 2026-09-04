@@ -340,6 +340,9 @@ public final class LauncherHooks {
         // 只改 AllAppsParam / 抽屉列数偏好与左侧 padding, 不碰 IconParam(桌面图标)。
         hookDrawerColumns(lpparam);
 
+        // 字母索引滚动定位: 始终注入, 运行时按 KEY_DRAWER_LETTER_SCROLL_ENABLED 门控。
+        hookDrawerLetterScroll(lpparam);
+
         // Feature 2 — 页面与 Dock 间距: 始终注入, 运行时按 KEY_INDICATOR_ENABLED 门控。
         // 系统会把 hotseat 高度变化按 workspaceTopPercentage 分摊到页面位置，
         // 因此不能直接减 requestedDp；hook 中会反推实际需要的 hotseat 高度变化。
@@ -1436,6 +1439,159 @@ public final class LauncherHooks {
             }
         } catch (Throwable ignored) {
         }
+    }
+
+    // 抽屉右侧字母索引: 系统点字母走 ClusterAppsContainer, 弹出该字母的图标分组;
+    // 同时 injectScrollToPositionAtProgress 在桌面抽屉(mLauncher != null)里故意不滚动。
+    // 开启后拦下分组切换, 并补上 smoothScrollToSection。
+    public static void hookDrawerLetterScroll(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher3.allapps.ClusterAppsContainer",
+                    lpparam.classLoader, "onSectionChange", String.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!readBool(KEY_DRAWER_LETTER_SCROLL_ENABLED, false)) return;
+                            try {
+                                // 已在分组页时先回到列表; 本来就在列表则内部直接 return。
+                                XposedHelpers.callMethod(param.thisObject,
+                                        "changeToDrawerLayout", true);
+                            } catch (Throwable t) {
+                                log("drawer letter scroll leave cluster: " + t);
+                            }
+                            param.setResult(null);
+                        }
+                    });
+            log("HOOK OK ClusterAppsContainer#onSectionChange (letter scroll)");
+        } catch (Throwable t) {
+            log("HOOK FAIL ClusterAppsContainer#onSectionChange: " + t);
+        }
+
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher3.allapps.OplusAllAppsRecyclerView",
+                    lpparam.classLoader, "injectScrollToPositionAtProgress",
+                    "com.android.launcher3.allapps.AlphabeticalAppsList$FastScrollSectionInfo",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (!readBool(KEY_DRAWER_LETTER_SCROLL_ENABLED, false)) return;
+                            try {
+                                if (XposedHelpers.getObjectField(param.thisObject, "mLauncher")
+                                        == null) {
+                                    return;
+                                }
+                                Object info = param.args[0];
+                                if (info == null) return;
+                                // 不用 smoothScrollToSection 的像素累加: 格子高度和实际行高
+                                // 对不齐时会多滚一行, 每字母差不多一行时就变成点 A 出 B。
+                                int pos = XposedHelpers.getIntField(info, "position");
+                                if (pos < 0) return;
+                                Object lm = XposedHelpers.callMethod(
+                                        param.thisObject, "getLayoutManager");
+                                if (lm == null) return;
+                                android.view.View rv = (android.view.View) param.thisObject;
+                                XposedHelpers.callMethod(rv, "stopScroll");
+                                XposedHelpers.callMethod(lm, "scrollToPositionWithOffset", pos,
+                                        drawerLetterScrollTopOffset(rv));
+                            } catch (Throwable t) {
+                                log("drawer letter scroll error: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK OplusAllAppsRecyclerView#injectScrollToPositionAtProgress (letter scroll)");
+        } catch (Throwable t) {
+            log("HOOK FAIL injectScrollToPositionAtProgress: " + t);
+        }
+
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher3.allapps.LetterIndexFastScrollHelper",
+                    lpparam.classLoader, "handleUpEvent",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (!readBool(KEY_DRAWER_LETTER_SCROLL_ENABLED, false)) return;
+                            try {
+                                Object rv = XposedHelpers.callMethod(
+                                        param.thisObject, "getActiveRecyclerView");
+                                if (rv != null) {
+                                    XposedHelpers.callMethod(rv, "onFastScrollComplete");
+                                }
+                            } catch (Throwable t) {
+                                log("drawer letter scroll complete error: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK LetterIndexFastScrollHelper#handleUpEvent (letter scroll)");
+        } catch (Throwable t) {
+            log("HOOK FAIL handleUpEvent: " + t);
+        }
+    }
+
+    // ColorOS 抽屉把 personal/work 切换条(以及 header 里其它行)浮在 RecyclerView 上,
+    // paddingTop 是 0。只按 tabs.getHeight() 不够: 系统真正留给内容的是
+    // FloatingHeaderView#getMaxTranslation(含 header 内边距/底部调整)。
+    // 用遮挡层在 RV 坐标系里的底边做 offset, 把目标行顶到可见区域。
+    static int drawerLetterScrollTopOffset(android.view.View rv) {
+        android.content.res.Resources res = rv.getResources();
+        int headerId = res.getIdentifier("all_apps_header", "id", "com.android.launcher");
+        int tabsId = res.getIdentifier("tabs", "id", "com.android.launcher");
+        int categoryId = res.getIdentifier("category_tab", "id", "com.android.launcher");
+        if (headerId == 0) return 0;
+        android.view.View p = rv;
+        android.view.View header = null;
+        android.view.View scope = null;
+        while (p != null) {
+            header = p.findViewById(headerId);
+            if (header != null) {
+                scope = p;
+                break;
+            }
+            android.view.ViewParent parent = p.getParent();
+            p = parent instanceof android.view.View ? (android.view.View) parent : null;
+        }
+        if (scope == null) return 0;
+        int[] rvLoc = new int[2];
+        rv.getLocationOnScreen(rvLoc);
+        int bottom = rvLoc[1];
+        bottom = Math.max(bottom, overlayBottomOnScreen(header, true));
+        if (tabsId != 0) {
+            bottom = Math.max(bottom, overlayBottomOnScreen(scope.findViewById(tabsId), false));
+        }
+        if (categoryId != 0) {
+            bottom = Math.max(bottom, overlayBottomOnScreen(scope.findViewById(categoryId), false));
+        }
+        int offset = Math.max(0, bottom - rvLoc[1]);
+        // 切换条下面还有一层顶部虚化, 图标贴着切换条仍会发虚。
+        int extraFade = 0;
+        int fadeId = res.getIdentifier("all_apps_custom_fade_layer_top_fading_height",
+                "dimen", "com.android.launcher");
+        if (fadeId != 0) extraFade = res.getDimensionPixelSize(fadeId);
+        offset += extraFade;
+        try {
+            Object fade = XposedHelpers.callMethod(rv, "getTopFadeHeightLimit", Boolean.FALSE);
+            if (fade instanceof Integer) offset = Math.max(offset, (Integer) fade);
+        } catch (Throwable ignored) {
+        }
+        return offset;
+    }
+
+    static int overlayBottomOnScreen(android.view.View v, boolean useMaxTranslation) {
+        if (v == null || v.getVisibility() != android.view.View.VISIBLE) return Integer.MIN_VALUE;
+        int h = v.getHeight();
+        if (useMaxTranslation) {
+            try {
+                Object t = XposedHelpers.callMethod(v, "getMaxTranslation");
+                if (t instanceof Integer) h = Math.max(h, (Integer) t);
+            } catch (Throwable ignored) {
+            }
+        }
+        if (h <= 0) return Integer.MIN_VALUE;
+        int[] loc = new int[2];
+        v.getLocationOnScreen(loc);
+        return loc[1] + h;
     }
 
     // 通用像素增量 hook: delta 在运行时按 dpKey 滑条值(默认 dpDef)计算, sign 为 +1 叠加 / -1 缩减;

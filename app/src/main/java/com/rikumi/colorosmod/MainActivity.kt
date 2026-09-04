@@ -147,6 +147,7 @@ private val DESKTOP: List<SettingsItem> = listOf(
     GroupTitleItem("桌面布局"),
     SwitchItem("icon_gap_enabled", "增加图标与名称间距", sliderKey = "icon_gap_dp", sliderMax = 8, sliderDefault = 4),
     SwitchItem("drawer_columns_enabled", "调整抽屉每行图标数量", sliderKey = "drawer_columns", sliderMax = 6, sliderDefault = 5, sliderUnit = "个", sliderMin = 4),
+    SwitchItem("drawer_letter_scroll_enabled", "字母索引滚动定位", "点右侧字母条滚动到对应位置，而不是弹出图标"),
     SwitchItem("indicator_enabled", "减小页面与 Dock 间距", sliderKey = "indicator_dp", sliderMax = 32, sliderDefault = 16, sliderUnit = "dp"),
     SwitchItem("edit_mode_bg_transparent_enabled", "取消编辑模式背景遮罩"),
     GroupTitleItem("长按菜单"),
