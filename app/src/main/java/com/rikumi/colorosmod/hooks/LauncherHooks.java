@@ -1488,6 +1488,16 @@ public final class LauncherHooks {
                                         param.thisObject, "getLayoutManager");
                                 if (lm == null) return;
                                 android.view.View rv = (android.view.View) param.thisObject;
+                                int letterId = rv.getResources().getIdentifier(
+                                        "coui_fast_scroller", "id", "com.android.launcher");
+                                if (letterId != 0) {
+                                    android.view.View letterScroller = rv.getRootView()
+                                            .findViewById(letterId);
+                                    if (letterScroller != null) {
+                                        XposedHelpers.setAdditionalInstanceField(letterScroller,
+                                                "colorosmod_drawer_letter_scroller", Boolean.TRUE);
+                                    }
+                                }
                                 XposedHelpers.callMethod(rv, "stopScroll");
                                 // 复用桌面自己的 TopSmoothScroller。START + margin 会让目标行
                                 // 平滑停在浮动 header/顶部虚化层下方，同时避免按估算行高累加
@@ -1550,9 +1560,12 @@ public final class LauncherHooks {
         }
 
         try {
+            // 不写死 RecyclerView 打包后可能变化的父类混淆名（当前版本为 c0）。
+            // findAndHookMethod 会从稳定的桌面入口 TopSmoothScroller 向上查找声明类。
+            final Class<?> topSmoothScroller = XposedHelpers.findClass(
+                    "com.android.launcher.locateaction.TopSmoothScroller", lpparam.classLoader);
             XposedHelpers.findAndHookMethod(
-                    "androidx.recyclerview.widget.c0",
-                    lpparam.classLoader, "calculateTimeForScrolling", int.class,
+                    topSmoothScroller, "calculateTimeForScrolling", int.class,
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -1565,8 +1578,7 @@ public final class LauncherHooks {
                         }
                     });
             XposedHelpers.findAndHookMethod(
-                    "androidx.recyclerview.widget.c0",
-                    lpparam.classLoader, "calculateTimeForDeceleration", int.class,
+                    topSmoothScroller, "calculateTimeForDeceleration", int.class,
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -1577,8 +1589,7 @@ public final class LauncherHooks {
                         }
                     });
             XposedHelpers.findAndHookMethod(
-                    "androidx.recyclerview.widget.c0",
-                    lpparam.classLoader, "onStop",
+                    topSmoothScroller, "onStop",
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -1605,7 +1616,8 @@ public final class LauncherHooks {
                             int action = event.getActionMasked();
                             if ((action == android.view.MotionEvent.ACTION_UP
                                     || action == android.view.MotionEvent.ACTION_CANCEL)
-                                    && XposedHelpers.getIntField(param.thisObject, "mCurView") == 2) {
+                                    && Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(
+                                            param.thisObject, "colorosmod_drawer_letter_scroller"))) {
                                 android.view.View scroller = (android.view.View) param.thisObject;
                                 Object pending = XposedHelpers.getAdditionalInstanceField(scroller,
                                         "colorosmod_clear_letter_highlight");
