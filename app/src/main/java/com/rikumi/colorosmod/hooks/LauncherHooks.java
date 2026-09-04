@@ -1185,11 +1185,6 @@ public final class LauncherHooks {
         return readBool(KEY_DRAWER_LETTER_SCROLL_ENABLED, false);
     }
 
-    // 相对系统 4 列的图标缩放: 5 列 -> 4/5, 6 列 -> 4/6, 保持格子里图标占比不变。
-    static float drawerIconScale(int cols) {
-        return DRAWER_COLUMNS_MIN / (float) cols;
-    }
-
     // 图标间左右间隔保留比例: 缩小八分之一即保留 7/8。
     static final float DRAWER_ICON_GAP_KEEP = 0.875f;
     static final int DISPLAY_ALL_APPS = 1;
@@ -1229,7 +1224,8 @@ public final class LauncherHooks {
                 protected void afterHookedMethod(MethodHookParam param) {
                     int cols = drawerColumns();
                     if (cols < 0 || cols == DRAWER_COLUMNS_MIN) return;
-                    float scale = drawerIconScale(cols);
+                    // 相对系统 4 列缩放，保持格子中的图标占比不变。
+                    float scale = DRAWER_COLUMNS_MIN / (float) cols;
                     Object ret = param.getResult();
                     if (ret instanceof Integer) {
                         param.setResult(Math.max(1, Math.round(((Integer) ret) * scale)));
@@ -1238,10 +1234,11 @@ public final class LauncherHooks {
                     }
                 }
             };
-            XposedHelpers.findAndHookMethod(allAppsParam, "getAllAppsIconSizePx", scaleSize);
-            XposedHelpers.findAndHookMethod(allAppsParam, "getAllAppsIconTextSizePx", scaleSize);
-            XposedHelpers.findAndHookMethod(allAppsParam, "getAllAppsCellWidthPx", scaleSize);
-            XposedHelpers.findAndHookMethod(allAppsParam, "getAllAppsCellHeightPx", scaleSize);
+            String[] scaledGetters = {"getAllAppsIconSizePx", "getAllAppsIconTextSizePx",
+                    "getAllAppsCellWidthPx", "getAllAppsCellHeightPx"};
+            for (String getter : scaledGetters) {
+                XposedHelpers.findAndHookMethod(allAppsParam, getter, scaleSize);
+            }
             XposedHelpers.findAndHookMethod(allAppsParam, "getAllAppsCellHeight",
                     activityContext, scaleSize);
             log("HOOK OK AllAppsParam drawer columns");
@@ -1308,7 +1305,6 @@ public final class LauncherHooks {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             if (drawerColumns() < 0) return;
-                            if (!(param.thisObject instanceof android.view.View)) return;
                             android.view.View v = (android.view.View) param.thisObject;
                             int right = v.getPaddingRight();
                             if (right <= 0) return;
@@ -1520,8 +1516,8 @@ public final class LauncherHooks {
                                         param.thisObject, "getAvailableScrollHeight");
                                 targetY = Math.max(0, Math.min(availableY, targetY));
                                 int distance = Math.abs(targetY - currentY);
-                                float millisPerPixel = distance == 0 ? 0.05f
-                                        : Math.min(0.05f, 117f / distance);
+                                float millisPerPixel = Math.min(0.05f,
+                                        117f / Math.max(1, distance));
                                 XposedHelpers.setAdditionalInstanceField(scroller,
                                         "colorosmod_drawer_vertical_scroll", Boolean.TRUE);
                                 XposedHelpers.setAdditionalInstanceField(scroller,
@@ -1614,37 +1610,33 @@ public final class LauncherHooks {
                             if (!drawerLetterScroll()) return;
                             android.view.MotionEvent event = (android.view.MotionEvent) param.args[0];
                             int action = event.getActionMasked();
-                            if ((action == android.view.MotionEvent.ACTION_UP
-                                    || action == android.view.MotionEvent.ACTION_CANCEL)
-                                    && Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(
-                                            param.thisObject, "colorosmod_drawer_letter_scroller"))) {
-                                android.view.View scroller = (android.view.View) param.thisObject;
-                                Object pending = XposedHelpers.getAdditionalInstanceField(scroller,
-                                        "colorosmod_clear_letter_highlight");
-                                if (pending instanceof Runnable) {
-                                    scroller.removeCallbacks((Runnable) pending);
-                                }
-                                if (action == android.view.MotionEvent.ACTION_CANCEL) {
-                                    XposedHelpers.callMethod(scroller, "closing");
-                                    return;
-                                }
-                                // 每次抬手重新计时，让最后点击的字母保持高亮 500ms。
-                                Runnable clearHighlight = new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        try {
-                                            XposedHelpers.callMethod(scroller, "closing");
-                                        } catch (Throwable t) {
-                                            log("clear drawer letter highlight error: " + t);
-                                        }
-                                        XposedHelpers.removeAdditionalInstanceField(scroller,
-                                                "colorosmod_clear_letter_highlight");
-                                    }
-                                };
-                                XposedHelpers.setAdditionalInstanceField(scroller,
-                                        "colorosmod_clear_letter_highlight", clearHighlight);
-                                scroller.postDelayed(clearHighlight, 500L);
+                            if (action != android.view.MotionEvent.ACTION_UP
+                                    && action != android.view.MotionEvent.ACTION_CANCEL) return;
+                            if (!Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(
+                                    param.thisObject, "colorosmod_drawer_letter_scroller"))) return;
+                            android.view.View scroller = (android.view.View) param.thisObject;
+                            Object pending = XposedHelpers.getAdditionalInstanceField(scroller,
+                                    "colorosmod_clear_letter_highlight");
+                            if (pending instanceof Runnable) {
+                                scroller.removeCallbacks((Runnable) pending);
                             }
+                            if (action == android.view.MotionEvent.ACTION_CANCEL) {
+                                XposedHelpers.callMethod(scroller, "closing");
+                                return;
+                            }
+                            // 每次抬手重新计时，让最后点击的字母保持高亮 500ms。
+                            Runnable clearHighlight = () -> {
+                                try {
+                                    XposedHelpers.callMethod(scroller, "closing");
+                                } catch (Throwable t) {
+                                    log("clear drawer letter highlight error: " + t);
+                                }
+                                XposedHelpers.removeAdditionalInstanceField(scroller,
+                                        "colorosmod_clear_letter_highlight");
+                            };
+                            XposedHelpers.setAdditionalInstanceField(scroller,
+                                    "colorosmod_clear_letter_highlight", clearHighlight);
+                            scroller.postDelayed(clearHighlight, 500L);
                         }
                     });
             log("HOOK OK OplusCOUITouchSearchView#onTouchEvent (clear letter highlight)");
@@ -1690,15 +1682,9 @@ public final class LauncherHooks {
         int headerId = res.getIdentifier("all_apps_header", "id", "com.android.launcher");
         int tabsId = res.getIdentifier("tabs", "id", "com.android.launcher");
         int categoryId = res.getIdentifier("category_tab", "id", "com.android.launcher");
-        if (headerId != 0) {
-            bottom = Math.max(bottom, overlayBottomOnScreen(root.findViewById(headerId), true));
-        }
-        if (tabsId != 0) {
-            bottom = Math.max(bottom, overlayBottomOnScreen(root.findViewById(tabsId), false));
-        }
-        if (categoryId != 0) {
-            bottom = Math.max(bottom, overlayBottomOnScreen(root.findViewById(categoryId), false));
-        }
+        bottom = Math.max(bottom, overlayBottomOnScreen(root.findViewById(headerId), true));
+        bottom = Math.max(bottom, overlayBottomOnScreen(root.findViewById(tabsId), false));
+        bottom = Math.max(bottom, overlayBottomOnScreen(root.findViewById(categoryId), false));
         int offset = Math.max(0, bottom - rvLoc[1]);
         // 切换条下面还有一层顶部虚化, 图标贴着切换条仍会发虚。
         int extraFade = 0;
