@@ -1181,6 +1181,10 @@ public final class LauncherHooks {
         return cols;
     }
 
+    static boolean drawerLetterScroll() {
+        return readBool(KEY_DRAWER_LETTER_SCROLL_ENABLED, false);
+    }
+
     // 相对系统 4 列的图标缩放: 5 列 -> 4/5, 6 列 -> 4/6, 保持格子里图标占比不变。
     static float drawerIconScale(int cols) {
         return DRAWER_COLUMNS_MIN / (float) cols;
@@ -1202,20 +1206,19 @@ public final class LauncherHooks {
     // 图标尺寸按 4/列数缩放(只动抽屉 getter, 不动桌面 IconParam); 再把左侧 padding
     // 减去字母索引条宽度, 让视觉左右留白对称。
     public static void hookDrawerColumns(final XC_LoadPackage.LoadPackageParam lpparam) {
+        XC_MethodHook forceColumns = new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                int cols = drawerColumns();
+                if (cols < 0) return;
+                param.setResult(cols);
+            }
+        };
         try {
             final Class<?> allAppsParam = XposedHelpers.findClass(
                     "com.android.launcher.layoutparam.AllAppsParam", lpparam.classLoader);
             final Class<?> activityContext = XposedHelpers.findClass(
                     "com.android.launcher3.views.ActivityContext", lpparam.classLoader);
-
-            XC_MethodHook forceColumns = new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    int cols = drawerColumns();
-                    if (cols < 0) return;
-                    param.setResult(cols);
-                }
-            };
             XposedHelpers.findAndHookMethod(allAppsParam, "getNumAllAppsColumns",
                     activityContext, forceColumns);
             XposedHelpers.findAndHookMethod(allAppsParam, "getNumShownAllAppsColumns",
@@ -1250,14 +1253,7 @@ public final class LauncherHooks {
             XposedHelpers.findAndHookMethod(
                     "com.android.launcher.settings.LauncherSettingsUtils",
                     lpparam.classLoader, "getDrawerColumnsFromPrefs",
-                    android.content.Context.class, new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            int cols = drawerColumns();
-                            if (cols < 0) return;
-                            param.setResult(cols);
-                        }
-                    });
+                    android.content.Context.class, forceColumns);
             log("HOOK OK LauncherSettingsUtils#getDrawerColumnsFromPrefs (drawer columns)");
         } catch (Throwable t) {
             log("HOOK FAIL LauncherSettingsUtils#getDrawerColumnsFromPrefs: " + t);
@@ -1443,7 +1439,7 @@ public final class LauncherHooks {
 
     // 抽屉右侧字母索引: 系统点字母走 ClusterAppsContainer, 弹出该字母的图标分组;
     // 同时 injectScrollToPositionAtProgress 在桌面抽屉(mLauncher != null)里故意不滚动。
-    // 开启后拦下分组切换, 并补上 smoothScrollToSection。
+    // 开启后拦下分组切换, 并把列表滚到对应分区。
     public static void hookDrawerLetterScroll(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             XposedHelpers.findAndHookMethod(
@@ -1452,7 +1448,7 @@ public final class LauncherHooks {
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
-                            if (!readBool(KEY_DRAWER_LETTER_SCROLL_ENABLED, false)) return;
+                            if (!drawerLetterScroll()) return;
                             try {
                                 // 已在分组页时先回到列表; 本来就在列表则内部直接 return。
                                 XposedHelpers.callMethod(param.thisObject,
@@ -1476,7 +1472,7 @@ public final class LauncherHooks {
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
-                            if (!readBool(KEY_DRAWER_LETTER_SCROLL_ENABLED, false)) return;
+                            if (!drawerLetterScroll()) return;
                             try {
                                 if (XposedHelpers.getObjectField(param.thisObject, "mLauncher")
                                         == null) {
@@ -1512,7 +1508,7 @@ public final class LauncherHooks {
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
-                            if (!readBool(KEY_DRAWER_LETTER_SCROLL_ENABLED, false)) return;
+                            if (!drawerLetterScroll()) return;
                             try {
                                 Object rv = XposedHelpers.callMethod(
                                         param.thisObject, "getActiveRecyclerView");
@@ -1536,32 +1532,21 @@ public final class LauncherHooks {
     // 用遮挡层在 RV 坐标系里的底边做 offset, 把目标行顶到可见区域。
     static int drawerLetterScrollTopOffset(android.view.View rv) {
         android.content.res.Resources res = rv.getResources();
-        int headerId = res.getIdentifier("all_apps_header", "id", "com.android.launcher");
-        int tabsId = res.getIdentifier("tabs", "id", "com.android.launcher");
-        int categoryId = res.getIdentifier("category_tab", "id", "com.android.launcher");
-        if (headerId == 0) return 0;
-        android.view.View p = rv;
-        android.view.View header = null;
-        android.view.View scope = null;
-        while (p != null) {
-            header = p.findViewById(headerId);
-            if (header != null) {
-                scope = p;
-                break;
-            }
-            android.view.ViewParent parent = p.getParent();
-            p = parent instanceof android.view.View ? (android.view.View) parent : null;
-        }
-        if (scope == null) return 0;
+        android.view.View root = rv.getRootView();
         int[] rvLoc = new int[2];
         rv.getLocationOnScreen(rvLoc);
         int bottom = rvLoc[1];
-        bottom = Math.max(bottom, overlayBottomOnScreen(header, true));
+        int headerId = res.getIdentifier("all_apps_header", "id", "com.android.launcher");
+        int tabsId = res.getIdentifier("tabs", "id", "com.android.launcher");
+        int categoryId = res.getIdentifier("category_tab", "id", "com.android.launcher");
+        if (headerId != 0) {
+            bottom = Math.max(bottom, overlayBottomOnScreen(root.findViewById(headerId), true));
+        }
         if (tabsId != 0) {
-            bottom = Math.max(bottom, overlayBottomOnScreen(scope.findViewById(tabsId), false));
+            bottom = Math.max(bottom, overlayBottomOnScreen(root.findViewById(tabsId), false));
         }
         if (categoryId != 0) {
-            bottom = Math.max(bottom, overlayBottomOnScreen(scope.findViewById(categoryId), false));
+            bottom = Math.max(bottom, overlayBottomOnScreen(root.findViewById(categoryId), false));
         }
         int offset = Math.max(0, bottom - rvLoc[1]);
         // 切换条下面还有一层顶部虚化, 图标贴着切换条仍会发虚。
