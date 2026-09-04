@@ -418,7 +418,8 @@ public class XposedInit extends XposedModule {
         lpparam.appInfo = param.getApplicationInfo();
         lpparam.isFirstApplication = param.isFirstPackage();
         if ("android".equals(lpparam.packageName)) {
-            // 普通应用进程里也会加载 "android" 包, 那里的 system_server 钩子是找不到类的;
+            // 作用域里 system_server 的虚拟包名是 "system"(不是 "android"), 见 META-INF/xposed/scope.list。
+            // 普通应用进程里也会加载 "android" 包(framework-res), 那里找不到 com.android.server.* 类;
             // 真正的 system_server 一律走 onSystemServerStarting, 这里只做兜底去重。
             if (!sIsSystemServer || sSystemServerHooked) return;
             sSystemServerHooked = true;

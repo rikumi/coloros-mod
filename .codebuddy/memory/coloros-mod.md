@@ -15,6 +15,24 @@
 
 - 新框架（libxposed）API：入口类 `XposedInit extends XposedModule`，声明在 `META-INF/xposed/java_init.list`，
   作用域在 `META-INF/xposed/scope.list`，配置在 `META-INF/xposed/module.prop`。
+- **`scope.list` 里 system_server 的虚拟包名是 `system`，不是 `android`。**
+  `android` 只覆盖 android 包（framework-res）自己声明的进程（如 `android:process=":ui"`），
+  模块**不会被注入 system_server**，`onSystemServerStarting` 因此永不触发、也不报任何错，
+  第五节的全部 system_server hook 静默失效。
+  依据（2026-09-05 核对 LSPosed/Victor 框架源码）：
+  - `ModuleDatabase#systemServerModuleRows()`：SQL 按 `app_pkg_name='system'` 查。
+  - `ConfigCache` 展开作用域：`appPkg == "system"` → `addToScope("system_server", 1000, module)`，
+    其余包名走 `fetchProcesses()` 解析。
+  - `manager-ui/.../ScopeNames.kt`：「LSPosed later made `"system"` the system server and left
+    `"android"` as the real package」；android↔system 互换只对 legacy 模块生效
+    （见框架 `LoadedApkHookers` 注释），本模块 targetApiVersion=102，不适用。
+  - `module.prop` 的 `staticScope=true` 使作用域完全等于 `scope.list`
+    （`FileSystem#readStaticScope` 读取 + `ModuleDatabase#pruneScopeToClaimed` 裁剪），
+    即使管理器里先前存在 `system` 行也会被裁掉，所以必须改 `scope.list` 本身。
+  - 旧版 `de.robv` API 时代 `android` 就等价于 system_server，libxposed 迁移（提交 `a2a648d`）
+    后语义反转 —— 这是回归点。
+  - 另：`onPackageLoaded` 对进程内**所有**被加载的包都会回调（不限于 scope.list），
+    所以普通应用进程里仍会收到 `android`，`sIsSystemServer` 去重判断必须保留。
 - 旧接口 `XposedHelpers` / `XposedBridge` / `XC_MethodHook` / `XC_LoadPackage` 由模块自建兼容层提供，
   位于 `com.rikumi.colorosmod.xposed`，hooks 下代码无需改动（import 一律指向该包）。
 - `onPackageLoaded` 与 `onSystemServerStarting` 都会走到 `handleLoadPackage`，用 `sIsSystemServer` + `sSystemServerHooked`
@@ -55,6 +73,11 @@
 
 - 构建：`./gradlew :app:assembleDebug`（或 `assembleRelease`）。
 - 部署：`adb install -r app/build/outputs/apk/debug/app-debug.apk`，装完在 LSPosed 里勾选作用域并**强制停止再启动**目标 App。
+- `staticScope=true` 只做"限制"、不会把 `scope.list` 自动写进框架数据库（框架侧 `ConfigCache` 只 prune、不 insert），
+  所以 `scope.list` 加了 `system` 之后，还必须在 LSPosed 管理器的模块作用域里勾选「系统框架 / system_server」一次。
+  在此之前 `scope.list` 写的是 `android`，而管理器会拒绝写入不在 claimed 集合内的 `system`，用户在 UI 里无法自救。
+- 构建必须指定 JDK 21（Kotlin `jvmToolchain(21)`）：本机默认 `java` 是 11，
+  用 `JAVA_HOME=/opt/homebrew/opt/openjdk@21 ./gradlew :app:assembleDebug`。
 - 重载：SystemUI `adb shell su -c 'pkill -f com.android.systemui'`；Launcher `pkill -f com.android.launcher`。
 - 改 `android`（system_server）作用域的 hook 必须重启 Zygote 才生效（需先征得用户同意，只允许 `setprop ctl.restart zygote`）。
   设置界面「应用小窗」分类的 hint 已提示这一点。
