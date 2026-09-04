@@ -1595,6 +1595,53 @@ public final class LauncherHooks {
 
         try {
             XposedHelpers.findAndHookMethod(
+                    "com.android.launcher3.allapps.OplusCOUITouchSearchView",
+                    lpparam.classLoader, "onTouchEvent", android.view.MotionEvent.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (!drawerLetterScroll()) return;
+                            android.view.MotionEvent event = (android.view.MotionEvent) param.args[0];
+                            int action = event.getActionMasked();
+                            if ((action == android.view.MotionEvent.ACTION_UP
+                                    || action == android.view.MotionEvent.ACTION_CANCEL)
+                                    && XposedHelpers.getIntField(param.thisObject, "mCurView") == 2) {
+                                android.view.View scroller = (android.view.View) param.thisObject;
+                                Object pending = XposedHelpers.getAdditionalInstanceField(scroller,
+                                        "colorosmod_clear_letter_highlight");
+                                if (pending instanceof Runnable) {
+                                    scroller.removeCallbacks((Runnable) pending);
+                                }
+                                if (action == android.view.MotionEvent.ACTION_CANCEL) {
+                                    XposedHelpers.callMethod(scroller, "closing");
+                                    return;
+                                }
+                                // 每次抬手重新计时，让最后点击的字母保持高亮 500ms。
+                                Runnable clearHighlight = new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        try {
+                                            XposedHelpers.callMethod(scroller, "closing");
+                                        } catch (Throwable t) {
+                                            log("clear drawer letter highlight error: " + t);
+                                        }
+                                        XposedHelpers.removeAdditionalInstanceField(scroller,
+                                                "colorosmod_clear_letter_highlight");
+                                    }
+                                };
+                                XposedHelpers.setAdditionalInstanceField(scroller,
+                                        "colorosmod_clear_letter_highlight", clearHighlight);
+                                scroller.postDelayed(clearHighlight, 500L);
+                            }
+                        }
+                    });
+            log("HOOK OK OplusCOUITouchSearchView#onTouchEvent (clear letter highlight)");
+        } catch (Throwable t) {
+            log("HOOK FAIL OplusCOUITouchSearchView#onTouchEvent: " + t);
+        }
+
+        try {
+            XposedHelpers.findAndHookMethod(
                     "com.android.launcher3.allapps.LetterIndexFastScrollHelper",
                     lpparam.classLoader, "handleUpEvent",
                     new XC_MethodHook() {
