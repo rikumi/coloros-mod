@@ -336,6 +336,13 @@ public final class LauncherHooks {
         hookPxRuntime(lpparam, "com.android.launcher.layoutparam.AllAppsParam",
                 "getAllAppsIconDrawablePaddingPx", density, KEY_ICON_GAP_ENABLED, KEY_ICON_GAP_DP, ICON_GAP_DP, 8, 1);
 
+        // 调整抽屉每行图标数量: 始终注入, 运行时按 KEY_DRAWER_COLUMNS_ENABLED 门控。
+        // 只改 AllAppsParam / 抽屉列数偏好与左侧 padding, 不碰 IconParam(桌面图标)。
+        hookDrawerColumns(lpparam);
+
+        // 字母索引滚动定位: 始终注入, 运行时按 KEY_DRAWER_LETTER_SCROLL_ENABLED 门控。
+        hookDrawerLetterScroll(lpparam);
+
         // Feature 2 — 页面与 Dock 间距: 始终注入, 运行时按 KEY_INDICATOR_ENABLED 门控。
         // 系统会把 hotseat 高度变化按 workspaceTopPercentage 分摊到页面位置，
         // 因此不能直接减 requestedDp；hook 中会反推实际需要的 hotseat 高度变化。
@@ -1164,6 +1171,549 @@ public final class LauncherHooks {
         } catch (Throwable t) {
             log("HOOK FAIL HotseatParam#getHotseatBarSizePx (workspace compensation): " + t);
         }
+    }
+
+    // 读取抽屉列数; 开关关闭或越界时返回 -1(不生效)。
+    static int drawerColumns() {
+        if (!readBool(KEY_DRAWER_COLUMNS_ENABLED, false)) return -1;
+        int cols = readInt(KEY_DRAWER_COLUMNS, DRAWER_COLUMNS_DEFAULT);
+        if (cols < DRAWER_COLUMNS_MIN || cols > DRAWER_COLUMNS_MAX) return -1;
+        return cols;
+    }
+
+    static boolean drawerLetterScroll() {
+        return readBool(KEY_DRAWER_LETTER_SCROLL_ENABLED, false);
+    }
+
+    // 图标间左右间隔保留比例: 缩小八分之一即保留 7/8。
+    static final float DRAWER_ICON_GAP_KEEP = 0.875f;
+    static final int DISPLAY_ALL_APPS = 1;
+
+    // 用系统右侧 padding(未改过) 反推左侧: 扣掉字母条宽度。
+    // 字母条布局写死 28dp, 不能按 View.getWidth() 取 —— 第一次 apply 时还没 layout。
+    static int drawerAdjustedLeftPadding(int systemPx, float density) {
+        int minLeft = Math.round(4f * density);
+        int letterBar = Math.round(28f * density);
+        return Math.max(minLeft, systemPx - letterBar);
+    }
+
+    // 调整抽屉每行图标数量: 列数走 AllAppsParam / 系统 drawer_layout_columns 偏好;
+    // 图标尺寸按 4/列数缩放(只动抽屉 getter, 不动桌面 IconParam); 再把左侧 padding
+    // 减去字母索引条宽度, 让视觉左右留白对称。
+    public static void hookDrawerColumns(final XC_LoadPackage.LoadPackageParam lpparam) {
+        XC_MethodHook forceColumns = new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                int cols = drawerColumns();
+                if (cols < 0) return;
+                param.setResult(cols);
+            }
+        };
+        try {
+            final Class<?> allAppsParam = XposedHelpers.findClass(
+                    "com.android.launcher.layoutparam.AllAppsParam", lpparam.classLoader);
+            final Class<?> activityContext = XposedHelpers.findClass(
+                    "com.android.launcher3.views.ActivityContext", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(allAppsParam, "getNumAllAppsColumns",
+                    activityContext, forceColumns);
+            XposedHelpers.findAndHookMethod(allAppsParam, "getNumShownAllAppsColumns",
+                    forceColumns);
+
+            XC_MethodHook scaleSize = new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    int cols = drawerColumns();
+                    if (cols < 0 || cols == DRAWER_COLUMNS_MIN) return;
+                    // 相对系统 4 列缩放，保持格子中的图标占比不变。
+                    float scale = DRAWER_COLUMNS_MIN / (float) cols;
+                    Object ret = param.getResult();
+                    if (ret instanceof Integer) {
+                        param.setResult(Math.max(1, Math.round(((Integer) ret) * scale)));
+                    } else if (ret instanceof Float) {
+                        param.setResult(((Float) ret) * scale);
+                    }
+                }
+            };
+            String[] scaledGetters = {"getAllAppsIconSizePx", "getAllAppsIconTextSizePx",
+                    "getAllAppsCellWidthPx", "getAllAppsCellHeightPx"};
+            for (String getter : scaledGetters) {
+                XposedHelpers.findAndHookMethod(allAppsParam, getter, scaleSize);
+            }
+            XposedHelpers.findAndHookMethod(allAppsParam, "getAllAppsCellHeight",
+                    activityContext, scaleSize);
+            log("HOOK OK AllAppsParam drawer columns");
+        } catch (Throwable t) {
+            log("HOOK FAIL AllAppsParam drawer columns: " + t);
+        }
+
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher.settings.LauncherSettingsUtils",
+                    lpparam.classLoader, "getDrawerColumnsFromPrefs",
+                    android.content.Context.class, forceColumns);
+            log("HOOK OK LauncherSettingsUtils#getDrawerColumnsFromPrefs (drawer columns)");
+        } catch (Throwable t) {
+            log("HOOK FAIL LauncherSettingsUtils#getDrawerColumnsFromPrefs: " + t);
+        }
+
+        try {
+            // 每次真正 setPadding 前, 用右侧系统值重算左侧。不能只 hook applyAdapterPaddings:
+            // 开机第一次调用时设置快照可能还没到, 之后 updatePaddingsIfNeeded 见 paddingEnd
+            // 没变就直接 return, 左边距就再也改不上。
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher3.allapps.BaseAllAppsContainerView$AdapterHolder",
+                    lpparam.classLoader, "applyPadding",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (drawerColumns() < 0) return;
+                            try {
+                                Object paddingObj = XposedHelpers.getObjectField(
+                                        param.thisObject, "mPadding");
+                                if (!(paddingObj instanceof android.graphics.Rect)) return;
+                                android.graphics.Rect rect = (android.graphics.Rect) paddingObj;
+                                int system = rect.right > 0 ? rect.right : rect.left;
+                                if (system <= 0) return;
+                                float density = readDensity();
+                                try {
+                                    Object rv = XposedHelpers.getObjectField(
+                                            param.thisObject, "mRecyclerView");
+                                    if (rv instanceof android.view.View) {
+                                        density = ((android.view.View) rv).getResources()
+                                                .getDisplayMetrics().density;
+                                    }
+                                } catch (Throwable ignored) {
+                                }
+                                rect.left = drawerAdjustedLeftPadding(system, density);
+                            } catch (Throwable t) {
+                                log("drawer applyPadding left adjust error: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK AdapterHolder#applyPadding (drawer left padding)");
+        } catch (Throwable t) {
+            log("HOOK FAIL AdapterHolder#applyPadding: " + t);
+        }
+
+        try {
+            // 抽屉打开/layout 时再兜一层: 设置晚到或 insets 路径跳过 applyPadding 时仍能改上。
+            final Class<?> oplusRv = XposedHelpers.findClass(
+                    "com.android.launcher3.allapps.OplusAllAppsRecyclerView", lpparam.classLoader);
+            XposedHelpers.findAndHookDeclaredMethod(oplusRv, "onLayout",
+                    boolean.class, int.class, int.class, int.class, int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (drawerColumns() < 0) return;
+                            android.view.View v = (android.view.View) param.thisObject;
+                            int right = v.getPaddingRight();
+                            if (right <= 0) return;
+                            float density = v.getResources().getDisplayMetrics().density;
+                            int extra = 0;
+                            try {
+                                int id = v.getResources().getIdentifier(
+                                        "all_apps_recycle_view_padding_left", "dimen",
+                                        "com.android.launcher");
+                                if (id != 0) extra = v.getResources().getDimensionPixelSize(id);
+                            } catch (Throwable ignored) {
+                            }
+                            int system = Math.max(0, right - extra);
+                            int want = extra + drawerAdjustedLeftPadding(system, density);
+                            if (v.getPaddingLeft() == want) return;
+                            v.setPadding(want, v.getPaddingTop(), right, v.getPaddingBottom());
+                        }
+                    });
+            log("HOOK OK OplusAllAppsRecyclerView#onLayout (drawer left padding)");
+        } catch (Throwable t) {
+            log("HOOK FAIL OplusAllAppsRecyclerView#onLayout: " + t);
+        }
+
+        try {
+            final Class<?> spacingClass = XposedHelpers.findClass(
+                    "com.android.launcher3.allapps.GridSpacingItemDecoration",
+                    lpparam.classLoader);
+            XposedHelpers.findAndHookConstructor(spacingClass,
+                    "com.android.launcher3.allapps.AllAppsRecyclerView", int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (drawerColumns() < 0) return;
+                            int spacing = XposedHelpers.getIntField(param.thisObject, "mSpacing");
+                            XposedHelpers.setIntField(param.thisObject, "mSpacing",
+                                    Math.max(0, Math.round(spacing * DRAWER_ICON_GAP_KEEP)));
+                        }
+                    });
+            log("HOOK OK GridSpacingItemDecoration (drawer icon gap)");
+        } catch (Throwable t) {
+            log("HOOK FAIL GridSpacingItemDecoration: " + t);
+        }
+
+        try {
+            final Class<?> btv = XposedHelpers.findClass(
+                    "com.android.launcher3.BubbleTextView", lpparam.classLoader);
+            XposedBridge.hookAllConstructors(btv, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    shrinkDrawerIconPadding(param.thisObject);
+                }
+            });
+            // 5 列时 GridSpacingItemDecoration 直接跳过, 图标又在格子里水平居中,
+            // 改 padding / ItemDecoration 都不会让相邻图标靠近。按测量到的格子宽度
+            // 把图标加大 (空隙的 1/8), 左右间隔才会真正变小。
+            XposedHelpers.findAndHookDeclaredMethod(btv, "onMeasure",
+                    int.class, int.class, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            growDrawerIconForHorizontalGap(param.thisObject);
+                        }
+                    });
+            log("HOOK OK BubbleTextView (drawer icon gap)");
+        } catch (Throwable t) {
+            log("HOOK FAIL BubbleTextView (drawer icon gap): " + t);
+        }
+    }
+
+    static boolean isDrawerAppIcon(Object btv) {
+        return drawerColumns() >= 0
+                && XposedHelpers.getIntField(btv, "mDisplay") == DISPLAY_ALL_APPS;
+    }
+
+    static void shrinkDrawerIconPadding(Object btv) {
+        if (!isDrawerAppIcon(btv)) return;
+        // 链式构造会进多次, 只缩一次。
+        if (XposedHelpers.getAdditionalInstanceField(btv, "colorosmod_drawer_gap") != null) {
+            return;
+        }
+        android.view.View v = (android.view.View) btv;
+        v.setPadding(Math.round(v.getPaddingLeft() * DRAWER_ICON_GAP_KEEP), v.getPaddingTop(),
+                Math.round(v.getPaddingRight() * DRAWER_ICON_GAP_KEEP), v.getPaddingBottom());
+        XposedHelpers.setAdditionalInstanceField(btv, "colorosmod_drawer_gap", Boolean.TRUE);
+    }
+
+    static void growDrawerIconForHorizontalGap(Object btv) {
+        try {
+            if (!isDrawerAppIcon(btv)) return;
+            android.view.View v = (android.view.View) btv;
+            int w = v.getMeasuredWidth();
+            if (w <= 0) return;
+            Object size = XposedHelpers.callMethod(btv, "getIconSize");
+            if (!(size instanceof Integer)) return;
+            int cur = (Integer) size;
+            if (cur <= 0) return;
+            Object baseObj = XposedHelpers.getAdditionalInstanceField(btv, "colorosmod_drawer_icon_base");
+            int base;
+            if (baseObj instanceof Integer) {
+                base = (Integer) baseObj;
+            } else {
+                base = cur;
+                XposedHelpers.setAdditionalInstanceField(btv, "colorosmod_drawer_icon_base", base);
+            }
+            int gap = w - base;
+            if (gap <= 0) return;
+            int newIcon = base + Math.round(gap * (1f - DRAWER_ICON_GAP_KEEP));
+            int inner = w - v.getPaddingLeft() - v.getPaddingRight();
+            if (inner > 0) newIcon = Math.min(newIcon, inner);
+            newIcon = Math.max(base, newIcon);
+            if (newIcon == cur) return;
+            XposedHelpers.setIntField(btv, "mIconSize", newIcon);
+            // 图标是方的, 加大后会吃掉上下空隙; 把格子高度补回同样增量, 上下间距保持原样。
+            android.view.ViewGroup.LayoutParams lp = v.getLayoutParams();
+            if (lp != null && lp.height > 0) {
+                Object prev = XposedHelpers.getAdditionalInstanceField(btv, "colorosmod_drawer_h_comp");
+                int prevGrow = prev instanceof Integer ? (Integer) prev : 0;
+                int grow = newIcon - base;
+                lp.height = lp.height - prevGrow + grow;
+                XposedHelpers.setAdditionalInstanceField(btv, "colorosmod_drawer_h_comp", grow);
+            }
+            Object drawable = XposedHelpers.callMethod(btv, "getIcon");
+            if (drawable instanceof android.graphics.drawable.Drawable) {
+                XposedHelpers.callMethod(btv, "applyCompoundDrawables", drawable);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    // 抽屉右侧字母索引: 系统点字母走 ClusterAppsContainer, 弹出该字母的图标分组;
+    // 同时 injectScrollToPositionAtProgress 在桌面抽屉(mLauncher != null)里故意不滚动。
+    // 开启后拦下分组切换, 并把列表滚到对应分区。
+    public static void hookDrawerLetterScroll(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher3.allapps.ClusterAppsContainer",
+                    lpparam.classLoader, "onSectionChange", String.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!drawerLetterScroll()) return;
+                            try {
+                                // 已在分组页时先回到列表; 本来就在列表则内部直接 return。
+                                XposedHelpers.callMethod(param.thisObject,
+                                        "changeToDrawerLayout", true);
+                            } catch (Throwable t) {
+                                log("drawer letter scroll leave cluster: " + t);
+                            }
+                            param.setResult(null);
+                        }
+                    });
+            log("HOOK OK ClusterAppsContainer#onSectionChange (letter scroll)");
+        } catch (Throwable t) {
+            log("HOOK FAIL ClusterAppsContainer#onSectionChange: " + t);
+        }
+
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher3.allapps.OplusAllAppsRecyclerView",
+                    lpparam.classLoader, "injectScrollToPositionAtProgress",
+                    "com.android.launcher3.allapps.AlphabeticalAppsList$FastScrollSectionInfo",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (!drawerLetterScroll()) return;
+                            try {
+                                if (XposedHelpers.getObjectField(param.thisObject, "mLauncher")
+                                        == null) {
+                                    return;
+                                }
+                                Object info = param.args[0];
+                                if (info == null) return;
+                                // 不用 smoothScrollToSection 的像素累加: 格子高度和实际行高
+                                // 对不齐时会多滚一行, 每字母差不多一行时就变成点 A 出 B。
+                                int pos = XposedHelpers.getIntField(info, "position");
+                                if (pos < 0) return;
+                                Object lm = XposedHelpers.callMethod(
+                                        param.thisObject, "getLayoutManager");
+                                if (lm == null) return;
+                                android.view.View rv = (android.view.View) param.thisObject;
+                                int letterId = rv.getResources().getIdentifier(
+                                        "coui_fast_scroller", "id", "com.android.launcher");
+                                if (letterId != 0) {
+                                    android.view.View letterScroller = rv.getRootView()
+                                            .findViewById(letterId);
+                                    if (letterScroller != null) {
+                                        XposedHelpers.setAdditionalInstanceField(letterScroller,
+                                                "colorosmod_drawer_letter_scroller", Boolean.TRUE);
+                                    }
+                                }
+                                XposedHelpers.callMethod(rv, "stopScroll");
+                                // 复用桌面自己的 TopSmoothScroller。START + margin 会让目标行
+                                // 平滑停在浮动 header/顶部虚化层下方，同时避免按估算行高累加
+                                // 导致字母定位偏一行。
+                                Object scroller = XposedHelpers.getObjectField(
+                                        param.thisObject, "mSmoothScroller");
+                                int topOffset = drawerLetterScrollTopOffset(rv);
+                                XposedHelpers.callMethod(scroller, "setGravity",
+                                        android.view.Gravity.START);
+                                XposedHelpers.callMethod(scroller, "setMargin", topOffset);
+                                XposedHelpers.callMethod(scroller, "setTargetPosition", pos);
+                                // LinearSmoothScroller 的减速阶段约为线性滚动时间 / 0.3356。
+                                // 按目标距离动态提速，使完整的近距离减速动画最长为 350ms；
+                                // 长距离寻位阶段也会随距离同比提速。
+                                int currentY = (Integer) XposedHelpers.callMethod(
+                                        param.thisObject, "getCurrentScrollY");
+                                int targetY = (Integer) XposedHelpers.callMethod(
+                                        param.thisObject, "getCurrentScrollY", pos, topOffset);
+                                int availableY = (Integer) XposedHelpers.callMethod(
+                                        param.thisObject, "getAvailableScrollHeight");
+                                targetY = Math.max(0, Math.min(availableY, targetY));
+                                int distance = Math.abs(targetY - currentY);
+                                float millisPerPixel = Math.min(0.05f,
+                                        117f / Math.max(1, distance));
+                                XposedHelpers.setAdditionalInstanceField(scroller,
+                                        "colorosmod_drawer_vertical_scroll", Boolean.TRUE);
+                                XposedHelpers.setAdditionalInstanceField(scroller,
+                                        "colorosmod_drawer_scroll_ms_per_px", millisPerPixel);
+                                XposedHelpers.callMethod(lm, "startSmoothScroll", scroller);
+                            } catch (Throwable t) {
+                                log("drawer letter scroll error: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK OplusAllAppsRecyclerView#injectScrollToPositionAtProgress (letter scroll)");
+        } catch (Throwable t) {
+            log("HOOK FAIL injectScrollToPositionAtProgress: " + t);
+        }
+
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher.locateaction.TopSmoothScroller",
+                    lpparam.classLoader, "calculateDxToMakeVisible",
+                    android.view.View.class, int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(
+                                    param.thisObject, "colorosmod_drawer_vertical_scroll"))) {
+                                return;
+                            }
+                            XposedHelpers.removeAdditionalInstanceField(param.thisObject,
+                                    "colorosmod_drawer_vertical_scroll");
+                            param.setResult(0);
+                        }
+                    });
+            log("HOOK OK TopSmoothScroller#calculateDxToMakeVisible (letter scroll)");
+        } catch (Throwable t) {
+            log("HOOK FAIL TopSmoothScroller#calculateDxToMakeVisible: " + t);
+        }
+
+        try {
+            // 不写死 RecyclerView 打包后可能变化的父类混淆名（当前版本为 c0）。
+            // findAndHookMethod 会从稳定的桌面入口 TopSmoothScroller 向上查找声明类。
+            final Class<?> topSmoothScroller = XposedHelpers.findClass(
+                    "com.android.launcher.locateaction.TopSmoothScroller", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(
+                    topSmoothScroller, "calculateTimeForScrolling", int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            Object speed = XposedHelpers.getAdditionalInstanceField(
+                                    param.thisObject, "colorosmod_drawer_scroll_ms_per_px");
+                            if (speed instanceof Float) {
+                                int distance = Math.abs((Integer) param.args[0]);
+                                param.setResult((int) Math.ceil(distance * (Float) speed));
+                            }
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(
+                    topSmoothScroller, "calculateTimeForDeceleration", int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (XposedHelpers.getAdditionalInstanceField(param.thisObject,
+                                    "colorosmod_drawer_scroll_ms_per_px") != null) {
+                                param.setResult(Math.min(350, (Integer) param.getResult()));
+                            }
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(
+                    topSmoothScroller, "onStop",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            XposedHelpers.removeAdditionalInstanceField(param.thisObject,
+                                    "colorosmod_drawer_vertical_scroll");
+                            XposedHelpers.removeAdditionalInstanceField(param.thisObject,
+                                    "colorosmod_drawer_scroll_ms_per_px");
+                        }
+                    });
+            log("HOOK OK LinearSmoothScroller duration (letter scroll)");
+        } catch (Throwable t) {
+            log("HOOK FAIL LinearSmoothScroller duration: " + t);
+        }
+
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher3.allapps.OplusCOUITouchSearchView",
+                    lpparam.classLoader, "onTouchEvent", android.view.MotionEvent.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (!drawerLetterScroll()) return;
+                            android.view.MotionEvent event = (android.view.MotionEvent) param.args[0];
+                            int action = event.getActionMasked();
+                            if (action != android.view.MotionEvent.ACTION_UP
+                                    && action != android.view.MotionEvent.ACTION_CANCEL) return;
+                            if (!Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(
+                                    param.thisObject, "colorosmod_drawer_letter_scroller"))) return;
+                            android.view.View scroller = (android.view.View) param.thisObject;
+                            Object pending = XposedHelpers.getAdditionalInstanceField(scroller,
+                                    "colorosmod_clear_letter_highlight");
+                            if (pending instanceof Runnable) {
+                                scroller.removeCallbacks((Runnable) pending);
+                            }
+                            if (action == android.view.MotionEvent.ACTION_CANCEL) {
+                                XposedHelpers.callMethod(scroller, "closing");
+                                return;
+                            }
+                            // 每次抬手重新计时，让最后点击的字母保持高亮 500ms。
+                            Runnable clearHighlight = () -> {
+                                try {
+                                    XposedHelpers.callMethod(scroller, "closing");
+                                } catch (Throwable t) {
+                                    log("clear drawer letter highlight error: " + t);
+                                }
+                                XposedHelpers.removeAdditionalInstanceField(scroller,
+                                        "colorosmod_clear_letter_highlight");
+                            };
+                            XposedHelpers.setAdditionalInstanceField(scroller,
+                                    "colorosmod_clear_letter_highlight", clearHighlight);
+                            scroller.postDelayed(clearHighlight, 500L);
+                        }
+                    });
+            log("HOOK OK OplusCOUITouchSearchView#onTouchEvent (clear letter highlight)");
+        } catch (Throwable t) {
+            log("HOOK FAIL OplusCOUITouchSearchView#onTouchEvent: " + t);
+        }
+
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher3.allapps.LetterIndexFastScrollHelper",
+                    lpparam.classLoader, "handleUpEvent",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (!drawerLetterScroll()) return;
+                            try {
+                                Object rv = XposedHelpers.callMethod(
+                                        param.thisObject, "getActiveRecyclerView");
+                                if (rv != null) {
+                                    XposedHelpers.callMethod(rv, "onFastScrollComplete");
+                                }
+                            } catch (Throwable t) {
+                                log("drawer letter scroll complete error: " + t);
+                            }
+                        }
+                    });
+            log("HOOK OK LetterIndexFastScrollHelper#handleUpEvent (letter scroll)");
+        } catch (Throwable t) {
+            log("HOOK FAIL handleUpEvent: " + t);
+        }
+    }
+
+    // ColorOS 抽屉把 personal/work 切换条(以及 header 里其它行)浮在 RecyclerView 上,
+    // paddingTop 是 0。只按 tabs.getHeight() 不够: 系统真正留给内容的是
+    // FloatingHeaderView#getMaxTranslation(含 header 内边距/底部调整)。
+    // 用遮挡层在 RV 坐标系里的底边做 offset, 把目标行顶到可见区域。
+    static int drawerLetterScrollTopOffset(android.view.View rv) {
+        android.content.res.Resources res = rv.getResources();
+        android.view.View root = rv.getRootView();
+        int[] rvLoc = new int[2];
+        rv.getLocationOnScreen(rvLoc);
+        int bottom = rvLoc[1];
+        int headerId = res.getIdentifier("all_apps_header", "id", "com.android.launcher");
+        int tabsId = res.getIdentifier("tabs", "id", "com.android.launcher");
+        int categoryId = res.getIdentifier("category_tab", "id", "com.android.launcher");
+        bottom = Math.max(bottom, overlayBottomOnScreen(root.findViewById(headerId), true));
+        bottom = Math.max(bottom, overlayBottomOnScreen(root.findViewById(tabsId), false));
+        bottom = Math.max(bottom, overlayBottomOnScreen(root.findViewById(categoryId), false));
+        int offset = Math.max(0, bottom - rvLoc[1]);
+        // 切换条下面还有一层顶部虚化, 图标贴着切换条仍会发虚。
+        int extraFade = 0;
+        int fadeId = res.getIdentifier("all_apps_custom_fade_layer_top_fading_height",
+                "dimen", "com.android.launcher");
+        if (fadeId != 0) extraFade = res.getDimensionPixelSize(fadeId);
+        offset += extraFade;
+        try {
+            Object fade = XposedHelpers.callMethod(rv, "getTopFadeHeightLimit", Boolean.FALSE);
+            if (fade instanceof Integer) offset = Math.max(offset, (Integer) fade);
+        } catch (Throwable ignored) {
+        }
+        return offset;
+    }
+
+    static int overlayBottomOnScreen(android.view.View v, boolean useMaxTranslation) {
+        if (v == null || v.getVisibility() != android.view.View.VISIBLE) return Integer.MIN_VALUE;
+        int h = v.getHeight();
+        if (useMaxTranslation) {
+            try {
+                Object t = XposedHelpers.callMethod(v, "getMaxTranslation");
+                if (t instanceof Integer) h = Math.max(h, (Integer) t);
+            } catch (Throwable ignored) {
+            }
+        }
+        if (h <= 0) return Integer.MIN_VALUE;
+        int[] loc = new int[2];
+        v.getLocationOnScreen(loc);
+        return loc[1] + h;
     }
 
     // 通用像素增量 hook: delta 在运行时按 dpKey 滑条值(默认 dpDef)计算, sign 为 +1 叠加 / -1 缩减;
