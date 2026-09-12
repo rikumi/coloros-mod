@@ -16,6 +16,7 @@ import com.rikumi.colorosmod.hooks.GestureHooks;
 import com.rikumi.colorosmod.hooks.LauncherHooks;
 import com.rikumi.colorosmod.hooks.MediaProviderHooks;
 import com.rikumi.colorosmod.hooks.CameraHooks;
+import com.rikumi.colorosmod.hooks.MultiWindowHooks;
 import com.rikumi.colorosmod.hooks.SafecenterHooks;
 import com.rikumi.colorosmod.hooks.SettingsHooks;
 import com.rikumi.colorosmod.hooks.StatusBarLyricHooks;
@@ -213,6 +214,10 @@ public class XposedInit extends XposedModule {
             "gesture_touch_through_enabled";
     public static final String KEY_GESTURE_BAR_LONG_PRESS_DISABLE_ENABLED =
             "gesture_bar_long_press_disable_enabled";
+    // 缩小分屏应用顶部三点控制栏：pscanvas 侧缩小浮层本身，system_server 侧同步缩短嵌入任务
+    // 收到的状态栏 inset，否则三点虽变小，应用内容仍会为原 40dp 控制栏留白。
+    public static final String KEY_SHRINK_CAPTION_BAR_ENABLED = "shrink_caption_bar_enabled";
+    public static final float COMPACT_CAPTION_BAR_HEIGHT_DP = 24f;
     // 多任务上划彻底结束进程: 上划卡片时系统只以 type=13(STOP) 请求 athena 停止任务,
     // 开启后改成 type=11(KILL_OR_STOP) 真正杀掉进程(见 LauncherHooks#hookRecentsSwipeUpKill)。
     public static final String KEY_RECENTS_SWIPE_UP_KILL_ENABLED = "recents_swipe_up_kill_enabled";
@@ -504,8 +509,11 @@ public class XposedInit extends XposedModule {
     private static boolean isAppHookTarget(String packageName) {
         return "com.android.launcher".equals(packageName)
                 || "com.android.systemui".equals(packageName)
+                || "com.oplus.pscanvas".equals(packageName)
                 || "com.oplus.safecenter".equals(packageName)
                 || "com.android.settings".equals(packageName)
+                || "com.oplus.wallpapers".equals(packageName)
+                || "com.oplus.camera".equals(packageName)
                 || "com.android.providers.media.module".equals(packageName);
     }
 
@@ -534,6 +542,8 @@ public class XposedInit extends XposedModule {
             LauncherHooks.hookLauncher(lpparam);
         } else if ("com.android.systemui".equals(lpparam.packageName)) {
             SystemUiHooks.hookSystemUi(lpparam);
+        } else if ("com.oplus.pscanvas".equals(lpparam.packageName)) {
+            MultiWindowHooks.hookCanvasControlBar(lpparam);
         } else if ("com.oplus.safecenter".equals(lpparam.packageName)) {
             SafecenterHooks.hookSafecenter(lpparam);
         } else if ("com.android.settings".equals(lpparam.packageName)) {
@@ -557,6 +567,8 @@ public class XposedInit extends XposedModule {
             SystemServerHooks.hookRecentsSwipeUpKillSystemServer(lpparam);
             // system_server: 第三方悬浮窗变化事件, 供状态栏歌词避让功能按事件刷新窗口信息。
             SystemServerHooks.hookStatusBarThirdPartyOverlayEvents(lpparam);
+            // system_server: 将画布分屏嵌入应用的状态栏 inset 同步缩至三点控制栏的新高度。
+            SystemServerHooks.hookCompactCanvasCaptionInsets(lpparam);
         }
         // 状态栏歌词只需在 SystemUI 侧实现: 直接读 MediaSession 的标题,
         // 无需在音乐软件进程注入, 也无需伪装机型(见 StatusBarLyricHooks 类注释)。

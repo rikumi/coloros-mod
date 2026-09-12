@@ -234,6 +234,7 @@ private val NAV: List<SettingsItem> = listOf(
     SwitchItem("gesture_bar_width_enabled", "调整手势滑动条宽度", sliderKey = "gesture_bar_width_dp", sliderMax = 120, sliderDefault = 100, sliderUnit = "dp", sliderMin = 80),
     SwitchItem("gesture_bar_long_press_disable_enabled", "禁止手势条动画效果", "理论可解决 OxygenOS 关不掉助手动画的问题"),
     GroupTitleItem("多任务切换"),
+    SwitchItem("shrink_caption_bar_enabled", "缩小分屏顶部菜单栏高度"),
     SwitchItem("recents_hide_not_running_enabled", "多任务隐藏未在运行的应用"),
     SwitchItem("recents_swipe_up_kill_enabled", "多任务上划彻底结束进程", "修改该设置需重启 Zygote 生效"),
     SwitchItem("recents_swipe_up_kill_subsidiary_enabled", "划掉同应用主任务一并结束附属任务", "如划掉微信将带走所有小程序，否则需手动划掉所有小程序"),

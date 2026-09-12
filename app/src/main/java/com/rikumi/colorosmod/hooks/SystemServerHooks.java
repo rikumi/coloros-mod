@@ -4,14 +4,17 @@ import static com.rikumi.colorosmod.XposedInit.*;
 
 import android.content.ContentResolver;
 import android.content.Context;
+import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.database.Cursor;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Log;
+import android.view.WindowInsets;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -62,6 +65,58 @@ public final class SystemServerHooks {
             }
         }
     };
+
+    /**
+     * pscanvas 的嵌入任务使用 launchScenario=2。系统默认向应用下发约 40dp 的状态栏 inset，
+     * 它正是三点控制栏的预留空间。控制栏浮层由 MultiWindowHooks 缩小后，这里把对应
+     * InsetsSource 同步至相同高度；不能直接移除，否则 Termux 等沉浸式内容会画到三点下面。
+     * 物理状态栏属于外层 ContainerActivity，不受这里的嵌入任务 InsetsState 影响。
+     */
+    public static void hookCompactCanvasCaptionInsets(
+            final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> windowStateExt = XposedHelpers.findClass(
+                    "com.android.server.wm.WindowStateExtImpl", lpparam.classLoader);
+            Set<XC_MethodHook.Unhook> hooks = XposedBridge.hookAllMethods(windowStateExt,
+                    "adjustInsetsStateForFlexibleWindowIfNeed",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (!readBool(KEY_SHRINK_CAPTION_BAR_ENABLED, false)
+                                    || param.args.length < 2 || param.getResult() == null) return;
+                            Object task = XposedHelpers.callMethod(param.args[1], "getTask");
+                            if (task == null) return;
+                            Object taskExt = XposedHelpers.callMethod(
+                                    XposedHelpers.callMethod(task, "getWrapper"), "getExtImpl");
+                            if (((Number) XposedHelpers.callMethod(
+                                    taskExt, "getLaunchScenario")).intValue() != 2) return;
+
+                            Object stateExt = XposedHelpers.callMethod(
+                                    XposedHelpers.callMethod(param.getResult(), "getWrapper"),
+                                    "getExtImpl");
+                            Object source = XposedHelpers.callMethod(stateExt, "peekDefaultSource",
+                                    WindowInsets.Type.statusBars());
+                            if (source == null) return;
+                            Rect frame = new Rect((Rect) XposedHelpers.callMethod(source, "getFrame"));
+                            Configuration configuration = (Configuration) XposedHelpers.callMethod(
+                                    task, "getConfiguration");
+                            int compactHeight = Math.max(1, Math.round(
+                                    COMPACT_CAPTION_BAR_HEIGHT_DP
+                                            * configuration.densityDpi / 160f));
+                            if (frame.height() <= compactHeight) return;
+                            frame.bottom = frame.top + compactHeight;
+                            XposedHelpers.callMethod(source, "setFrame", frame);
+                        }
+                    });
+            if (hooks.isEmpty()) {
+                throw new NoSuchMethodError(windowStateExt.getName()
+                        + "#adjustInsetsStateForFlexibleWindowIfNeed");
+            }
+            log("HOOK OK WindowStateExtImpl status bar insets (compact canvas caption)");
+        } catch (Throwable t) {
+            log("HOOK FAIL compact canvas caption insets: " + Log.getStackTraceString(t));
+        }
+    }
 
     /**
      * 监听 WindowManagerService 的窗口增删与重新布局。第三方悬浮窗在应用进程创建，
