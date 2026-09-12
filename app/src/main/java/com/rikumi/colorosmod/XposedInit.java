@@ -30,8 +30,9 @@ import com.rikumi.colorosmod.xposed.XposedHelpers;
 import androidx.annotation.NonNull;
 
 import io.github.libxposed.api.XposedModule;
+import io.github.libxposed.api.XposedModuleInterface.HotReloadingParam;
 import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam;
-import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam;
+import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam;
 import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam;
 
 // ColorOS (Oplus) 系统界面调整, 经 LSPosed 注入。
@@ -48,6 +49,7 @@ public class XposedInit extends XposedModule {
     private static volatile String sProcessName = "";
     private static volatile boolean sIsSystemServer = false;
     private static volatile boolean sSystemServerHooked = false;
+    private static volatile boolean sAppProcessHooked = false;
 
     public static final String TAG = "ColorOSMod";
     public static final String MODULE_PACKAGE = "com.rikumi.colorosmod";
@@ -460,11 +462,16 @@ public class XposedInit extends XposedModule {
     }
 
     @Override
-    public void onPackageLoaded(@NonNull PackageLoadedParam param) {
+    public boolean onHotReloading(@NonNull HotReloadingParam param) {
+        return true;
+    }
+
+    @Override
+    public void onPackageReady(@NonNull PackageReadyParam param) {
         XC_LoadPackage.LoadPackageParam lpparam = new XC_LoadPackage.LoadPackageParam();
         lpparam.packageName = param.getPackageName();
         lpparam.processName = sProcessName;
-        lpparam.classLoader = param.getDefaultClassLoader();
+        lpparam.classLoader = param.getClassLoader();
         lpparam.appInfo = param.getApplicationInfo();
         lpparam.isFirstApplication = param.isFirstPackage();
         if ("android".equals(lpparam.packageName)) {
@@ -473,8 +480,33 @@ public class XposedInit extends XposedModule {
             // 真正的 system_server 一律走 onSystemServerStarting, 这里只做兜底去重。
             if (!sIsSystemServer || sSystemServerHooked) return;
             sSystemServerHooked = true;
+        } else {
+            // API 102 热加载可能发生在宿主主包的 PackageReady 事件之后。后续事件的包名可能是
+            // WebView/overlay 等依赖包，此时按进程名识别真正宿主，并使用已创建的 Application
+            // ClassLoader 初始化；否则模块会显示 Loaded，却一直错过 SystemUI/Launcher hook。
+            if (!isAppHookTarget(lpparam.packageName) && isAppHookTarget(sProcessName)) {
+                android.content.Context application = currentApplication();
+                if (application == null) return;
+                lpparam.packageName = sProcessName;
+                lpparam.classLoader = application.getClassLoader();
+                lpparam.appInfo = application.getApplicationInfo();
+                lpparam.isFirstApplication = true;
+            }
+            if (!isAppHookTarget(lpparam.packageName)) return;
+            synchronized (XposedInit.class) {
+                if (sAppProcessHooked) return;
+                sAppProcessHooked = true;
+            }
         }
         handleLoadPackage(lpparam);
+    }
+
+    private static boolean isAppHookTarget(String packageName) {
+        return "com.android.launcher".equals(packageName)
+                || "com.android.systemui".equals(packageName)
+                || "com.oplus.safecenter".equals(packageName)
+                || "com.android.settings".equals(packageName)
+                || "com.android.providers.media.module".equals(packageName);
     }
 
     @Override
