@@ -15,6 +15,7 @@ import android.widget.TextSwitcher;
 import com.rikumi.colorosmod.hooks.GestureHooks;
 import com.rikumi.colorosmod.hooks.LauncherHooks;
 import com.rikumi.colorosmod.hooks.MediaProviderHooks;
+import com.rikumi.colorosmod.hooks.MultiWindowHooks;
 import com.rikumi.colorosmod.hooks.SafecenterHooks;
 import com.rikumi.colorosmod.hooks.SettingsHooks;
 import com.rikumi.colorosmod.hooks.StatusBarLyricHooks;
@@ -28,8 +29,10 @@ import com.rikumi.colorosmod.xposed.XposedHelpers;
 import androidx.annotation.NonNull;
 
 import io.github.libxposed.api.XposedModule;
+import io.github.libxposed.api.XposedModuleInterface.HotReloadedParam;
+import io.github.libxposed.api.XposedModuleInterface.HotReloadingParam;
 import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam;
-import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam;
+import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam;
 import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam;
 
 // ColorOS (Oplus) 系统界面调整, 经 LSPosed 注入。
@@ -46,6 +49,7 @@ public class XposedInit extends XposedModule {
     private static volatile String sProcessName = "";
     private static volatile boolean sIsSystemServer = false;
     private static volatile boolean sSystemServerHooked = false;
+    private static volatile boolean sAppProcessHooked = false;
 
     public static final String TAG = "ColorOSMod";
     public static final String MODULE_PACKAGE = "com.rikumi.colorosmod";
@@ -204,6 +208,10 @@ public class XposedInit extends XposedModule {
             "gesture_touch_through_enabled";
     public static final String KEY_GESTURE_BAR_LONG_PRESS_DISABLE_ENABLED =
             "gesture_bar_long_press_disable_enabled";
+    // 缩小分屏应用顶部三点控制栏：pscanvas 侧缩小浮层本身，system_server 侧同步缩短嵌入任务
+    // 收到的状态栏 inset，否则三点虽变小，应用内容仍会为原 40dp 控制栏留白。
+    public static final String KEY_SHRINK_CAPTION_BAR_ENABLED = "shrink_caption_bar_enabled";
+    public static final float COMPACT_CAPTION_BAR_HEIGHT_DP = 24f;
     // 多任务上划彻底结束进程: 上划卡片时系统只以 type=13(STOP) 请求 athena 停止任务,
     // 开启后改成 type=11(KILL_OR_STOP) 真正杀掉进程(见 LauncherHooks#hookRecentsSwipeUpKill)。
     public static final String KEY_RECENTS_SWIPE_UP_KILL_ENABLED = "recents_swipe_up_kill_enabled";
@@ -294,62 +302,276 @@ public class XposedInit extends XposedModule {
     public static final java.util.concurrent.ConcurrentHashMap<String, Object[]> sCache =
             new java.util.concurrent.ConcurrentHashMap<String, Object[]>(); // key -> {Long ts, Boolean val}
 
-    // ---- 后台设置预热 ----
-    // 开机早期(模块 App 尚未被拉起 / 仍处于锁定态)同步查询拿不到值, 而部分 hook 只在初始化时读一次
-    // (手势条高度在导航栏创建时读取一次), 默认值一旦被固化, 解锁后也不会纠正 —— 即"重启后失效,
-    // 重启作用域才恢复"。故注入后立刻起后台线程周期性全量拉取: 首成功前每 SETTINGS_RETRY_MS 重试,
-    // 之后每 SETTINGS_REFRESH_MS(与原 CACHE_TTL_MS 同口径)刷新, 改设置仍在 5s 内生效。
+    // ---- 后台设置同步(受控 HandlerThread + ContentObserver push) ----
+    // 一) startSettingsLoader: 首次启动 worker + initial fetch, 重试指数退避(0.5→30s)。
+    // 二) ContentObserver(sWorkerHandler): onChange 收敛在 worker Looper, 250ms coalesce。
+    // 三) hot reload: CountDownLatch barrier 确认 quiescent 后 quit(), 超时不 quit 可 rollback。
     public static final String SETTINGS_ALL_KEY = "__all__";
     private static final Object sLoadLock = new Object();
     private static volatile java.util.Map<String, Integer> sSnapshot =
             java.util.Collections.emptyMap();
-    private static volatile boolean sLoaderStarted = false;
     private static volatile boolean sSettingsLoaded = false;
     private static volatile boolean sFirstWaitDone = false;
-    private static final long SETTINGS_REFRESH_MS = CACHE_TTL_MS;
-    private static final long SETTINGS_RETRY_MS = 500;
+    // 重试退避: 启动时 500ms, 指数增长到 30s, 避免失败情况下永久 2Hz 轮询。
+    private static final long RETRY_MIN_MS = 500;
+    private static final long RETRY_MAX_MS = 30_000;
+    private static long sRetryMs = RETRY_MIN_MS;
     // 首个 readBool/readInt 到达时后台预热可能还没完成, 最多等这么久; 整个进程只等一次。
     private static final long FIRST_LOAD_WAIT_MS = 5000;
+    // 连续 onChange 的合并窗口: 窗口内多次通知只触发一次 refresh, 防止 slider 高频写入刷屏。
+    private static final long ONCHANGE_COALESCE_MS = 250;
+    // 已注册的 ContentObserver。
+    private static volatile android.database.ContentObserver sObserver = null;
+    // 单 worker 的 HandlerThread; null 表示未创建(首次 startSettingsLoader 时才建)。
+    private static volatile android.os.HandlerThread sWorkerThread = null;
+    private static volatile android.os.Handler sWorkerHandler = null;
+    // 当前这一轮 refresh 是否已在执行或排队; 用于合并连续通知。
+    private static volatile boolean sRefreshQueued = false;
+    // hot reload / stop 标记: 一旦置 false, 所有已投递的 refresh 都会立即放弃, 不再触碰旧 gen 状态。
+    private static volatile boolean sSyncActive = false;
+    private static final long STOP_JOIN_TIMEOUT_MS = 1500;
 
     public static void startSettingsLoader() {
-        synchronized (sLoadLock) {
-            if (sLoaderStarted) return;
-            sLoaderStarted = true;
-        }
-        Thread t = new Thread(new Runnable() {
+        if (sWorkerThread != null && sWorkerThread.isAlive()) return;
+        sSyncActive = true;
+        sRefreshQueued = false;
+        sRetryQueued = false;
+        sObserverRetryQueued = false;
+        sRetryMs = RETRY_MIN_MS;
+        android.os.HandlerThread ht = new android.os.HandlerThread("ColorOSMod-SettingsWorker");
+        ht.start();
+        sWorkerThread = ht;
+        sWorkerHandler = new android.os.Handler(ht.getLooper());
+        sWorkerHandler.post(new Runnable() {
             @Override
             public void run() {
-                while (true) {
-                    long sleep;
-                    try {
-                        java.util.Map<String, Integer> all = fetchAllSettings();
-                        if (all != null) {
-                            boolean first = !sSettingsLoaded;
-                            sSnapshot = all;
-                            if (first) {
-                                synchronized (sLoadLock) {
-                                    sSettingsLoaded = true;
-                                    sLoadLock.notifyAll();
-                                }
-                                log("settings loaded: " + all.size() + " keys");
-                            }
-                            sleep = SETTINGS_REFRESH_MS;
-                        } else {
-                            sleep = sSettingsLoaded ? SETTINGS_REFRESH_MS : SETTINGS_RETRY_MS;
-                        }
-                    } catch (Throwable ignored) {
-                        sleep = SETTINGS_REFRESH_MS;
-                    }
-                    try {
-                        Thread.sleep(sleep);
-                    } catch (InterruptedException e) {
-                        return;
-                    }
+                registerSettingsObserverOnWorker();
+                initialOrRetryFetch();
+            }
+        });
+    }
+
+    // 必须在 worker 线程调用: 注册 ContentObserver, callback handler = sWorkerHandler。
+    private static boolean registerSettingsObserverOnWorker() {
+        if (sObserver != null) return true;
+        if (sAppContext == null) return false;
+        try {
+            ContentResolver cr = sAppContext.getContentResolver();
+            Uri uri = Uri.parse("content://" + SETTINGS_AUTHORITY + "/" + SETTINGS_ALL_KEY);
+            android.database.ContentObserver observer = new android.database.ContentObserver(
+                    sWorkerHandler) {
+                @Override
+                public void onChange(boolean selfChange, android.net.Uri u) {
+                    requestRefresh();
+                }
+            };
+            cr.registerContentObserver(uri, true, observer);
+            sObserver = observer;
+            log("settings content observer registered");
+            return true;
+        } catch (Throwable t) {
+            log("registerContentObserver fail: " + t);
+            sObserver = null;
+            return false;
+        }
+    }
+
+    // 独立获取 Application Context。将"准备 Context"与"读取设置"分离, 使 observer 注册
+    // 可以在 fetch 之前完成, 消除 register → fetch 之间的 lost-update window。
+    private static boolean ensureAppContext() {
+        if (sAppContext == null) {
+            sAppContext = currentApplication();
+        }
+        return sAppContext != null;
+    }
+
+    // ---- 统一 fetch + retry 逻辑 ----
+    // 两路调用:
+    //   1) initialOrRetryFetch — 进程启动时的初始预热, allowRetry=true, coalesce=false
+    //   2) requestRefresh    — ContentObserver 收到变更通知, allowRetry=true, coalesce=true
+    // 两个路径走同一套 fetch / observer / retry 判断, 避免 behavior 产生差异。
+
+    // 启动时首次预热 (post 至 worker queue), 无 coalesce。
+    private static void initialOrRetryFetch() {
+        refreshSettings(true);
+    }
+
+    // 收到设置变更通知 (已在 worker 线程): 合并多次通知为一次 refresh。
+    private static void requestRefresh() {
+        android.os.Handler h = sWorkerHandler;
+        if (h == null || !sSyncActive || sRefreshQueued) return;
+        sRefreshQueued = true;
+        h.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                sRefreshQueued = false;
+                if (!sSyncActive) return;
+                refreshSettings(true);
+            }
+        }, ONCHANGE_COALESCE_MS);
+    }
+
+    // 统一 fetch/retry: 先 subscribe 再 snapshot; 失败时指数退避重试。
+    // 区分"snapshot 成功但 observer 失败"与"snapshot 失败", 前者只重试 observer(无 full query)。
+    private static void refreshSettings(boolean allowRetry) {
+        if (!sSyncActive) return;
+        if (!ensureAppContext()) {
+            if (allowRetry) scheduleRetry();
+            return;
+        }
+        boolean observerReady = registerSettingsObserverOnWorker();
+        java.util.Map<String, Integer> all = allowRetry ? fetchAllSettings() : null;
+        if (all != null) {
+            publishSnapshot(all);
+        }
+        if (allowRetry && sSyncActive) {
+            if (all == null) {
+                scheduleRetry();
+            } else if (!observerReady) {
+                scheduleObserverRetry();
+            } else {
+                sRetryMs = RETRY_MIN_MS;
+            }
+        }
+    }
+
+    // 单进程内同时只允许一个 retry timer, 防止 slider 连续失败时产生多条 retry chain。
+    private static volatile boolean sRetryQueued = false;
+    private static volatile boolean sObserverRetryQueued = false;
+
+    private static void scheduleRetry() {
+        android.os.Handler h = sWorkerHandler;
+        if (h == null || !sSyncActive || sRetryQueued) return;
+        sRetryQueued = true;
+        long delay = sRetryMs;
+        sRetryMs = Math.min(sRetryMs * 2, RETRY_MAX_MS);
+        h.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                sRetryQueued = false;
+                if (sSyncActive) {
+                    refreshSettings(true);
                 }
             }
-        }, "ColorOSMod-Settings");
-        t.setDaemon(true);
-        t.start();
+        }, delay);
+    }
+
+    // snapshot 已成功但 observer 仍失败: 只重试 observer 注册, 不再重新 full query。
+    // 恢复成功后必须重新 fetch snapshot(恢复期间 notification 已丢失), 否则回到旧值。
+    private static void scheduleObserverRetry() {
+        android.os.Handler h = sWorkerHandler;
+        if (h == null || !sSyncActive || sObserverRetryQueued) return;
+        sObserverRetryQueued = true;
+        long delay = sRetryMs;
+        sRetryMs = Math.min(sRetryMs * 2, RETRY_MAX_MS);
+        h.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                sObserverRetryQueued = false;
+                if (!sSyncActive) return;
+                if (registerSettingsObserverOnWorker()) {
+                    // observer 恢复成功: 重新拉全量, 补上恢复期间丢失的变更。
+                    sRetryMs = RETRY_MIN_MS;
+                    java.util.Map<String, Integer> all = fetchAllSettings();
+                    if (all != null) {
+                        publishSnapshot(all);
+                    } else {
+                        // fetch 也失败 → 切到 full retry
+                        scheduleRetry();
+                    }
+                } else if (sSyncActive) {
+                    scheduleObserverRetry();
+                }
+            }
+        }, delay);
+    }
+
+    private static void publishSnapshot(java.util.Map<String, Integer> all) {
+        if (!sSyncActive || all == null) return;
+        boolean first = !sSettingsLoaded;
+        sSnapshot = all;
+        if (first) {
+            synchronized (sLoadLock) {
+                sSettingsLoaded = true;
+                sLoadLock.notifyAll();
+            }
+            log("settings loaded: " + all.size() + " keys");
+        }
+    }
+
+    // 停止所有 module-owned 线程与 observer。通过 post barrier 到 worker 队列来确认没有
+    // 正在执行的 query/message; 若 barrier 在超时内执行则 worker quiescent, 可以安全 quit;
+    // 若超时则拒绝 reload 且不伤害 worker(不调 quitSafely), 旧 gen 可完整恢复运行。
+    private static boolean stopSettingsLoader() {
+        android.os.Handler wh = sWorkerHandler;
+        android.os.HandlerThread ht = sWorkerThread;
+        if (ht == null || wh == null) return true;
+        sSyncActive = false;
+        sRefreshQueued = false;
+        sRetryQueued = false;
+        sObserverRetryQueued = false;
+        android.database.ContentObserver o = sObserver;
+        if (o != null && sAppContext != null) {
+            try {
+                sAppContext.getContentResolver().unregisterContentObserver(o);
+            } catch (Throwable ignored) {
+            }
+        }
+        sObserver = null;
+        wh.removeCallbacksAndMessages(null);
+        // barrier: 投递一个不可中断的标记到 worker 队列末尾; 只有当所有已执行或正在执行的
+        // message(包括卡在 Binder query 之前的)结束后, barrier 才会执行。
+        final java.util.concurrent.CountDownLatch idle =
+                new java.util.concurrent.CountDownLatch(1);
+        if (!wh.post(new Runnable() {
+            @Override
+            public void run() {
+                idle.countDown();
+            }
+        })) {
+            // Looper 已退出, 不应发生(我们没有调 quit)。
+            return true;
+        }
+        boolean quiescent;
+        try {
+            quiescent = idle.await(STOP_JOIN_TIMEOUT_MS,
+                    java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            quiescent = false;
+        }
+        if (!quiescent) {
+            // worker 还卡在 in-flight query 中, barrier 未能执行 → 拒绝 reload。
+            // 关键: 没有调 quitSafely, worker Looper 正常运行, 可完全恢复。
+            sSyncActive = true;
+            // 重新注册 observer + 重试初始 fetch
+            wh.post(new Runnable() {
+                @Override
+                public void run() {
+                    registerSettingsObserverOnWorker();
+                    initialOrRetryFetch();
+                }
+            });
+            log("ColorOSMod-SettingsWorker barrier timeout, rejecting reload");
+            return false;
+        }
+        // barrier 已执行, 所有先前的 work 已完成; handler queue 已清空且无 in-flight query,
+        // 直接 quit (不需要 quitSafely drain 剩余 message), 循环 join 直到线程真正死亡。
+        ht.quit();
+        boolean interrupted = false;
+        while (ht.isAlive()) {
+            try {
+                ht.join();
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+        sWorkerThread = null;
+        sWorkerHandler = null;
+        return true;
     }
 
     // 一次性取回全部设置; 取不到(模块 App 未运行等)返回 null。
@@ -444,12 +666,88 @@ public class XposedInit extends XposedModule {
                 + " api=" + getApiVersion() + " process=" + sProcessName);
     }
 
+    // API 102 hot reload: 返回 true 之前必须停止所有 module-owned thread、注销 callback、释放旧
+    // classloader 的引用, 否则旧 classloader 会被后台线程/observer 回调整代强引用住, 无法 GC。
+    // 若无法在超时内干净停止所有 worker, 返回 false 拒绝 reload, 由框架保持旧 gen 继续运行。
+    // 当前暂不实现 hot reload。SystemUI/Launcher 有大量 module-defined View/Handler/ContentObserver
+    // 注册到宿主, system_server 也有 sHungTaskIds/sPamExt 等 generation-local 状态及 Handler
+    // 回调。写入 per-module cleanup 前所有进程均拒绝 reload。
     @Override
-    public void onPackageLoaded(@NonNull PackageLoadedParam param) {
+    public boolean onHotReloading(@NonNull HotReloadingParam param) {
+        log("onHotReloading: hot reload not supported yet, rejecting");
+        return false;
+    }
+
+    // hot reload 后框架不会自动 replay onModuleLoaded/onPackageReady。HotReloadedParam 继承
+    // ModuleLoadedParam, 提供了 getProcessName() 和 isSystemServer() —— 这里从 param 恢复
+    // 进程身份, 否则新 generation 的 sProcessName=""、sIsSystemServer=false, hooks 全挂不上。
+    //
+    // 必须调用 super.onHotReloaded(param) 卸载旧 generation 的 hooks, 否则旧 hooks 与新 hooks
+    // 叠加同一方法, 产生重复 callback。
+    @Override
+    public void onHotReloaded(@NonNull HotReloadedParam param) {
+        // 重要: 必须先卸载旧 hooks, 再装载新的, 否则同 method 叠加多套 callback。
+        super.onHotReloaded(param);
+
+        XposedBridge.attachFramework(this);
+        // 重要: HotReloadedParam 就是 ModuleLoadedParam 的子类, 恢复进程身份, 否则新 hooks 挂不上。
+        sProcessName = param.getProcessName();
+        sIsSystemServer = param.isSystemServer();
+        log("onHotReloaded: process=" + sProcessName + " isSystemServer=" + sIsSystemServer);
+
+        // 重新注册 settings observer + worker(新 gen 的 sWorkerThread==null, 可安全重新 start)。
+        startSettingsLoader();
+
+        // 重新执行当前进程的初始化。注意: app 进程的目标 packageName = app.getPackageName(),
+        // 而非 sProcessName(process name 不保证等于 package name, 如 com.android.systemui 的
+        // 进程名就是 com.android.systemui 本身, 但自定义进程或共享 uid 时可能不符)。
+        if (sIsSystemServer) {
+            SystemServerHooks.hookFloatWindowEdgeHangSystemServer(systemServerLpparam());
+            SystemServerHooks.hookFloatWindowEdgeHangMute(systemServerLpparam());
+            SystemServerHooks.hookFloatWindowLandscapeKeepRatio(systemServerLpparam());
+            SystemServerHooks.hookFloatWindowSizeLimits(systemServerLpparam());
+            SystemServerHooks.hookRecentsSwipeUpKillSystemServer(systemServerLpparam());
+            SystemServerHooks.hookStatusBarThirdPartyOverlayEvents(systemServerLpparam());
+            SystemServerHooks.hookCompactCanvasCaptionInsets(systemServerLpparam());
+            SystemServerHooks.hookCompactFlexibleCaptionBar(systemServerLpparam());
+            sSystemServerHooked = true;
+        } else {
+            android.content.Context app = currentApplication();
+            if (app != null) {
+                String pkg = app.getPackageName();
+                if (isAppHookTarget(pkg)) {
+                    XC_LoadPackage.LoadPackageParam lpparam = new XC_LoadPackage.LoadPackageParam();
+                    lpparam.packageName = pkg;
+                    lpparam.processName = sProcessName;
+                    lpparam.classLoader = app.getClassLoader();
+                    lpparam.appInfo = app.getApplicationInfo();
+                    lpparam.isFirstApplication = true;
+                    handleLoadPackage(lpparam);
+                    // 只在 hooks 真正安装后才标记, 避免 Application 未就绪时错误跳过后续 onPackageReady。
+                    sAppProcessHooked = true;
+                }
+            }
+        }
+    }
+
+    private static XC_LoadPackage.LoadPackageParam systemServerLpparam() {
+        XC_LoadPackage.LoadPackageParam lpp = new XC_LoadPackage.LoadPackageParam();
+        lpp.packageName = "android";
+        lpp.processName = sProcessName;
+        // 不能使用 getSystemClassLoader() — Android system_server 有自己的 classloader
+        // (从 SYSTEMSERVERCLASSPATH 构建), 由 Zygote 设为 context classloader。
+        // 虽然当前 onHotReloaded 不会执行(hot reload 全拒), 保留修复防后续误开放。
+        lpp.classLoader = java.lang.Thread.currentThread().getContextClassLoader();
+        lpp.isFirstApplication = true;
+        return lpp;
+    }
+
+    @Override
+    public void onPackageReady(@NonNull PackageReadyParam param) {
         XC_LoadPackage.LoadPackageParam lpparam = new XC_LoadPackage.LoadPackageParam();
         lpparam.packageName = param.getPackageName();
         lpparam.processName = sProcessName;
-        lpparam.classLoader = param.getDefaultClassLoader();
+        lpparam.classLoader = param.getClassLoader();
         lpparam.appInfo = param.getApplicationInfo();
         lpparam.isFirstApplication = param.isFirstPackage();
         if ("android".equals(lpparam.packageName)) {
@@ -458,8 +756,34 @@ public class XposedInit extends XposedModule {
             // 真正的 system_server 一律走 onSystemServerStarting, 这里只做兜底去重。
             if (!sIsSystemServer || sSystemServerHooked) return;
             sSystemServerHooked = true;
+        } else {
+            // API 102 热加载可能发生在宿主主包的 PackageReady 事件之后。后续事件的包名可能是
+            // WebView/overlay 等依赖包，此时按进程名识别真正宿主，并使用已创建的 Application
+            // ClassLoader 初始化；否则模块会显示 Loaded，却一直错过 SystemUI/Launcher hook。
+            if (!isAppHookTarget(lpparam.packageName) && isAppHookTarget(sProcessName)) {
+                android.content.Context application = currentApplication();
+                if (application == null) return;
+                lpparam.packageName = sProcessName;
+                lpparam.classLoader = application.getClassLoader();
+                lpparam.appInfo = application.getApplicationInfo();
+                lpparam.isFirstApplication = true;
+            }
+            if (!isAppHookTarget(lpparam.packageName)) return;
+            synchronized (XposedInit.class) {
+                if (sAppProcessHooked) return;
+                sAppProcessHooked = true;
+            }
         }
         handleLoadPackage(lpparam);
+    }
+
+    private static boolean isAppHookTarget(String packageName) {
+        return "com.android.launcher".equals(packageName)
+                || "com.android.systemui".equals(packageName)
+                || "com.oplus.pscanvas".equals(packageName)
+                || "com.oplus.safecenter".equals(packageName)
+                || "com.android.settings".equals(packageName)
+                || "com.android.providers.media.module".equals(packageName);
     }
 
     @Override
@@ -487,6 +811,8 @@ public class XposedInit extends XposedModule {
             LauncherHooks.hookLauncher(lpparam);
         } else if ("com.android.systemui".equals(lpparam.packageName)) {
             SystemUiHooks.hookSystemUi(lpparam);
+        } else if ("com.oplus.pscanvas".equals(lpparam.packageName)) {
+            MultiWindowHooks.hookCanvasControlBar(lpparam);
         } else if ("com.oplus.safecenter".equals(lpparam.packageName)) {
             SafecenterHooks.hookSafecenter(lpparam);
         } else if ("com.android.settings".equals(lpparam.packageName)) {
@@ -506,6 +832,10 @@ public class XposedInit extends XposedModule {
             SystemServerHooks.hookRecentsSwipeUpKillSystemServer(lpparam);
             // system_server: 第三方悬浮窗变化事件, 供状态栏歌词避让功能按事件刷新窗口信息。
             SystemServerHooks.hookStatusBarThirdPartyOverlayEvents(lpparam);
+            // system_server: 将画布分屏嵌入应用的状态栏 inset 同步缩至三点控制栏的新高度。
+            SystemServerHooks.hookCompactCanvasCaptionInsets(lpparam);
+            // system_server: 同步缩小悬浮小窗顶部控制栏、系统上报高度与触摸区。
+            SystemServerHooks.hookCompactFlexibleCaptionBar(lpparam);
         }
         // 状态栏歌词只需在 SystemUI 侧实现: 直接读 MediaSession 的标题,
         // 无需在音乐软件进程注入, 也无需伪装机型(见 StatusBarLyricHooks 类注释)。
@@ -547,6 +877,19 @@ public class XposedInit extends XposedModule {
     public static boolean readBool(String key, boolean def) {
         Object v = settingsValue(key);
         if (v instanceof Number) return ((Number) v).intValue() == 1;
+        return def;
+    }
+
+    // 仅读取已预热/曾成功读取的内存值，不等待、不访问 ContentProvider。
+    // 持有 AMS/WMS 等系统全局锁的 hook 必须使用此方法，避免 Provider 获取反向请求
+    // ActivityManager 锁而形成死锁。预热完成前暂用默认值，之后自动读取最新快照。
+    public static boolean readBoolCached(String key, boolean def) {
+        Integer snapshot = sSnapshot.get(key);
+        if (snapshot != null) return snapshot == 1;
+        Object[] cached = sCache.get(key);
+        if (cached != null && cached[1] instanceof Number) {
+            return ((Number) cached[1]).intValue() == 1;
+        }
         return def;
     }
 
