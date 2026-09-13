@@ -317,22 +317,10 @@ public class XposedInit extends XposedModule {
     public static final java.util.concurrent.ConcurrentHashMap<String, Object[]> sCache =
             new java.util.concurrent.ConcurrentHashMap<String, Object[]>(); // key -> {Long ts, Boolean val}
 
-    // ---- 后台设置同步(受控 worker + ContentObserver push model) ----
-    // 不再使用固定间隔轮询, 也不再为每次 onChange 临时 new Thread。改为一个受控的单 worker
-    // (HandlerThread + ExecutorService 语义), 统一执行 "首次预热/失败重试" 与 "设置变更后的刷新",
-    // 并对连续变更做 coalesce(合并, 见 ONCHANGE_COALESCE_MS), 避免 slider 连续写入时每次拉一次。
-    //
-    // 流程:
-    //   startSettingsLoader:
-    //     同步仅 registerContentObserver(不阻塞、不做查询)
-    //     后台 worker 做 initial fetch; 失败则 SETTINGS_RETRY_MS 退避重试, 成功一次后停。
-    //   onChange(observer 的回调, 已投递到 worker 线程):
-    //     投递一次 refresh; 若已有 pending refresh 则合并, 不重复执行。
-    //
-    // hot reload 时:
-    //   onHotReloading():
-    //     active=false; unregister observer; worker.quitSafely(); join 等待真正结束;
-    //     若等待超时/线程仍存活 -> 返回 false(拒绝 reload, 而不是带着存活线程继续)。
+    // ---- 后台设置同步(受控 HandlerThread + ContentObserver push) ----
+    // 一) startSettingsLoader: 首次启动 worker + initial fetch, 重试指数退避(0.5→30s)。
+    // 二) ContentObserver(sWorkerHandler): onChange 收敛在 worker Looper, 250ms coalesce。
+    // 三) hot reload: CountDownLatch barrier 确认 quiescent 后 quit(), 超时不 quit 可 rollback。
     public static final String SETTINGS_ALL_KEY = "__all__";
     private static final Object sLoadLock = new Object();
     private static volatile java.util.Map<String, Integer> sSnapshot =
@@ -451,16 +439,14 @@ public class XposedInit extends XposedModule {
         if (all != null) {
             publishSnapshot(all);
         }
-        if (!allowRetry || !sSyncActive) return;
-        if (all != null && !observerReady) {
-            // snapshot 已有但 observer 注册失败: 仅重试 observer, 不重新 full query。
-            scheduleObserverRetry();
-        } else if (all == null || !observerReady) {
-            // fetch 失败或 observer 失败(此时 all==null): 启动指数退避重试 full path。
-            scheduleRetry();
-        } else {
-            // 全部成功, 重置退避。
-            sRetryMs = RETRY_MIN_MS;
+        if (allowRetry && sSyncActive) {
+            if (all == null) {
+                scheduleRetry();
+            } else if (!observerReady) {
+                scheduleObserverRetry();
+            } else {
+                sRetryMs = RETRY_MIN_MS;
+            }
         }
     }
 
@@ -700,6 +686,13 @@ public class XposedInit extends XposedModule {
     // 若无法在超时内干净停止所有 worker, 返回 false 拒绝 reload, 由框架保持旧 gen 继续运行。
     @Override
     public boolean onHotReloading(@NonNull HotReloadingParam param) {
+        // 非 system_server 进程(SystemUI/Launcher 等)有大量静态视图/Handler/ContentObserver
+        // 注册到宿主实例, 需要 per-module cleanup 方法尚未实现。在实现完成前拒绝 hot reload,
+        // 避免残留旧 callback/View 导致重复注册与 classloader leak。
+        // system_server 的静态状态更可控, 允许 hot reload。
+        if (!sIsSystemServer) {
+            return false;
+        }
         if (!stopSettingsLoader()) {
             log("onHotReloading: WARN worker refused to stop within timeout, rejecting reload");
             return false;
@@ -764,11 +757,16 @@ public class XposedInit extends XposedModule {
     }
 
     // 重建 system_server 用的 LoadPackageParam。
+    // 注意: 不能使用 ClassLoader.getSystemClassLoader() — Android system_server 有自己
+    // 的 classloader(从 SYSTEMSERVERCLASSPATH 构建), Zygote 会设其为 context classloader。
+    // libxposed 的 onSystemServerStarting 通过 SystemServerStartingParam.getClassLoader()
+    // 暴露正确的 loader; onHotReloaded 中无法直接取得, 但 Thread.getContextClassLoader()
+    // 在 system_server 中是可靠的(由 Zygote 在 fork 后设置)。
     private static XC_LoadPackage.LoadPackageParam systemServerLpparam() {
         XC_LoadPackage.LoadPackageParam lpp = new XC_LoadPackage.LoadPackageParam();
         lpp.packageName = "android";
         lpp.processName = sProcessName;
-        lpp.classLoader = java.lang.ClassLoader.getSystemClassLoader();
+        lpp.classLoader = java.lang.Thread.currentThread().getContextClassLoader();
         lpp.isFirstApplication = true;
         return lpp;
     }
