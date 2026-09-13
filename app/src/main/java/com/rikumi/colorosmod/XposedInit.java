@@ -569,6 +569,8 @@ public class XposedInit extends XposedModule {
             SystemServerHooks.hookStatusBarThirdPartyOverlayEvents(lpparam);
             // system_server: 将画布分屏嵌入应用的状态栏 inset 同步缩至三点控制栏的新高度。
             SystemServerHooks.hookCompactCanvasCaptionInsets(lpparam);
+            // system_server: 同步缩小悬浮小窗顶部控制栏、系统上报高度与触摸区。
+            SystemServerHooks.hookCompactFlexibleCaptionBar(lpparam);
         }
         // 状态栏歌词只需在 SystemUI 侧实现: 直接读 MediaSession 的标题,
         // 无需在音乐软件进程注入, 也无需伪装机型(见 StatusBarLyricHooks 类注释)。
@@ -610,6 +612,19 @@ public class XposedInit extends XposedModule {
     public static boolean readBool(String key, boolean def) {
         Object v = settingsValue(key);
         if (v instanceof Number) return ((Number) v).intValue() == 1;
+        return def;
+    }
+
+    // 仅读取已预热/曾成功读取的内存值，不等待、不访问 ContentProvider。
+    // 持有 AMS/WMS 等系统全局锁的 hook 必须使用此方法，避免 Provider 获取反向请求
+    // ActivityManager 锁而形成死锁。预热完成前暂用默认值，之后自动读取最新快照。
+    public static boolean readBoolCached(String key, boolean def) {
+        Integer snapshot = sSnapshot.get(key);
+        if (snapshot != null) return snapshot == 1;
+        Object[] cached = sCache.get(key);
+        if (cached != null && cached[1] instanceof Number) {
+            return ((Number) cached[1]).intValue() == 1;
+        }
         return def;
     }
 
