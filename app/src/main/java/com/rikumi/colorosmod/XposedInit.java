@@ -684,24 +684,13 @@ public class XposedInit extends XposedModule {
     // API 102 hot reload: 返回 true 之前必须停止所有 module-owned thread、注销 callback、释放旧
     // classloader 的引用, 否则旧 classloader 会被后台线程/observer 回调整代强引用住, 无法 GC。
     // 若无法在超时内干净停止所有 worker, 返回 false 拒绝 reload, 由框架保持旧 gen 继续运行。
+    // 当前暂不实现 hot reload。SystemUI/Launcher 有大量 module-defined View/Handler/ContentObserver
+    // 注册到宿主, system_server 也有 sHungTaskIds/sPamExt 等 generation-local 状态及 Handler
+    // 回调。写入 per-module cleanup 前所有进程均拒绝 reload。
     @Override
     public boolean onHotReloading(@NonNull HotReloadingParam param) {
-        // 非 system_server 进程(SystemUI/Launcher 等)有大量静态视图/Handler/ContentObserver
-        // 注册到宿主实例, 需要 per-module cleanup 方法尚未实现。在实现完成前拒绝 hot reload,
-        // 避免残留旧 callback/View 导致重复注册与 classloader leak。
-        // system_server 的静态状态更可控, 允许 hot reload。
-        if (!sIsSystemServer) {
-            return false;
-        }
-        if (!stopSettingsLoader()) {
-            log("onHotReloading: WARN worker refused to stop within timeout, rejecting reload");
-            return false;
-        }
-        sSnapshot = java.util.Collections.emptyMap();
-        sCache.clear();
-        sAppContext = null;
-        log("onHotReloading: clean stop, OK to reload");
-        return true;
+        log("onHotReloading: hot reload not supported yet, rejecting");
+        return false;
     }
 
     // hot reload 后框架不会自动 replay onModuleLoaded/onPackageReady。HotReloadedParam 继承
@@ -756,16 +745,13 @@ public class XposedInit extends XposedModule {
         }
     }
 
-    // 重建 system_server 用的 LoadPackageParam。
-    // 注意: 不能使用 ClassLoader.getSystemClassLoader() — Android system_server 有自己
-    // 的 classloader(从 SYSTEMSERVERCLASSPATH 构建), Zygote 会设其为 context classloader。
-    // libxposed 的 onSystemServerStarting 通过 SystemServerStartingParam.getClassLoader()
-    // 暴露正确的 loader; onHotReloaded 中无法直接取得, 但 Thread.getContextClassLoader()
-    // 在 system_server 中是可靠的(由 Zygote 在 fork 后设置)。
     private static XC_LoadPackage.LoadPackageParam systemServerLpparam() {
         XC_LoadPackage.LoadPackageParam lpp = new XC_LoadPackage.LoadPackageParam();
         lpp.packageName = "android";
         lpp.processName = sProcessName;
+        // 不能使用 getSystemClassLoader() — Android system_server 有自己的 classloader
+        // (从 SYSTEMSERVERCLASSPATH 构建), 由 Zygote 设为 context classloader。
+        // 虽然当前 onHotReloaded 不会执行(hot reload 全拒), 保留修复防后续误开放。
         lpp.classLoader = java.lang.Thread.currentThread().getContextClassLoader();
         lpp.isFirstApplication = true;
         return lpp;
