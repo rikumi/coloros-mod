@@ -852,15 +852,20 @@ private fun desktopFolderNames(ctx: Context): List<String> {
 internal fun Context.settingsPrefs(): SharedPreferences {
     val de = createDeviceProtectedStorageContext()
         .getSharedPreferences("settings", Context.MODE_PRIVATE)
-    if (de.all.isEmpty()) migrateLegacyPrefs(this, de)
+    // 迁移也是 push model 的一个 writer: 实际写入成功才通知被 hook 进程刷新,
+    // 否则 initial fetch 成功(snapshot={})后迁移会被跳过, 设置永远不生效。
+    if (de.all.isEmpty() && migrateLegacyPrefs(this, de)) {
+        SettingsProvider.notifySettingsChanged(this)
+    }
     return de
 }
 
 // 旧版本把设置写在 CE 存储, 升级后首次读取时搬一次, 避免用户设置丢失。
-private fun migrateLegacyPrefs(ctx: Context, de: SharedPreferences) {
+// 返回是否真正写入了数据(供调用方决定是否需要 notifyChange)。
+private fun migrateLegacyPrefs(ctx: Context, de: SharedPreferences): Boolean {
     val legacy = runCatching { ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).all }
         .getOrDefault(emptyMap())
-    if (legacy.isEmpty()) return
+    if (legacy.isEmpty()) return false
     val e = de.edit()
     for ((k, v) in legacy) {
         when (v) {
@@ -872,15 +877,17 @@ private fun migrateLegacyPrefs(ctx: Context, de: SharedPreferences) {
             is Set<*> -> @Suppress("UNCHECKED_CAST") e.putStringSet(k, v as Set<String>)
         }
     }
-    e.commit()
+    return e.commit()
 }
 
 internal fun setBool(ctx: Context, key: String, value: Boolean) {
     ctx.settingsPrefs().edit().putBoolean(key, value).commit()
+    SettingsProvider.notifySettingsChanged(ctx)
 }
 
 internal fun setInt(ctx: Context, key: String, value: Int) {
     ctx.settingsPrefs().edit().putInt(key, value).commit()
+    SettingsProvider.notifySettingsChanged(ctx)
 }
 
 // 需要系统权限的设置直接由 root 写入系统 Settings。动画倍率以 0..20 的整数保存，
