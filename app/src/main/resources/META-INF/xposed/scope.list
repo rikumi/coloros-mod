@@ -3,5 +3,6 @@ com.android.systemui
 com.oplus.safecenter
 com.android.settings
 com.oplus.wallpapers
+com.oplus.camera
 com.android.providers.media.module
 system

@@ -15,6 +15,7 @@ import android.widget.TextSwitcher;
 import com.rikumi.colorosmod.hooks.GestureHooks;
 import com.rikumi.colorosmod.hooks.LauncherHooks;
 import com.rikumi.colorosmod.hooks.MediaProviderHooks;
+import com.rikumi.colorosmod.hooks.CameraHooks;
 import com.rikumi.colorosmod.hooks.SafecenterHooks;
 import com.rikumi.colorosmod.hooks.SettingsHooks;
 import com.rikumi.colorosmod.hooks.StatusBarLyricHooks;
@@ -288,6 +289,14 @@ public class XposedInit extends XposedModule {
     // 显示按下态; 离开该键范围则取消(不重复输入)。见 SystemUiHooks#hookKeyguardSlideInput ——
     // 接管 COUINumericKeyboard 的 handleActionDown/Move/Up, 改"矩形命中+抬起才输入"为"圆形命中+进入即输入"。
     public static final String KEY_KEYGUARD_SLIDE_INPUT_ENABLED = "keyguard_slide_input_enabled";
+    // 系统相机 Find 界面总开关: 0=不修改, 1=开启, 2=关闭。
+    public static final String KEY_CAMERA_FIND_LIGHT_STYLE = "camera_find_light_style";
+    // 系统相机哈苏橙色 UI 总开关: 0=不修改, 1=开启, 2=关闭。
+    public static final String KEY_CAMERA_HASSELBLAD_ORANGE_UI =
+            "camera_hasselblad_orange_ui";
+    public static final int CAMERA_FIND_LIGHT_STYLE_DEFAULT = 0;
+    public static final int CAMERA_FIND_LIGHT_STYLE_ENABLED = 1;
+    public static final int CAMERA_FIND_LIGHT_STYLE_DISABLED = 2;
     public static final String KEY_KEYGUARD_NO_CHARGE_ANIM_ENABLED =
             "keyguard_no_charge_anim_enabled";
 
@@ -499,6 +508,8 @@ public class XposedInit extends XposedModule {
             SettingsHooks.hookSettings(lpparam);
         } else if ("com.oplus.wallpapers".equals(lpparam.packageName)) {
             WallpapersHooks.hookWallpapers(lpparam);
+        } else if ("com.oplus.camera".equals(lpparam.packageName)) {
+            CameraHooks.hookCamera(lpparam);
         } else if ("com.android.providers.media.module".equals(lpparam.packageName)) {
             MediaProviderHooks.hookMediaProvider(lpparam);
         } else if ("android".equals(lpparam.packageName)) {

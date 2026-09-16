@@ -251,6 +251,19 @@ private val LOCKSCREEN: List<SettingsItem> = listOf(
     SwitchItem("keyguard_no_charge_anim_enabled", "取消锁屏充电动画"),
 )
 
+private val CAMERA: List<SettingsItem> = listOf(
+    SelectItem(
+        key = "camera_find_light_style",
+        label = "系统相机 Find 界面",
+        options = listOf("不修改", "开启", "关闭"),
+    ),
+    SelectItem(
+        key = "camera_hasselblad_orange_ui",
+        label = "系统相机哈苏橙色 UI",
+        options = listOf("不修改", "开启", "关闭"),
+    ),
+)
+
 private val STORAGE: List<SettingsItem> = listOf(
     GroupTitleItem("不自动创建以下文件夹"),
     FolderBlockItem("media_folder_block_alarms", "Alarms", "Alarms"),
@@ -285,6 +298,7 @@ private val CATEGORY_GROUPS: List<List<Category>> = listOf(
         Category("hidden_apps", "隐藏应用", MiuixIcons.Hide, HIDDEN),
         Category("float_window", "应用小窗", MiuixIcons.Copy, FLOATWINDOW, hint = "更改小窗设置需重启 Zygote 生效"),
         Category("navigation", "导航与手势", MiuixIcons.Backup, NAV),
+        Category("misc", "杂项设置", MiuixIcons.GridView, CAMERA),
     ),
     listOf(
         Category("storage", "存储管理", MiuixIcons.Folder, STORAGE),
