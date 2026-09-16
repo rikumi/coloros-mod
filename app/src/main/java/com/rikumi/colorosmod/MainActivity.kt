@@ -163,6 +163,7 @@ private val DESKTOP: List<SettingsItem> = listOf(
     SwitchItem("drawer_letter_scroll_enabled", "字母索引滚动定位", "点右侧字母条滚动到对应位置，而不是弹出图标"),
     SwitchItem("indicator_enabled", "减小页面与 Dock 间距", sliderKey = "indicator_dp", sliderMax = 32, sliderDefault = 16, sliderUnit = "dp"),
     SwitchItem("edit_mode_bg_transparent_enabled", "取消编辑模式背景遮罩"),
+    SwitchItem("weaken_desktop_customization_bg_enabled", "弱化桌面个性化页面背景"),
     GroupTitleItem("长按菜单"),
     SwitchItem("shrink_popup_menu", "缩小图标长按菜单", sliderKey = "popup_scale_percent", sliderMax = 20, sliderDefault = 10, sliderUnit = "%"),
     SwitchItem("popup_dynamic_blur_enabled", "长按菜单背景动态模糊"),

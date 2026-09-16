@@ -20,6 +20,7 @@ import com.rikumi.colorosmod.hooks.SettingsHooks;
 import com.rikumi.colorosmod.hooks.StatusBarLyricHooks;
 import com.rikumi.colorosmod.hooks.SystemServerHooks;
 import com.rikumi.colorosmod.hooks.SystemUiHooks;
+import com.rikumi.colorosmod.hooks.WallpapersHooks;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedBridge;
@@ -122,6 +123,11 @@ public class XposedInit extends XposedModule {
     // Feature 16 — 桌面编辑模式背景遮罩透明化 (com.android.launcher):
     // ToggleBarState/PagePreviewState 原生把编辑态壁纸 blur 固定为 1.0f, 同时可能叠加页面背景 alpha。
     public static final String KEY_EDIT_MODE_BG_TRANSPARENT_ENABLED = "edit_mode_bg_transparent_enabled";
+    // 弱化桌面个性化页背景(com.oplus.wallpapers): 从 uiautomator 可见页面为
+    // com.oplus.wallpapers.themes.edit.ThemeEditActivity, 背景由 background_wallpaper 与
+    // background_wallpaper_mask 两个全屏 ImageView 叠加; 开启后改为接近多任务背景的深蓝灰。
+    public static final String KEY_WEAKEN_DESKTOP_CUSTOMIZATION_BG_ENABLED =
+            "weaken_desktop_customization_bg_enabled";
     // Feature 10 — 合并控制中心背景 scrim 亮度 (com.android.systemui)
     public static final String KEY_QS_SCRIM_TRANSLUCENT_ENABLED = "qs_scrim_translucent_enabled";
     // 背景亮度滑条键(0-20, 默认 0): 0=全黑, 20=系统默认 lumin(不压暗)。
@@ -491,6 +497,8 @@ public class XposedInit extends XposedModule {
             SafecenterHooks.hookSafecenter(lpparam);
         } else if ("com.android.settings".equals(lpparam.packageName)) {
             SettingsHooks.hookSettings(lpparam);
+        } else if ("com.oplus.wallpapers".equals(lpparam.packageName)) {
+            WallpapersHooks.hookWallpapers(lpparam);
         } else if ("com.android.providers.media.module".equals(lpparam.packageName)) {
             MediaProviderHooks.hookMediaProvider(lpparam);
         } else if ("android".equals(lpparam.packageName)) {

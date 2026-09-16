@@ -2,5 +2,6 @@ com.android.launcher
 com.android.systemui
 com.oplus.safecenter
 com.android.settings
+com.oplus.wallpapers
 com.android.providers.media.module
 system
