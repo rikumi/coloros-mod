@@ -254,7 +254,7 @@ private val LOCKSCREEN: List<SettingsItem> = listOf(
 private val CAMERA: List<SettingsItem> = listOf(
     SelectItem(
         key = "camera_find_light_style",
-        label = "系统相机 Find 界面",
+        label = "系统相机 UI 开启质感光效",
         options = listOf("不修改", "开启", "关闭"),
     ),
     SelectItem(
