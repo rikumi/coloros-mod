@@ -16,8 +16,8 @@ import com.rikumi.colorosmod.xposed.XposedHelpers;
 
 /** Hooks for com.oplus.wallpapers (desktop/theme customization screens). */
 public final class WallpapersHooks {
-    // Match ColorOS recents background: slightly brighter than pure neutral black with a blue tint.
-    private static final int NEUTRAL_DARK = Color.rgb(21, 28, 39); // #151c27
+    // Fixed desktop customization background: very dark blue-black (#0A0C10).
+    private static final int NEUTRAL_DARK = Color.rgb(10, 12, 16); // #0A0C10
 
     private WallpapersHooks() {}
 
@@ -28,7 +28,7 @@ public final class WallpapersHooks {
     /**
      * 桌面自定义页: uiautomator 显示当前页面为 ThemeEditActivity, 背景由
      * background_wallpaper 与 background_wallpaper_mask 两个全屏 ImageView 叠加。
-     * 开启后把它们稳定压成 #0a0a0a, 避免原背景随壁纸/遮罩变成偏蓝灰。
+     * 开启后把它们稳定压成 #0A0C10, 避免原背景随壁纸/遮罩变成偏蓝灰。
      */
     private static void hookThemeEditActivity(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {

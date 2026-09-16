@@ -125,7 +125,7 @@ public class XposedInit extends XposedModule {
     public static final String KEY_EDIT_MODE_BG_TRANSPARENT_ENABLED = "edit_mode_bg_transparent_enabled";
     // 弱化桌面个性化页背景(com.oplus.wallpapers): 从 uiautomator 可见页面为
     // com.oplus.wallpapers.themes.edit.ThemeEditActivity, 背景由 background_wallpaper 与
-    // background_wallpaper_mask 两个全屏 ImageView 叠加; 开启后改为接近多任务背景的深蓝灰。
+    // background_wallpaper_mask 两个全屏 ImageView 叠加; 开启后改为 #0A0C10 深蓝黑。
     public static final String KEY_WEAKEN_DESKTOP_CUSTOMIZATION_BG_ENABLED =
             "weaken_desktop_customization_bg_enabled";
     // Feature 10 — 合并控制中心背景 scrim 亮度 (com.android.systemui)
