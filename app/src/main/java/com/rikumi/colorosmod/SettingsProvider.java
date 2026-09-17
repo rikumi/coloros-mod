@@ -29,12 +29,10 @@ public class SettingsProvider extends ContentProvider {
     public static final Uri NOTIFY_URI = Uri.parse("content://" + AUTHORITY + "/" + KEY_ALL);
 
     // 在设置写入方(setBool/setInt)写入 SharedPreferences 后调用, push 变更给所有注册了
-    // ContentObserver 的被 hook 进程。
+    // ContentObserver 的被 hook 进程。通知是快照刷新的唯一触发通道，失败必须向调用方
+    // 传播，不能在设置已写入但宿主仍持有旧快照时静默返回成功。
     public static void notifySettingsChanged(Context context) {
-        try {
-            context.getContentResolver().notifyChange(NOTIFY_URI, null);
-        } catch (Throwable ignored) {
-        }
+        context.getContentResolver().notifyChange(NOTIFY_URI, null);
     }
 
     @Override
