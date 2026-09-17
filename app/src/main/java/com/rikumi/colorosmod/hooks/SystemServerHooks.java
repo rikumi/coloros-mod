@@ -16,6 +16,8 @@ import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.WindowInsets;
+import android.view.Gravity;
+import android.widget.FrameLayout;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -152,7 +154,7 @@ public final class SystemServerHooks {
         try {
             final Class<?> captionView = XposedHelpers.findClass(
                     "com.android.server.wm.FlexibleTaskCaptionView", lpparam.classLoader);
-            XposedBridge.hookAllMethods(captionView, "initCaptionView", new XC_MethodHook() {
+            XC_MethodHook compactLayout = new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     if (!readBoolCached(KEY_SHRINK_CAPTION_BAR_ENABLED, false)
@@ -161,14 +163,15 @@ public final class SystemServerHooks {
                     int compactHeight = Math.max(1, Math.round(
                             COMPACT_CAPTION_BAR_HEIGHT_DP
                                     * root.getResources().getDisplayMetrics().density));
-                    int centerOffset = Math.round(12f
-                            * root.getResources().getDisplayMetrics().density);
                     compactFlexibleCaptionFrame(param.thisObject,
-                            "mToolbarModeFrame", compactHeight, centerOffset);
+                            "mToolbarModeFrame", compactHeight);
                     compactFlexibleCaptionFrame(param.thisObject,
-                            "mSimpleModeFrame", compactHeight, centerOffset);
+                            "mSimpleModeFrame", compactHeight);
                 }
-            });
+            };
+            XposedBridge.hookAllMethods(captionView, "initCaptionView", compactLayout);
+            // 系统在缩放或切换工具栏模式时会重新写入原始 topMargin。
+            XposedBridge.hookAllMethods(captionView, "scaleToolBarMode", compactLayout);
 
             final Class<?> captionViewBase = XposedHelpers.findClass(
                     "com.android.server.wm.FlexibleCaptionView", lpparam.classLoader);
@@ -266,17 +269,34 @@ public final class SystemServerHooks {
     }
 
     private static void compactFlexibleCaptionFrame(Object captionView, String fieldName,
-                                                    int compactHeight, int centerOffset) {
+                                                    int compactHeight) {
         Object value = XposedHelpers.getObjectField(captionView, fieldName);
         if (!(value instanceof ViewGroup)) return;
         ViewGroup frame = (ViewGroup) value;
         ViewGroup.LayoutParams layoutParams = frame.getLayoutParams();
-        if (layoutParams == null || layoutParams.height <= compactHeight) return;
-        layoutParams.height = compactHeight;
-        frame.setLayoutParams(layoutParams);
+        if (layoutParams == null) return;
+        if (layoutParams.height > compactHeight) {
+            layoutParams.height = compactHeight;
+            frame.setLayoutParams(layoutParams);
+        }
         for (int i = 0; i < frame.getChildCount(); i++) {
             View child = frame.getChildAt(i);
-            child.setTranslationY(-centerOffset);
+            ViewGroup.LayoutParams childParams = child.getLayoutParams();
+            if (!(childParams instanceof FrameLayout.LayoutParams)) continue;
+            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) childParams;
+            int gravity = params.gravity == -1 ? Gravity.TOP | Gravity.START : params.gravity;
+            gravity = (gravity & ~Gravity.VERTICAL_GRAVITY_MASK) | Gravity.CENTER_VERTICAL;
+            int height = params.height > compactHeight ? compactHeight : params.height;
+            if (params.gravity == gravity && params.topMargin == 0
+                    && params.bottomMargin == 0 && params.height == height) continue;
+            // translationY 不参与测量：原 28dp 的 wrap_content 高亮背景在 24dp 父栏中
+            // 扣除 10dp topMargin 后只剩 14dp，继续上移会与三个点错位。改用真实布局
+            // 居中，让背景和图标共享中心；固定高度按钮也限制在栏内，避免上下裁切。
+            params.gravity = gravity;
+            params.topMargin = 0;
+            params.bottomMargin = 0;
+            params.height = height;
+            child.setLayoutParams(params);
         }
     }
 
