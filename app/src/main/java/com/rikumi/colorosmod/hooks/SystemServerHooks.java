@@ -286,7 +286,7 @@ public final class SystemServerHooks {
             FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) childParams;
             int gravity = params.gravity == -1 ? Gravity.TOP | Gravity.START : params.gravity;
             gravity = (gravity & ~Gravity.VERTICAL_GRAVITY_MASK) | Gravity.CENTER_VERTICAL;
-            int height = params.height > compactHeight ? compactHeight : params.height;
+            int height = Math.min(params.height, compactHeight);
             if (params.gravity == gravity && params.topMargin == 0
                     && params.bottomMargin == 0 && params.height == height) continue;
             // translationY 不参与测量：原 28dp 的 wrap_content 高亮背景在 24dp 父栏中

@@ -26,7 +26,7 @@ public class SettingsProvider extends ContentProvider {
     public static final String KEY_ALL = "__all__";
     // ContentObserver push 用的通知 URI: write side 的 setBool/setInt 写入后通知此 URI,
     // 各被 hook 进程的 ContentObserver.onChange 随即重新拉取全量。
-    public static final Uri NOTIFY_URI = android.net.Uri.parse("content://" + AUTHORITY + "/" + KEY_ALL);
+    public static final Uri NOTIFY_URI = Uri.parse("content://" + AUTHORITY + "/" + KEY_ALL);
 
     // 在设置写入方(setBool/setInt)写入 SharedPreferences 后调用, push 变更给所有注册了
     // ContentObserver 的被 hook 进程。

@@ -5,13 +5,6 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.util.Log;
 
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.text.TextUtils;
-import android.view.View;
-import android.widget.TextView;
-import android.widget.TextSwitcher;
-
 import com.rikumi.colorosmod.hooks.GestureHooks;
 import com.rikumi.colorosmod.hooks.LauncherHooks;
 import com.rikumi.colorosmod.hooks.MediaProviderHooks;
@@ -19,12 +12,10 @@ import com.rikumi.colorosmod.hooks.CameraHooks;
 import com.rikumi.colorosmod.hooks.MultiWindowHooks;
 import com.rikumi.colorosmod.hooks.SafecenterHooks;
 import com.rikumi.colorosmod.hooks.SettingsHooks;
-import com.rikumi.colorosmod.hooks.StatusBarLyricHooks;
 import com.rikumi.colorosmod.hooks.SystemServerHooks;
 import com.rikumi.colorosmod.hooks.SystemUiHooks;
 import com.rikumi.colorosmod.hooks.WallpapersHooks;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
-import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedBridge;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
@@ -361,7 +352,7 @@ public class XposedInit extends XposedModule {
             @Override
             public void run() {
                 registerSettingsObserverOnWorker();
-                initialOrRetryFetch();
+                refreshSettings();
             }
         });
     }
@@ -400,16 +391,8 @@ public class XposedInit extends XposedModule {
         return sAppContext != null;
     }
 
-    // ---- 统一 fetch + retry 逻辑 ----
-    // 两路调用:
-    //   1) initialOrRetryFetch — 进程启动时的初始预热, allowRetry=true, coalesce=false
-    //   2) requestRefresh    — ContentObserver 收到变更通知, allowRetry=true, coalesce=true
-    // 两个路径走同一套 fetch / observer / retry 判断, 避免 behavior 产生差异。
-
-    // 启动时首次预热 (post 至 worker queue), 无 coalesce。
-    private static void initialOrRetryFetch() {
-        refreshSettings(true);
-    }
+    // 初始预热与 ContentObserver 通知共用 refreshSettings 的 fetch / observer / retry 逻辑;
+    // 仅通知路径通过 requestRefresh 合并连续变更。
 
     // 收到设置变更通知 (已在 worker 线程): 合并多次通知为一次 refresh。
     private static void requestRefresh() {
@@ -421,25 +404,25 @@ public class XposedInit extends XposedModule {
             public void run() {
                 sRefreshQueued = false;
                 if (!sSyncActive) return;
-                refreshSettings(true);
+                refreshSettings();
             }
         }, ONCHANGE_COALESCE_MS);
     }
 
     // 统一 fetch/retry: 先 subscribe 再 snapshot; 失败时指数退避重试。
     // 区分"snapshot 成功但 observer 失败"与"snapshot 失败", 前者只重试 observer(无 full query)。
-    private static void refreshSettings(boolean allowRetry) {
+    private static void refreshSettings() {
         if (!sSyncActive) return;
         if (!ensureAppContext()) {
-            if (allowRetry) scheduleRetry();
+            scheduleRetry();
             return;
         }
         boolean observerReady = registerSettingsObserverOnWorker();
-        java.util.Map<String, Integer> all = allowRetry ? fetchAllSettings() : null;
+        java.util.Map<String, Integer> all = fetchAllSettings();
         if (all != null) {
             publishSnapshot(all);
         }
-        if (allowRetry && sSyncActive) {
+        if (sSyncActive) {
             if (all == null) {
                 scheduleRetry();
             } else if (!observerReady) {
@@ -465,7 +448,7 @@ public class XposedInit extends XposedModule {
             public void run() {
                 sRetryQueued = false;
                 if (sSyncActive) {
-                    refreshSettings(true);
+                    refreshSettings();
                 }
             }
         }, delay);
@@ -564,7 +547,7 @@ public class XposedInit extends XposedModule {
                 @Override
                 public void run() {
                     registerSettingsObserverOnWorker();
-                    initialOrRetryFetch();
+                    refreshSettings();
                 }
             });
             log("ColorOSMod-SettingsWorker barrier timeout, rejecting reload");
@@ -592,10 +575,7 @@ public class XposedInit extends XposedModule {
     // 一次性取回全部设置; 取不到(模块 App 未运行等)返回 null。
     private static java.util.Map<String, Integer> fetchAllSettings() {
         try {
-            if (sAppContext == null) {
-                sAppContext = currentApplication();
-            }
-            if (sAppContext == null) return null;
+            if (!ensureAppContext()) return null;
             ContentResolver cr = sAppContext.getContentResolver();
             Uri uri = Uri.parse("content://" + SETTINGS_AUTHORITY + "/" + SETTINGS_ALL_KEY);
             Cursor c = cr.query(uri, null, null, null, null);
