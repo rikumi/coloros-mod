@@ -18,6 +18,7 @@ import android.util.Log;
 import android.view.WindowInsets;
 import android.view.Gravity;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -31,6 +32,7 @@ import java.util.Set;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.Drawable;
 import android.content.res.Resources;
 import android.text.TextUtils;
 import android.view.View;
@@ -286,16 +288,36 @@ public final class SystemServerHooks {
             FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) childParams;
             int gravity = params.gravity == -1 ? Gravity.TOP | Gravity.START : params.gravity;
             gravity = (gravity & ~Gravity.VERTICAL_GRAVITY_MASK) | Gravity.CENTER_VERTICAL;
-            int height = Math.min(params.height, compactHeight);
+            int height = params.height;
+            int width = params.width;
+            // 高度缩小时宽度也必须按原始比例缩放，否则 ImageView 的 fitXY
+            // 会把图标和按下背景横向拉伸。固定布局尺寸优先，wrap_content
+            // 则使用 drawable 的固有尺寸（例如高亮背景原本为 100x28dp）。
+            int originalHeight = height;
+            int originalWidth = width;
+            if (child instanceof ImageView) {
+                Drawable drawable = ((ImageView) child).getDrawable();
+                if (drawable != null) {
+                    if (originalHeight <= 0) originalHeight = drawable.getIntrinsicHeight();
+                    if (originalWidth <= 0) originalWidth = drawable.getIntrinsicWidth();
+                }
+            }
+            if (originalHeight > compactHeight && originalHeight > 0 && originalWidth > 0) {
+                height = compactHeight;
+                width = Math.max(1, Math.round(originalWidth
+                        * (compactHeight / (float) originalHeight)));
+            }
             if (params.gravity == gravity && params.topMargin == 0
-                    && params.bottomMargin == 0 && params.height == height) continue;
+                    && params.bottomMargin == 0 && params.height == height
+                    && params.width == width) continue;
             // translationY 不参与测量：原 28dp 的 wrap_content 高亮背景在 24dp 父栏中
             // 扣除 10dp topMargin 后只剩 14dp，继续上移会与三个点错位。改用真实布局
-            // 居中，让背景和图标共享中心；固定高度按钮也限制在栏内，避免上下裁切。
+            // 居中，让背景和图标共享中心；宽高同步缩放，保持原始长宽比。
             params.gravity = gravity;
             params.topMargin = 0;
             params.bottomMargin = 0;
             params.height = height;
+            params.width = width;
             child.setLayoutParams(params);
         }
     }
