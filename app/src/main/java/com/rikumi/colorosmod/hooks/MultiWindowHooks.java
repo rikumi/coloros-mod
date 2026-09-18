@@ -8,9 +8,13 @@ import static com.rikumi.colorosmod.XposedInit.readBool;
 import android.content.Context;
 import android.graphics.Rect;
 import android.graphics.Region;
+import android.graphics.drawable.Drawable;
 import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.view.WindowManager;
 import android.widget.ImageButton;
 
@@ -64,9 +68,11 @@ public final class MultiWindowHooks {
                                 * oldHeight / (float) originalHeight;
                         for (int i = 0; i < group.getChildCount(); i++) {
                             View child = group.getChildAt(i);
+                            resizeCanvasControlChild(child, compactHeight);
                             if (child instanceof ImageButton) {
+                                // 保留系统三个点 drawable 相对几何中心的 1.5dp
+                                // 视觉校正；高亮背景本身不再跟随这个偏移。
                                 child.setTranslationY(-offset);
-                                break;
                             }
                         }
                     }
@@ -87,6 +93,32 @@ public final class MultiWindowHooks {
         } catch (Throwable t) {
             log("HOOK FAIL canvas control bar height: " + t);
         }
+    }
+
+    private static void resizeCanvasControlChild(View child, int compactHeight) {
+        ViewGroup.LayoutParams rawParams = child.getLayoutParams();
+        if (!(rawParams instanceof FrameLayout.LayoutParams)) return;
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) rawParams;
+        int originalHeight = params.height;
+        int originalWidth = params.width;
+        if (child instanceof ImageView) {
+            Drawable drawable = ((ImageView) child).getDrawable();
+            if (drawable != null) {
+                if (originalHeight <= 0) originalHeight = drawable.getIntrinsicHeight();
+                if (originalWidth <= 0) originalWidth = drawable.getIntrinsicWidth();
+            }
+        }
+        if (originalHeight <= compactHeight || originalHeight <= 0 || originalWidth <= 0) return;
+
+        int gravity = params.gravity == -1 ? Gravity.TOP | Gravity.START : params.gravity;
+        gravity = (gravity & ~Gravity.VERTICAL_GRAVITY_MASK) | Gravity.CENTER_VERTICAL;
+        params.gravity = gravity;
+        params.topMargin = 0;
+        params.bottomMargin = 0;
+        params.height = compactHeight;
+        params.width = Math.max(1, Math.round(originalWidth
+                * (compactHeight / (float) originalHeight)));
+        child.setLayoutParams(params);
     }
 
     private static int dpToPx(Context context, float dp) {
