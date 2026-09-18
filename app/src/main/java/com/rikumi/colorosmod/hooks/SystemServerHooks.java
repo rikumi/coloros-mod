@@ -4,14 +4,21 @@ import static com.rikumi.colorosmod.XposedInit.*;
 
 import android.content.ContentResolver;
 import android.content.Context;
+import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.database.Cursor;
+import android.graphics.Rect;
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Log;
+import android.view.WindowInsets;
+import android.view.Gravity;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -25,6 +32,7 @@ import java.util.Set;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.Drawable;
 import android.content.res.Resources;
 import android.text.TextUtils;
 import android.view.View;
@@ -62,6 +70,257 @@ public final class SystemServerHooks {
             }
         }
     };
+
+    /**
+     * pscanvas 嵌入任务与悬浮小窗分别使用 launchScenario=2/1。系统默认向应用下发约
+     * 40dp 的状态栏 inset，它正是顶部控制栏的预留空间。控制栏缩小后，这里把对应
+     * InsetsSource 同步至相同高度；不能直接移除，否则沉浸式内容会画到控制栏下面。
+     */
+    public static void hookCompactCanvasCaptionInsets(
+            final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> windowStateExt = XposedHelpers.findClass(
+                    "com.android.server.wm.WindowStateExtImpl", lpparam.classLoader);
+            Set<XC_MethodHook.Unhook> hooks = XposedBridge.hookAllMethods(windowStateExt,
+                    "adjustInsetsStateForFlexibleWindowIfNeed",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (!readBoolCached(KEY_SHRINK_CAPTION_BAR_ENABLED, false)
+                                    || param.args.length < 2 || param.getResult() == null) return;
+                            Object task = XposedHelpers.callMethod(param.args[1], "getTask");
+                            if (task == null) return;
+                            Object taskExt = XposedHelpers.callMethod(
+                                    XposedHelpers.callMethod(task, "getWrapper"), "getExtImpl");
+                            int launchScenario = ((Number) XposedHelpers.callMethod(
+                                    taskExt, "getLaunchScenario")).intValue();
+                            if (launchScenario != 1 && launchScenario != 2) return;
+
+                            Object stateExt = XposedHelpers.callMethod(
+                                    XposedHelpers.callMethod(param.getResult(), "getWrapper"),
+                                    "getExtImpl");
+                            Object source = XposedHelpers.callMethod(stateExt, "peekDefaultSource",
+                                    WindowInsets.Type.statusBars());
+                            if (source == null) return;
+                            Object adjustedSource = XposedHelpers.newInstance(
+                                    source.getClass(), source);
+                            Rect originalFrame = new Rect((Rect) XposedHelpers.callMethod(
+                                    adjustedSource, "getFrame"));
+                            Object visibleFrame = XposedHelpers.callMethod(
+                                    adjustedSource, "getVisibleFrame");
+                            Rect legacyVisibleFrame = visibleFrame instanceof Rect
+                                    ? new Rect((Rect) visibleFrame) : originalFrame;
+                            Rect frame = new Rect(originalFrame);
+                            Configuration configuration = (Configuration) XposedHelpers.callMethod(
+                                    task, "getConfiguration");
+                            int compactHeight = Math.max(1, Math.round(
+                                    COMPACT_CAPTION_BAR_HEIGHT_DP
+                                            * configuration.densityDpi / 160f));
+                            if (launchScenario == 1) {
+                                Rect taskBounds = new Rect((Rect) XposedHelpers.callMethod(
+                                        task, "getBounds"));
+                                frame.set(taskBounds.left, taskBounds.top, taskBounds.right,
+                                        taskBounds.top + compactHeight);
+                                // frame 为应用提供 24dp caption inset；legacy visible frame 仍应描述
+                                // 物理状态栏。否则 getWindowVisibleDisplayFrame() 会把任务绝对位置与
+                                // caption 高度重复计入，触发依赖该 API 的应用反复修正自身布局。
+                                XposedHelpers.callMethod(adjustedSource, "setVisibleFrame",
+                                        legacyVisibleFrame);
+                            } else {
+                                if (frame.height() <= compactHeight) return;
+                                frame.bottom = frame.top + compactHeight;
+                            }
+                            XposedHelpers.callMethod(adjustedSource, "setFrame", frame);
+                            // InsetsState 的复制可能与上一帧共享 InsetsSource；直接修改原 source
+                            // 会同时污染新旧状态，使客户端持续收到“变化”并反复重新布局。
+                            XposedHelpers.callMethod(param.getResult(), "addSource", adjustedSource);
+                        }
+                    });
+            if (hooks.isEmpty()) {
+                throw new NoSuchMethodError(windowStateExt.getName()
+                        + "#adjustInsetsStateForFlexibleWindowIfNeed");
+            }
+            log("HOOK OK WindowStateExtImpl status bar insets (compact canvas caption)");
+        } catch (Throwable t) {
+            log("HOOK FAIL compact canvas caption insets: " + Log.getStackTraceString(t));
+        }
+    }
+
+    /**
+     * 悬浮小窗的顶部控制栏由 system_server 的 FlexibleTaskCaptionView 绘制，原始高度也是
+     * 40dp。与画布分屏保持相同的 24dp 高度，并把内部按钮重新居中；同时缩小系统
+     * 上报的顶部栏高度及拖动触摸区，避免透明的旧区域继续拦截应用点击。
+     */
+    public static void hookCompactFlexibleCaptionBar(
+            final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            final Class<?> captionView = XposedHelpers.findClass(
+                    "com.android.server.wm.FlexibleTaskCaptionView", lpparam.classLoader);
+            XC_MethodHook compactLayout = new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    if (!readBoolCached(KEY_SHRINK_CAPTION_BAR_ENABLED, false)
+                            || !(param.thisObject instanceof View)) return;
+                    View root = (View) param.thisObject;
+                    int compactHeight = Math.max(1, Math.round(
+                            COMPACT_CAPTION_BAR_HEIGHT_DP
+                                    * root.getResources().getDisplayMetrics().density));
+                    compactFlexibleCaptionFrame(param.thisObject,
+                            "mToolbarModeFrame", compactHeight);
+                    compactFlexibleCaptionFrame(param.thisObject,
+                            "mSimpleModeFrame", compactHeight);
+                }
+            };
+            XposedBridge.hookAllMethods(captionView, "initCaptionView", compactLayout);
+            // 系统在缩放或切换工具栏模式时会重新写入原始 topMargin。
+            XposedBridge.hookAllMethods(captionView, "scaleToolBarMode", compactLayout);
+
+            final Class<?> captionViewBase = XposedHelpers.findClass(
+                    "com.android.server.wm.FlexibleCaptionView", lpparam.classLoader);
+            XposedBridge.hookAllMethods(captionViewBase, "updateTouchableRegion",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!readBoolCached(KEY_SHRINK_CAPTION_BAR_ENABLED, false)
+                                    || param.args.length == 0
+                                    || !(param.args[0] instanceof android.graphics.Region)
+                                    || !(param.thisObject instanceof View)
+                                    || !Boolean.TRUE.equals(XposedHelpers.callMethod(
+                                            param.thisObject, "isDefaultZoomState"))) return;
+                            View root = (View) param.thisObject;
+                            Object task = XposedHelpers.getObjectField(param.thisObject, "mTask");
+                            Object taskExt = XposedHelpers.callMethod(
+                                    XposedHelpers.callMethod(task, "getWrapper"), "getExtImpl");
+                            float taskScale = ((Number) XposedHelpers.callMethod(
+                                    taskExt, "getScale")).floatValue();
+                            if (taskScale <= 0f) return;
+                            float density = root.getResources().getDisplayMetrics().density;
+                            int compactBottom = Math.max(1, Math.round(
+                                    COMPACT_CAPTION_BAR_HEIGHT_DP * density / taskScale));
+                            int originalBottom = Math.max(compactBottom, Math.round(
+                                    40f * density / taskScale));
+                            android.graphics.Region region = new android.graphics.Region(
+                                    (android.graphics.Region) param.args[0]);
+                            Rect bounds = region.getBounds();
+                            region.op(new Rect(bounds.left, compactBottom,
+                                            bounds.right, originalBottom),
+                                    android.graphics.Region.Op.DIFFERENCE);
+                            param.args[0] = region;
+                        }
+                    });
+
+            final Class<?> touchRegionManager = XposedHelpers.findClass(
+                    "com.android.server.wm.FlexibleCaptionViewTouchRegionMgr",
+                    lpparam.classLoader);
+            XposedBridge.hookAllMethods(touchRegionManager, "updateTouchRegion",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (!readBoolCached(KEY_SHRINK_CAPTION_BAR_ENABLED, false)
+                                    || param.args.length < 6
+                                    || !(param.args[4] instanceof Number)
+                                    || !(param.args[5] instanceof View)) return;
+                            float taskScale = ((Number) param.args[4]).floatValue();
+                            if (taskScale <= 0f) return;
+                            View root = (View) param.args[5];
+                            Rect region = (Rect) XposedHelpers.getObjectField(
+                                    param.thisObject, "mTopHandleMoveRegion");
+                            int bottom = Math.max(1, Math.round(COMPACT_CAPTION_BAR_HEIGHT_DP
+                                    * root.getResources().getDisplayMetrics().density / taskScale));
+                            if (region != null && region.bottom > bottom) region.bottom = bottom;
+                        }
+                    });
+
+            final Class<?> controller = XposedHelpers.findClass(
+                    "com.android.server.wm.FlexibleTaskController", lpparam.classLoader);
+            XposedBridge.hookAllMethods(controller, "getFlexibleTaskTopBarHeight",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (!readBoolCached(KEY_SHRINK_CAPTION_BAR_ENABLED, false)
+                                    || !(param.getResult() instanceof Number)) return;
+                            int oldHeight = ((Number) param.getResult()).intValue();
+                            if (oldHeight <= 0) return;
+                            param.setResult(Math.max(1, Math.round(oldHeight
+                                    * COMPACT_CAPTION_BAR_HEIGHT_DP / 40f)));
+                        }
+                    });
+
+            final Class<?> atmsExt = XposedHelpers.findClass(
+                    "com.android.server.wm.ActivityTaskManagerServiceExtImpl",
+                    lpparam.classLoader);
+            XposedBridge.hookAllMethods(atmsExt, "preBindApplication", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    // 此方法在 AMS/WMS 全局锁内运行，严禁同步查询 ContentProvider。
+                    if (!readBoolCached(KEY_SHRINK_CAPTION_BAR_ENABLED, false)) return;
+                    for (Object arg : param.args) {
+                        if (arg instanceof Bundle) {
+                            // DecorViewExtImpl 否则会把小窗顶部 inset 强制恢复成 40dp。
+                            ((Bundle) arg).remove("notSupportZoomFullBar");
+                            break;
+                        }
+                    }
+                }
+            });
+
+            log("HOOK OK FlexibleTaskCaptionView (compact floating caption bar)");
+        } catch (Throwable t) {
+            log("HOOK FAIL compact floating caption bar: " + Log.getStackTraceString(t));
+        }
+    }
+
+    private static void compactFlexibleCaptionFrame(Object captionView, String fieldName,
+                                                    int compactHeight) {
+        Object value = XposedHelpers.getObjectField(captionView, fieldName);
+        if (!(value instanceof ViewGroup)) return;
+        ViewGroup frame = (ViewGroup) value;
+        ViewGroup.LayoutParams layoutParams = frame.getLayoutParams();
+        if (layoutParams == null) return;
+        if (layoutParams.height > compactHeight) {
+            layoutParams.height = compactHeight;
+            frame.setLayoutParams(layoutParams);
+        }
+        for (int i = 0; i < frame.getChildCount(); i++) {
+            View child = frame.getChildAt(i);
+            ViewGroup.LayoutParams childParams = child.getLayoutParams();
+            if (!(childParams instanceof FrameLayout.LayoutParams)) continue;
+            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) childParams;
+            int gravity = params.gravity == -1 ? Gravity.TOP | Gravity.START : params.gravity;
+            gravity = (gravity & ~Gravity.VERTICAL_GRAVITY_MASK) | Gravity.CENTER_VERTICAL;
+            int height = params.height;
+            int width = params.width;
+            // 高度缩小时宽度也必须按原始比例缩放，否则 ImageView 的 fitXY
+            // 会把图标和按下背景横向拉伸。固定布局尺寸优先，wrap_content
+            // 则使用 drawable 的固有尺寸（例如高亮背景原本为 100x28dp）。
+            int originalHeight = height;
+            int originalWidth = width;
+            if (child instanceof ImageView) {
+                Drawable drawable = ((ImageView) child).getDrawable();
+                if (drawable != null) {
+                    if (originalHeight <= 0) originalHeight = drawable.getIntrinsicHeight();
+                    if (originalWidth <= 0) originalWidth = drawable.getIntrinsicWidth();
+                }
+            }
+            if (originalHeight > compactHeight && originalHeight > 0 && originalWidth > 0) {
+                height = compactHeight;
+                width = Math.max(1, Math.round(originalWidth
+                        * (compactHeight / (float) originalHeight)));
+            }
+            if (params.gravity == gravity && params.topMargin == 0
+                    && params.bottomMargin == 0 && params.height == height
+                    && params.width == width) continue;
+            // translationY 不参与测量：原 28dp 的 wrap_content 高亮背景在 24dp 父栏中
+            // 扣除 10dp topMargin 后只剩 14dp，继续上移会与三个点错位。改用真实布局
+            // 居中，让背景和图标共享中心；宽高同步缩放，保持原始长宽比。
+            params.gravity = gravity;
+            params.topMargin = 0;
+            params.bottomMargin = 0;
+            params.height = height;
+            params.width = width;
+            child.setLayoutParams(params);
+        }
+    }
 
     /**
      * 监听 WindowManagerService 的窗口增删与重新布局。第三方悬浮窗在应用进程创建，

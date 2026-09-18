@@ -15,11 +15,25 @@ import android.net.Uri;
 // 设置存于设备加密(DE)存储: 开机到首次解锁前(Direct Boot)CE 存储尚未挂载, 读 CE 只会拿到空设置,
 // 而 SystemUI 正是在锁定态启动的 —— 默认值一旦被初始化期的 hook 固化, 用完密钥解锁也不会纠正,
 // 表现为"重启后模块失效, 重启作用域才恢复"。故 provider 声明为 directBootAware 并统一走 DE 存储。
+//
+// 设置写入方(MainActivity / XposedSettings 中的 setBool/setInt)在写入 SharedPreferences 后,
+// 应调用 notifySettingsChanged(context) 来通知各被 hook 进程的 ContentObserver 主动刷新,
+// 替换原有的每 5 秒固定轮询。
 public class SettingsProvider extends ContentProvider {
     public static final String AUTHORITY = "com.rikumi.colorosmod.settings";
     public static final String PREF_NAME = "settings";
     // 一次性取回全部设置的特殊键, 供被 hook 进程后台预热(见 XposedInit#startSettingsLoader)。
     public static final String KEY_ALL = "__all__";
+    // ContentObserver push 用的通知 URI: write side 的 setBool/setInt 写入后通知此 URI,
+    // 各被 hook 进程的 ContentObserver.onChange 随即重新拉取全量。
+    public static final Uri NOTIFY_URI = Uri.parse("content://" + AUTHORITY + "/" + KEY_ALL);
+
+    // 在设置写入方(setBool/setInt)写入 SharedPreferences 后调用, push 变更给所有注册了
+    // ContentObserver 的被 hook 进程。通知是快照刷新的唯一触发通道，失败必须向调用方
+    // 传播，不能在设置已写入但宿主仍持有旧快照时静默返回成功。
+    public static void notifySettingsChanged(Context context) {
+        context.getContentResolver().notifyChange(NOTIFY_URI, null);
+    }
 
     @Override
     public boolean onCreate() {

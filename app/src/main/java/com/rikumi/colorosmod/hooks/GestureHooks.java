@@ -305,6 +305,14 @@ public final class GestureHooks {
                     int.class, int.class, int.class, boolean.class, new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam param) {
                             try {
+                                Object navView = XposedHelpers.getObjectField(param.thisObject, "mView");
+                                if (!readBool(KEY_GESTURE_TOUCH_THROUGH_ENABLED, false)) {
+                                    sImeVisible = false;
+                                    if (navView instanceof android.view.View) {
+                                        removeGestureBlockSurfaces((android.view.View) navView);
+                                    }
+                                    return;
+                                }
                                 Object helper = XposedHelpers.getObjectField(
                                         param.thisObject, "mNavBarHelper");
                                 Object visible = XposedHelpers.callMethod(
@@ -315,9 +323,8 @@ public final class GestureHooks {
                                     sImeVisible = XposedHelpers.getBooleanField(
                                             param.thisObject, "mImeVisible");
                                 }
-                                Object navView = XposedHelpers.getObjectField(param.thisObject, "mView");
                                 if (navView instanceof android.view.View && sImeVisible) {
-                                    removeGestureBlockSurface((android.view.View) navView);
+                                    removeGestureBlockSurfaces((android.view.View) navView);
                                 }
                             } catch (Throwable ignored) { }
                         }
@@ -337,32 +344,33 @@ public final class GestureHooks {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             try {
-                                Object info = param.args[0];
                                 Object navBar = XposedHelpers.getObjectField(param.thisObject, "f$0");
                                 Object viewObj = XposedHelpers.getObjectField(navBar, "mView");
                                 if (viewObj instanceof android.view.View) {
                                     android.view.View view = (android.view.View) viewObj;
+                                    if (!readBool(KEY_GESTURE_TOUCH_THROUGH_ENABLED, false)) {
+                                        removeGestureBlockSurfaces(view);
+                                        return;
+                                    }
                                     boolean navImeVisible = isImeVisible(view);
                                     try {
                                         navImeVisible = navImeVisible || XposedHelpers.getBooleanField(
                                                 navBar, "mImeVisible");
                                     } catch (Throwable ignored) { }
-                                    syncGestureBlockSurface(view);
                                     if (navImeVisible) {
-                                        Object imeRegion = XposedHelpers.getObjectField(info, "touchableRegion");
-                                        if (imeRegion instanceof android.graphics.Region) {
-                                            ((android.graphics.Region) imeRegion).set(
-                                                    0, 0, view.getWidth(), view.getHeight());
-                                        }
-                                        XposedHelpers.callMethod(info, "setTouchableInsets", 0);
+                                        // IME 与面板沿用 SystemUI 原始 touchable insets；这里只清理
+                                        // 本功能先前创建的拦截层，不能把导航栏窗口改成整块可触摸。
+                                        removeGestureBlockSurfaces(view);
                                         return;
                                     }
+                                    syncGestureBlockSurface(view);
                                     // 通知中心/控制中心展开时保留系统原始区域, 不做任何拦截。
                                     if (!isGestureBlockActive(view)) return;
                                     // 触摸区域决定窗口真正拦截的范围(导航栏窗口实测 179px 高,
                                     // 设成整窗口会挡住底部整条)。只取 mBack 热区顶部到窗口
                                     // 底部这一段; 其上方的事件照旧透传给下层应用。
                                     int topY = computeGestureBandTop(view, getGestureBarHeightPx(view));
+                                    Object info = param.args[0];
                                     Object regionObj = XposedHelpers.getObjectField(info, "touchableRegion");
                                     if (regionObj instanceof android.graphics.Region) {
                                         ((android.graphics.Region) regionObj).set(
@@ -370,6 +378,8 @@ public final class GestureHooks {
                                     }
                                     // TOUCHABLE_INSETS_REGION = 3
                                     XposedHelpers.callMethod(info, "setTouchableInsets", 3);
+                                    XposedHelpers.setAdditionalInstanceField(view,
+                                            "gesture_block_insets_applied", Boolean.TRUE);
                                 }
                             } catch (Throwable t) {
                                 dbg("gesture touch-through region error: " + t);
@@ -390,6 +400,10 @@ public final class GestureHooks {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             android.view.View handle = (android.view.View) param.thisObject;
+                            if (!readBool(KEY_GESTURE_TOUCH_THROUGH_ENABLED, false)) {
+                                removeGestureBlockSurfaces(handle);
+                                return;
+                            }
                             rememberGestureBarHeight(handle);
                             syncGestureBlockSurface(handle);
                         }
@@ -419,7 +433,7 @@ public final class GestureHooks {
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
-                            removeGestureBlockSurface((android.view.View) param.thisObject);
+                            removeGestureBlockSurfaces((android.view.View) param.thisObject);
                         }
                     });
         } catch (Throwable t) {
@@ -438,6 +452,10 @@ public final class GestureHooks {
                                 android.view.View navBarView = (android.view.View) param.thisObject;
                                 android.view.View handle = findHandleInTree(navBarView);
                                 if (handle == null) return;
+                                if (!readBool(KEY_GESTURE_TOUCH_THROUGH_ENABLED, false)) {
+                                    removeGestureBlockSurfaces(navBarView);
+                                    return;
+                                }
                                 syncGestureBlockSurface(handle);
                                 // 触发一次 traversal 让 touchableRegion 按新状态重算。
                                 navBarView.requestLayout();
@@ -549,6 +567,10 @@ public final class GestureHooks {
     }
 
     static GestureBlockSurface ensureGestureBlockSurface(android.view.View handle) {
+        if (!readBool(KEY_GESTURE_TOUCH_THROUGH_ENABLED, false)) {
+            removeGestureBlockSurfaces(handle);
+            return null;
+        }
         Object existing = XposedHelpers.getAdditionalInstanceField(handle, "gesture_block_surface");
         if (existing instanceof GestureBlockSurface) {
             ((GestureBlockSurface) existing).update();
@@ -577,6 +599,10 @@ public final class GestureHooks {
     }
 
     static void updateGestureBlockSurface(android.view.View handle) {
+        if (!isGestureBlockActive(handle)) {
+            removeGestureBlockSurfaces(handle);
+            return;
+        }
         Object surface = XposedHelpers.getAdditionalInstanceField(handle, "gesture_block_surface");
         if (surface instanceof GestureBlockSurface) {
             ((GestureBlockSurface) surface).update();
@@ -641,7 +667,7 @@ public final class GestureHooks {
             ensureGestureBlockSurface(handle);
         } else if (XposedHelpers.getAdditionalInstanceField(
                 handle, "gesture_block_surface") != null) {
-            removeGestureBlockSurface(handle);
+            removeGestureBlockSurfaces(handle);
         }
     }
 
@@ -654,6 +680,23 @@ public final class GestureHooks {
             }
         }
         XposedHelpers.setAdditionalInstanceField(handle, "gesture_block_surface", null);
+    }
+
+    static void removeGestureBlockSurfaces(android.view.View view) {
+        android.view.View current = view;
+        while (current != null) {
+            removeGestureBlockSurface(current);
+            if (XposedHelpers.getAdditionalInstanceField(
+                    current, "gesture_block_insets_applied") != null) {
+                XposedHelpers.setAdditionalInstanceField(
+                        current, "gesture_block_insets_applied", null);
+                if (current.isAttachedToWindow()) current.requestLayout();
+            }
+            android.view.ViewParent parent = current.getParent();
+            current = parent instanceof android.view.View ? (android.view.View) parent : null;
+        }
+        android.view.View handle = findHandleInTree(view.getRootView());
+        if (handle != null) removeGestureBlockSurface(handle);
     }
 
     static void handleMBackTouch(final android.view.View handle,
