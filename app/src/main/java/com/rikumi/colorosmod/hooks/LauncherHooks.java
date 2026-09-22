@@ -81,6 +81,13 @@ public final class LauncherHooks {
     private static final float RECENTS_TASK_BORDER_WIDTH_DP = 1f;
     private static final Paint sRecentsTaskBorderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
+    // 最近任务壁纸模糊的混色临时清零/恢复: setBlur 用 mBlurBlendColor * blur 构造 COLORMIX
+    // 混色, 是背景发灰/提亮的来源; 仅在进入/处于最近任务的那次 setBlur 里清零, 调用后恢复。
+    private static final String EXTRA_RECENTS_BLEND = "recentsBlendColor";
+    private static final float[] RECENTS_CLEAR_BLEND = new float[]{0f, 0f, 0f, 0f};
+    // 手势进入最近任务期间保存的原始混色: doBackGroundAnim(true) 清零, doBackGroundAnim(false) 恢复。
+    private static volatile float[] sRecentsSavedBlend;
+
     // 缩小桌面图标长按菜单。该菜单尺寸由布局与主题属性决定, 不在运行时经 Resources.getDimension* 解析
     // (实测长按时无相关 dimen 被读取), 故资源钩子无效; 改为监听菜单根容器 deep_shortcuts_container 的
     // onAttachedToWindow, 对内部卡片容器做整体 scaleX/scaleY。
@@ -997,25 +1004,13 @@ public final class LauncherHooks {
         }
     }
 
-    // 多任务背景由多条链路组成：OverviewState#getBlurUnchecked 固定返回 1 驱动壁纸 blur 与混色;
-    // 上滑手势过渡经 SwipeToRecentAnimationHelper#doBackGroundAnim 把 blur 硬编码驱动到 1.0f;
-    // OplusDepthController#setBlur 收口兜底; 动态 blur 不可用时 OplusOverviewScrim 再绘纯色遮罩。
+    // 多任务背景保留壁纸模糊, 但去掉两处"变灰/提亮"的来源: 一是 OplusDepthController#setBlur
+    // 里用 mBlurBlendColor(深蓝灰) 注入的 COLORMIX 混色, 二是动态 blur 不可用时 OplusOverviewScrim
+    // 绘制的纯色遮罩回退。混色只在进入/处于最近任务时临时清零, 调用结束即恢复, 不影响其它场景。
     // 截图由 OplusTaskThumbnailViewImpl 以平滑圆角 Path 绘制；复用该 Path 仅为截图区域描边，
     // 并与系统的各角形状、动画裁切范围完全一致。
     public static void hookRecentsBackgroundTransparent(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            Class<?> overviewStateClass = XposedHelpers.findClass(
-                    "com.android.launcher3.uioverrides.states.OverviewState", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(overviewStateClass, "getBlurUnchecked", Context.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            if (readBool(KEY_RECENTS_BG_TRANSPARENT_ENABLED, false)) {
-                                param.setResult(0f);
-                            }
-                        }
-                    });
-
             Class<?> overviewScrimClass = XposedHelpers.findClass(
                     "com.android.launcher3.graphics.OplusOverviewScrim", lpparam.classLoader);
             XC_MethodHook clearScrim = new XC_MethodHook() {
@@ -1031,9 +1026,8 @@ public final class LauncherHooks {
             XposedHelpers.findAndHookMethod(overviewScrimClass, "setScrimProgress", float.class,
                     int.class, clearScrim);
 
-            // 上滑手势进入最近任务的过渡动画不经过状态目标值: SwipeToRecentAnimationHelper
-            // 经 DepthAnimImpl 把壁纸 blur 直接驱动到硬编码的 1.0f(doBackGroundAnim), 只 hook
-            // getBlurUnchecked 拦不住。这里再收口一次 setBlur, 仅当正在进入/处于最近任务时置 0。
+            // 保留模糊本身(blur 半径), 只把模糊附带的混色清零: setBlur 内部用
+            // mBlurBlendColor * blur 构造 COLORMIX 混色, 是背景发灰/提亮的根源。
             Class<?> depthClass = XposedHelpers.findClass(
                     "com.android.launcher3.uioverrides.states.OplusDepthController", lpparam.classLoader);
             XposedHelpers.findAndHookMethod(depthClass, "setBlur", float.class, boolean.class,
@@ -1044,36 +1038,61 @@ public final class LauncherHooks {
                             try {
                                 Object launcher = XposedHelpers.getObjectField(
                                         param.thisObject, "mLauncher");
-                                if (launcher == null) return;
-                                if (isLauncherInOverview(launcher, lpparam.classLoader)) {
-                                    param.args[0] = 0f;
+                                if (launcher == null
+                                        || !isLauncherInOverview(launcher, lpparam.classLoader)) {
+                                    return;
                                 }
+                                float[] blend = (float[]) XposedHelpers.getObjectField(
+                                        param.thisObject, "mBlurBlendColor");
+                                param.setObjectExtra(EXTRA_RECENTS_BLEND, blend.clone());
+                                System.arraycopy(RECENTS_CLEAR_BLEND, 0, blend, 0, blend.length);
                             } catch (Throwable t) {
-                                log("recents bg blur hook error: " + t);
+                                log("recents bg blend hook error: " + t);
+                            }
+                        }
+
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            Object saved = param.getObjectExtra(EXTRA_RECENTS_BLEND);
+                            if (saved == null) return;
+                            try {
+                                float[] blend = (float[]) XposedHelpers.getObjectField(
+                                        param.thisObject, "mBlurBlendColor");
+                                System.arraycopy((float[]) saved, 0, blend, 0, blend.length);
+                            } catch (Throwable ignored) {
                             }
                         }
                     });
 
-            // 手势停顿进入最近任务(updatePaused(true))会先驱动 blur 动画, 而 goToState(OVERVIEW)
-            // 尚未执行, 此时 setBlur 的状态判定不成立。doBackGroundAnim(true) 是手势 blur 的唯一
-            // 硬编码驱动点, 在它把壁纸 blur 目标设成 1.0f 后立即改回 0。
+            // 手势进入最近任务时(doBackGroundAnim(true)), blur 动画在 goToState(OVERVIEW) 之前
+            // 就已启动, setBlur 的状态判定来不及生效; 直接在 blur 驱动入口把混色清零, 返回桌面
+            // (doBackGroundAnim(false)) 再恢复, 覆盖手势停顿与松手后的整个过渡阶段。
             Class<?> swipeHelperClass = XposedHelpers.findClass(
                     "com.android.quickstep.touch.SwipeToRecentAnimationHelper", lpparam.classLoader);
             XposedHelpers.findAndHookMethod(swipeHelperClass, "doBackGroundAnim", boolean.class,
                     new XC_MethodHook() {
                         @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            if (!readBool(KEY_RECENTS_BG_TRANSPARENT_ENABLED, false)
-                                    || !(Boolean) param.args[0]) return;
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!readBool(KEY_RECENTS_BG_TRANSPARENT_ENABLED, false)) return;
                             try {
-                                Object blurAnim = XposedHelpers.getObjectField(
-                                        param.thisObject, "mWallpaperBlurAnim");
-                                if (blurAnim != null) {
-                                    XposedHelpers.callMethod(blurAnim,
-                                            "animateToFinalPosition", 0f);
+                                Object depthController = XposedHelpers.getObjectField(
+                                        param.thisObject, "mDepthController");
+                                if (depthController == null) return;
+                                float[] blend = (float[]) XposedHelpers.getObjectField(
+                                        depthController, "mBlurBlendColor");
+                                if ((Boolean) param.args[0]) {
+                                    if (sRecentsSavedBlend == null) {
+                                        sRecentsSavedBlend = blend.clone();
+                                    }
+                                    System.arraycopy(RECENTS_CLEAR_BLEND, 0, blend, 0,
+                                            blend.length);
+                                } else if (sRecentsSavedBlend != null) {
+                                    System.arraycopy(sRecentsSavedBlend, 0, blend, 0,
+                                            blend.length);
+                                    sRecentsSavedBlend = null;
                                 }
                             } catch (Throwable t) {
-                                log("recents swipe blur hook error: " + t);
+                                log("recents swipe blend hook error: " + t);
                             }
                         }
                     });
@@ -1089,7 +1108,7 @@ public final class LauncherHooks {
                                     (Canvas) param.args[0]);
                         }
                     });
-            log("HOOK OK launcher OverviewState/SwipeToRecentAnimationHelper/OplusDepthController/"
+            log("HOOK OK launcher OplusDepthController/SwipeToRecentAnimationHelper/"
                     + "OplusOverviewScrim/OplusTaskThumbnailViewImpl (transparent recents bg)");
         } catch (Throwable t) {
             log("HOOK FAIL launcher transparent recents bg: " + Log.getStackTraceString(t));
