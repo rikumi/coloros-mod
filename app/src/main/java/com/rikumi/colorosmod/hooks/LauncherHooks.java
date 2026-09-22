@@ -13,8 +13,12 @@ import android.util.Log;
 import android.util.Property;
 
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.RenderEffect;
+import android.graphics.RectF;
 import android.graphics.Shader;
 import android.text.TextUtils;
 import android.view.View;
@@ -69,6 +73,13 @@ public final class LauncherHooks {
     static volatile Object sNormalState;
 
     static volatile Object sBackgroundAppState;
+
+    static volatile Object sOverviewState;
+
+    // 多任务背景遮罩关闭后，用极浅白色边框保持深色壁纸上任务卡片的可分辨性。
+    private static final int RECENTS_TASK_BORDER_COLOR = 0x1AFFFFFF;
+    private static final float RECENTS_TASK_BORDER_WIDTH_DP = 1f;
+    private static final Paint sRecentsTaskBorderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     // 缩小桌面图标长按菜单。该菜单尺寸由布局与主题属性决定, 不在运行时经 Resources.getDimension* 解析
     // (实测长按时无相关 dimen 被读取), 故资源钩子无效; 改为监听菜单根容器 deep_shortcuts_container 的
@@ -350,6 +361,8 @@ public final class LauncherHooks {
 
         // Feature 4 — 多任务显示隐藏应用: 始终注入, 运行时按 KEY_RECENTS_SHOW_HIDDEN_ENABLED 门控。
         hookRecentsShowHidden(lpparam);
+        // 多任务背景遮罩: 同时处理动态 blur、纯色 scrim 回退与任务卡片边框。
+        hookRecentsBackgroundTransparent(lpparam);
         // Feature 19 — 多任务不显示小窗应用: 始终注入, 运行时按 KEY_RECENTS_HIDE_FREEFORM_ENABLED 门控。
         hookRecentsHideFreeform(lpparam);
         // 多任务隐藏未在运行的应用: 始终注入, 运行时按 KEY_RECENTS_HIDE_NOT_RUNNING_ENABLED 门控。
@@ -653,9 +666,42 @@ public final class LauncherHooks {
                             }
                         }
                     });
+            // 从最近任务返回桌面时，文件夹仍保持打开：setState 会再次把目标 blur 算作 1.0，
+            // 但若进入最近任务时 mBlur 已经是 1.0，它不会调用 setBlur，导致文件夹页面保留遮罩。
+            // 在 NORMAL 状态切换完成后显式归零，覆盖有动画和无动画两条状态切换路径。
+            Class<?> launcherStateClass = XposedHelpers.findClass(
+                    "com.android.launcher3.LauncherState", lpparam.classLoader);
+            Class<?> stateConfigClass = XposedHelpers.findClass(
+                    "com.android.launcher3.states.StateAnimationConfig", lpparam.classLoader);
+            Class<?> pendingAnimationClass = XposedHelpers.findClass(
+                    "com.android.launcher3.anim.PendingAnimation", lpparam.classLoader);
+            XC_MethodHook clearOnWorkspaceReturn = new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    clearFolderBgBlurOnWorkspaceReturn(param.thisObject, param.args[0],
+                            lpparam.classLoader);
+                }
+            };
+            XposedHelpers.findAndHookMethod(depthClass, "setState", launcherStateClass,
+                    clearOnWorkspaceReturn);
+            XposedHelpers.findAndHookMethod(depthClass, "setStateWithAnimation", launcherStateClass,
+                    stateConfigClass, pendingAnimationClass, clearOnWorkspaceReturn);
             log("HOOK OK launcher OplusDepthController#setBlur (transparent folder bg)");
         } catch (Throwable t) {
             log("HOOK FAIL launcher OplusDepthController#setBlur: " + t);
+        }
+    }
+
+    private static void clearFolderBgBlurOnWorkspaceReturn(Object depthController, Object targetState,
+            ClassLoader cl) {
+        try {
+            if (!readBool(KEY_FOLDER_BG_TRANSPARENT_ENABLED, false)
+                    || targetState != launcherNormalState(cl)) return;
+            Object launcher = XposedHelpers.getObjectField(depthController, "mLauncher");
+            if (launcher == null || !isLauncherFolderOpen(launcher, cl)) return;
+            XposedHelpers.callMethod(depthController, "setBlur", 0f, false);
+        } catch (Throwable t) {
+            log("folder bg blur workspace return error: " + t);
         }
     }
 
@@ -670,6 +716,15 @@ public final class LauncherHooks {
         if (state == null) state = launcherCurrentState(launcher);
         if (state == null) return false;
         return state == launcherNormalState(cl);
+    }
+
+    // 桌面是否停在/正在前往最近任务(OVERVIEW)。上滑手势进入最近任务的过渡期间,
+    // target 已由 StateManager#goToState(OVERVIEW) 写入, 手势驱动 setBlur 前一刻即生效。
+    static boolean isLauncherInOverview(Object launcher, ClassLoader cl) {
+        Object state = launcherTargetState(cl);
+        if (state == null) state = launcherCurrentState(launcher);
+        if (state == null) return false;
+        return state == launcherOverviewState(cl);
     }
 
     // 桌面是否正在进入后台(BACKGROUND_APP: 从文件夹启动应用, 或按 Home 离开桌面)。
@@ -715,6 +770,21 @@ public final class LauncherHooks {
                 sNormalState = XposedHelpers.getStaticObjectField(sLauncherStateClass, "NORMAL");
             }
             return sNormalState;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static Object launcherOverviewState(ClassLoader cl) {
+        try {
+            if (sLauncherStateClass == null) {
+                sLauncherStateClass = XposedHelpers.findClass(
+                        "com.android.launcher3.LauncherState", cl);
+            }
+            if (sOverviewState == null) {
+                sOverviewState = XposedHelpers.getStaticObjectField(sLauncherStateClass, "OVERVIEW");
+            }
+            return sOverviewState;
         } catch (Throwable t) {
             return null;
         }
@@ -924,6 +994,122 @@ public final class LauncherHooks {
             return XposedHelpers.callStaticMethod(sAbstractFloatingViewClass, "getOpenFolder", launcher) != null;
         } catch (Throwable t) {
             return false;
+        }
+    }
+
+    // 多任务背景由多条链路组成：OverviewState#getBlurUnchecked 固定返回 1 驱动壁纸 blur 与混色;
+    // 上滑手势过渡经 SwipeToRecentAnimationHelper#doBackGroundAnim 把 blur 硬编码驱动到 1.0f;
+    // OplusDepthController#setBlur 收口兜底; 动态 blur 不可用时 OplusOverviewScrim 再绘纯色遮罩。
+    // 截图由 OplusTaskThumbnailViewImpl 以平滑圆角 Path 绘制；复用该 Path 仅为截图区域描边，
+    // 并与系统的各角形状、动画裁切范围完全一致。
+    public static void hookRecentsBackgroundTransparent(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> overviewStateClass = XposedHelpers.findClass(
+                    "com.android.launcher3.uioverrides.states.OverviewState", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(overviewStateClass, "getBlurUnchecked", Context.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (readBool(KEY_RECENTS_BG_TRANSPARENT_ENABLED, false)) {
+                                param.setResult(0f);
+                            }
+                        }
+                    });
+
+            Class<?> overviewScrimClass = XposedHelpers.findClass(
+                    "com.android.launcher3.graphics.OplusOverviewScrim", lpparam.classLoader);
+            XC_MethodHook clearScrim = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    if (readBool(KEY_RECENTS_BG_TRANSPARENT_ENABLED, false)) {
+                        param.args[0] = 0f;
+                    }
+                }
+            };
+            XposedHelpers.findAndHookMethod(overviewScrimClass, "setScrimProgress", float.class,
+                    clearScrim);
+            XposedHelpers.findAndHookMethod(overviewScrimClass, "setScrimProgress", float.class,
+                    int.class, clearScrim);
+
+            // 上滑手势进入最近任务的过渡动画不经过状态目标值: SwipeToRecentAnimationHelper
+            // 经 DepthAnimImpl 把壁纸 blur 直接驱动到硬编码的 1.0f(doBackGroundAnim), 只 hook
+            // getBlurUnchecked 拦不住。这里再收口一次 setBlur, 仅当正在进入/处于最近任务时置 0。
+            Class<?> depthClass = XposedHelpers.findClass(
+                    "com.android.launcher3.uioverrides.states.OplusDepthController", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(depthClass, "setBlur", float.class, boolean.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!readBool(KEY_RECENTS_BG_TRANSPARENT_ENABLED, false)) return;
+                            try {
+                                Object launcher = XposedHelpers.getObjectField(
+                                        param.thisObject, "mLauncher");
+                                if (launcher == null) return;
+                                if (isLauncherInOverview(launcher, lpparam.classLoader)) {
+                                    param.args[0] = 0f;
+                                }
+                            } catch (Throwable t) {
+                                log("recents bg blur hook error: " + t);
+                            }
+                        }
+                    });
+
+            // 手势停顿进入最近任务(updatePaused(true))会先驱动 blur 动画, 而 goToState(OVERVIEW)
+            // 尚未执行, 此时 setBlur 的状态判定不成立。doBackGroundAnim(true) 是手势 blur 的唯一
+            // 硬编码驱动点, 在它把壁纸 blur 目标设成 1.0f 后立即改回 0。
+            Class<?> swipeHelperClass = XposedHelpers.findClass(
+                    "com.android.quickstep.touch.SwipeToRecentAnimationHelper", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(swipeHelperClass, "doBackGroundAnim", boolean.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (!readBool(KEY_RECENTS_BG_TRANSPARENT_ENABLED, false)
+                                    || !(Boolean) param.args[0]) return;
+                            try {
+                                Object blurAnim = XposedHelpers.getObjectField(
+                                        param.thisObject, "mWallpaperBlurAnim");
+                                if (blurAnim != null) {
+                                    XposedHelpers.callMethod(blurAnim,
+                                            "animateToFinalPosition", 0f);
+                                }
+                            } catch (Throwable t) {
+                                log("recents swipe blur hook error: " + t);
+                            }
+                        }
+                    });
+
+            Class<?> thumbnailViewClass = XposedHelpers.findClass(
+                    "com.android.quickstep.views.OplusTaskThumbnailViewImpl", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(thumbnailViewClass, "drawOnCanvas", Canvas.class,
+                    float.class, float.class, float.class, float.class, float.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            drawRecentsTaskScreenshotBorder(param.thisObject,
+                                    (Canvas) param.args[0]);
+                        }
+                    });
+            log("HOOK OK launcher OverviewState/SwipeToRecentAnimationHelper/OplusDepthController/"
+                    + "OplusOverviewScrim/OplusTaskThumbnailViewImpl (transparent recents bg)");
+        } catch (Throwable t) {
+            log("HOOK FAIL launcher transparent recents bg: " + Log.getStackTraceString(t));
+        }
+    }
+
+    private static void drawRecentsTaskScreenshotBorder(Object thumbnailView, Canvas canvas) {
+        if (!readBool(KEY_RECENTS_BG_TRANSPARENT_ENABLED, false)
+                || thumbnailView == null || canvas == null) return;
+        try {
+            Object path = XposedHelpers.getObjectField(thumbnailView, "drawPath");
+            if (!(path instanceof Path)) {
+                return;
+            }
+            sRecentsTaskBorderPaint.setStyle(Paint.Style.STROKE);
+            sRecentsTaskBorderPaint.setStrokeWidth(RECENTS_TASK_BORDER_WIDTH_DP * readDensity());
+            sRecentsTaskBorderPaint.setColor(RECENTS_TASK_BORDER_COLOR);
+            canvas.drawPath((Path) path, sRecentsTaskBorderPaint);
+        } catch (Throwable ignored) {
+            // 截图路径尚未初始化时跳过当前帧，避免干扰系统原有绘制。
         }
     }
 

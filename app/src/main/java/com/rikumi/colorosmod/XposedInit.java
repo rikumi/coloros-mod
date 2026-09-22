@@ -213,6 +213,11 @@ public class XposedInit extends XposedModule {
     // 多任务上划彻底结束进程: 上划卡片时系统只以 type=13(STOP) 请求 athena 停止任务,
     // 开启后改成 type=11(KILL_OR_STOP) 真正杀掉进程(见 LauncherHooks#hookRecentsSwipeUpKill)。
     public static final String KEY_RECENTS_SWIPE_UP_KILL_ENABLED = "recents_swipe_up_kill_enabled";
+    // 去除多任务背景遮罩: OverviewState 的 blur=1 会给壁纸加模糊及混色;
+    // OplusOverviewScrim 是动态模糊不可用时的纯色回退。见 LauncherHooks
+    // #hookRecentsBackgroundTransparent。
+    public static final String KEY_RECENTS_BG_TRANSPARENT_ENABLED =
+            "recents_bg_transparent_enabled";
     // 多任务隐藏未在运行的应用: 只保留还在运行的任务卡片。判据是 android.app.TaskInfo#isRunning
     // (PUBLIC boolean, system_server 侧 Task#fillTaskInfo 里 info.isRunning = (top != null),
     //  即任务是否还有存活的 Activity), 见 LauncherHooks#hookRecentsHideNotRunning。
