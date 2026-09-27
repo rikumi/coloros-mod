@@ -234,20 +234,34 @@ public final class StatusBarLyricHooks {
 
 
 
-    /** Capture only the host-owned status bar root for API 102 cross-generation handoff. */
+    /** Capture the host-owned status bar root and panel state for cross-generation handoff. */
     public static Object captureHotReloadHost() {
-        return sStatusBarRoot;
+        return new Object[] { sStatusBarRoot, Boolean.valueOf(sPanelExpanded) };
     }
 
     /** Rebind the new generation after hooks are installed. */
     public static void restoreHotReloadHost(Object host) {
-        if (!(host instanceof FrameLayout)) return;
-        final FrameLayout root = (FrameLayout) host;
+        final FrameLayout root;
+        final boolean panelExpanded;
+        if (host instanceof FrameLayout) {
+            // Compatibility with state saved by an older generation.
+            root = (FrameLayout) host;
+            panelExpanded = false;
+        } else if (host instanceof Object[]) {
+            Object[] state = (Object[]) host;
+            if (state.length < 1 || !(state[0] instanceof FrameLayout)) return;
+            root = (FrameLayout) state[0];
+            panelExpanded = state.length > 1 && Boolean.TRUE.equals(state[1]);
+        } else {
+            return;
+        }
         Runnable restore = new Runnable() {
             @Override public void run() {
                 try {
                     if (!root.isAttachedToWindow()) return;
+                    sPanelExpanded = panelExpanded;
                     attachLyricView(root);
+                    setLyricHiddenForPanel(panelExpanded);
                     initMediaListener(root.getContext());
                 } catch (Throwable t) {
                     log("statusbar_lyric restore failed: " + t);
@@ -322,6 +336,7 @@ public final class StatusBarLyricHooks {
         for (MediaController controller : new ArrayList<>(sControllersDetachedForHotReload)) {
             try {
                 controller.registerCallback(sControllerCallback, main);
+                sRegistered.add(controller);
                 sControllersDetachedForHotReload.remove(controller);
             } catch (Throwable t) {
                 log("statusbar_lyric controller rollback failed: " + t);
