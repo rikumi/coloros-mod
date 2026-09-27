@@ -48,6 +48,8 @@ public class XposedInit extends XposedModule {
     private static volatile boolean sIsSystemServer = false;
     private static volatile boolean sSystemServerHooked = false;
     private static volatile boolean sAppProcessHooked = false;
+    /** Host-owned loader supplied by SystemServerStartingParam; hot-reload worker threads differ. */
+    private static volatile ClassLoader sSystemServerClassLoader = null;
     /** Package whose hooks were actually installed; process names may include a custom suffix. */
     private static volatile String sHookedPackageName = "";
 
@@ -808,7 +810,7 @@ public class XposedInit extends XposedModule {
             return false;
         }
         try {
-            Object[] state = new Object[8];
+            Object[] state = new Object[9];
             state[0] = StatusBarLyricHooks.captureHotReloadHost();
             state[1] = NotificationHooks.captureHotReloadHost();
             state[2] = SystemServerHooks.captureHotReloadHost();
@@ -817,6 +819,7 @@ public class XposedInit extends XposedModule {
             state[5] = NotificationHooks.captureHotReloadViews();
             state[6] = LauncherHooks.captureHotReloadHosts();
             state[7] = AncTileHooks.captureHotReloadHosts();
+            state[8] = sSystemServerClassLoader;
             param.setSavedInstanceState(state);
         } catch (Throwable t) {
             cancelProcessPreflight();
@@ -874,6 +877,13 @@ public class XposedInit extends XposedModule {
         // 重要: HotReloadedParam 就是 ModuleLoadedParam 的子类, 恢复进程身份, 否则新 hooks 挂不上。
         sProcessName = param.getProcessName();
         sIsSystemServer = param.isSystemServer();
+        Object savedState = param.getSavedInstanceState();
+        if (sIsSystemServer && savedState instanceof Object[]) {
+            Object[] state = (Object[]) savedState;
+            if (state.length > 8 && state[8] instanceof ClassLoader) {
+                sSystemServerClassLoader = (ClassLoader) state[8];
+            }
+        }
         log("onHotReloaded: process=" + sProcessName + " isSystemServer=" + sIsSystemServer);
 
         // 重新注册 settings observer + worker(新 gen 的 sWorkerThread==null, 可安全重新 start)。
@@ -910,9 +920,8 @@ public class XposedInit extends XposedModule {
             }
         }
         try {
-            Object saved = param.getSavedInstanceState();
-            if (saved instanceof Object[]) {
-                final Object[] state = (Object[]) saved;
+            if (savedState instanceof Object[]) {
+                final Object[] state = (Object[]) savedState;
                 // These restorers only replace Java references and do not touch host Views.
                 try {
                     if (state.length > 1) NotificationHooks.restoreHotReloadHost(state[1]);
@@ -976,8 +985,8 @@ public class XposedInit extends XposedModule {
         lpp.processName = sProcessName;
         // 不能使用 getSystemClassLoader() — Android system_server 有自己的 classloader
         // (从 SYSTEMSERVERCLASSPATH 构建), 由 Zygote 设为 context classloader。
-        // 热重载时也必须沿用 system_server 自己的 context classloader。
-        lpp.classLoader = java.lang.Thread.currentThread().getContextClassLoader();
+        // 热重载发生在框架 worker 上，必须复用启动回调保存的宿主 loader。
+        lpp.classLoader = sSystemServerClassLoader;
         lpp.isFirstApplication = true;
         return lpp;
     }
@@ -1053,6 +1062,7 @@ public class XposedInit extends XposedModule {
     public void onSystemServerStarting(@NonNull SystemServerStartingParam param) {
         if (sSystemServerHooked) return;
         sSystemServerHooked = true;
+        sSystemServerClassLoader = param.getClassLoader();
         XC_LoadPackage.LoadPackageParam lpparam = new XC_LoadPackage.LoadPackageParam();
         lpparam.packageName = "android";
         lpparam.processName = sProcessName;

@@ -260,7 +260,12 @@ public final class StatusBarLyricHooks {
 
     /** Detach fallible external registrations while rollback is still possible. */
     public static synchronized boolean prepareHotReloadListeners() {
-        if (sListenersPreparedForHotReload) return true;
+        // A true flag can also mean a rejected previous reload is still rolling listeners back.
+        // Never treat that mixed registration state as a fresh successful preflight.
+        if (sListenersPreparedForHotReload) {
+            log("statusbar_lyric listener rollback still pending, rejecting reload");
+            return false;
+        }
         sListenersPreparedForHotReload = true;
         try {
             if (sSessionManager != null && sMediaInited) {
