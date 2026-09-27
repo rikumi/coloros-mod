@@ -249,6 +249,27 @@ public final class LauncherHooks {
     private static final float[] RECENTS_CLEAR_BLEND = new float[]{0f, 0f, 0f, 0f};
     // 手势进入最近任务期间保存的原始混色: doBackGroundAnim(true) 清零, doBackGroundAnim(false) 恢复。
     private static volatile float[] sRecentsSavedBlend;
+    private static volatile Object sRecentsSavedDepthController;
+
+    private static final class DrawerIconState {
+        final int paddingLeft;
+        final int paddingTop;
+        final int paddingRight;
+        final int paddingBottom;
+        int iconSize = -1;
+        int layoutHeight = Integer.MIN_VALUE;
+
+        DrawerIconState(android.view.View view) {
+            paddingLeft = view.getPaddingLeft();
+            paddingTop = view.getPaddingTop();
+            paddingRight = view.getPaddingRight();
+            paddingBottom = view.getPaddingBottom();
+        }
+    }
+
+    private static final java.util.Map<Object, DrawerIconState> sDrawerIconStates =
+            java.util.Collections.synchronizedMap(
+                    new java.util.WeakHashMap<Object, DrawerIconState>());
 
     // 缩小桌面图标长按菜单。该菜单尺寸由布局与主题属性决定, 不在运行时经 Resources.getDimension* 解析
     // (实测长按时无相关 dimen 被读取), 故资源钩子无效; 改为监听菜单根容器 deep_shortcuts_container 的
@@ -280,7 +301,9 @@ public final class LauncherHooks {
                                 return;
                             }
                             XposedHelpers.setAdditionalInstanceField(v, "colorosmod_popup_pct", pct);
-                            v.post(() -> scalePopupContainer(v));
+                            postOneShotTrackedCallback(v,
+                                    "colorosmod_popup_scale_callback",
+                                    () -> scalePopupContainer(v));
                         }
                     });
             // "更多功能"的二级菜单属于独立 PopupWindow, 并不在 mAllPopupShortcutContainer 内。
@@ -309,7 +332,9 @@ public final class LauncherHooks {
                                         return;
                                     }
                                     android.view.View wrapper = (android.view.View) parent;
-                                    wrapper.post(() -> scalePopupSubMenu(wrapper, content));
+                                    postOneShotTrackedCallback(wrapper,
+                                            "colorosmod_popup_submenu_callback",
+                                            () -> scalePopupSubMenu(wrapper, content));
                                 } catch (Throwable t) {
                                     log("scale popup submenu failed: " + t);
                                 }
@@ -322,6 +347,28 @@ public final class LauncherHooks {
             log("hooked popup menu scaling");
         } catch (Throwable t) {
             log("hook popup menu container failed: " + t);
+        }
+    }
+
+    private static void postOneShotTrackedCallback(android.view.View owner, String key,
+            Runnable action) {
+        final Runnable[] holder = new Runnable[1];
+        Runnable callback = new Runnable() {
+            @Override public void run() {
+                try {
+                    action.run();
+                } finally {
+                    if (XposedHelpers.getAdditionalInstanceField(owner, key) == holder[0]) {
+                        XposedHelpers.removeAdditionalInstanceField(owner, key);
+                    }
+                }
+            }
+        };
+        holder[0] = callback;
+        XposedHelpers.setAdditionalInstanceField(owner, key, callback);
+        if (!owner.post(callback)
+                && XposedHelpers.getAdditionalInstanceField(owner, key) == callback) {
+            XposedHelpers.removeAdditionalInstanceField(owner, key);
         }
     }
 
@@ -433,7 +480,11 @@ public final class LauncherHooks {
     // 不依赖 COUI 动画控制器的混淆方法名和字段名, 动画结束后也不会持续触发重绘。
     static void syncPopupSubMenuOutline(android.view.View wrapper, android.view.View content,
                                         android.view.ViewOutlineProvider outlineProvider) {
-        content.getViewTreeObserver().addOnPreDrawListener(
+        final java.lang.ref.WeakReference<android.view.View> wrapperRef =
+                new java.lang.ref.WeakReference<>(wrapper);
+        final java.lang.ref.WeakReference<android.view.View> contentRef =
+                new java.lang.ref.WeakReference<>(content);
+        android.view.ViewTreeObserver.OnPreDrawListener listener =
                 new android.view.ViewTreeObserver.OnPreDrawListener() {
                     final android.graphics.Outline outline = new android.graphics.Outline();
                     final android.graphics.Rect currentRect = new android.graphics.Rect();
@@ -443,8 +494,11 @@ public final class LauncherHooks {
 
                     @Override
                     public boolean onPreDraw() {
+                        android.view.View currentWrapper = wrapperRef.get();
+                        android.view.View currentContent = contentRef.get();
+                        if (currentWrapper == null || currentContent == null) return true;
                         outline.setEmpty();
-                        outlineProvider.getOutline(wrapper, outline);
+                        outlineProvider.getOutline(currentWrapper, outline);
                         boolean hasRect = outline.getRect(currentRect);
                         int alpha = Float.floatToIntBits(outline.getAlpha());
                         if (hasRect != hadRect || (hasRect && !currentRect.equals(previousRect))
@@ -452,11 +506,222 @@ public final class LauncherHooks {
                             hadRect = hasRect;
                             previousRect.set(currentRect);
                             previousAlpha = alpha;
-                            content.invalidateOutline();
+                            currentContent.invalidateOutline();
                         }
                         return true;
                     }
+                };
+        content.getViewTreeObserver().addOnPreDrawListener(listener);
+        XposedHelpers.setAdditionalInstanceField(content,
+                "colorosmod_launcher_predraw", listener);
+        android.view.View.OnAttachStateChangeListener detachListener =
+                new android.view.View.OnAttachStateChangeListener() {
+                    @Override public void onViewAttachedToWindow(android.view.View view) { }
+
+                    @Override public void onViewDetachedFromWindow(android.view.View view) {
+                        Object tracked = XposedHelpers.getAdditionalInstanceField(
+                                view, "colorosmod_launcher_predraw");
+                        if (tracked == listener) {
+                            android.view.ViewTreeObserver observer = view.getViewTreeObserver();
+                            if (observer.isAlive()) observer.removeOnPreDrawListener(listener);
+                            XposedHelpers.removeAdditionalInstanceField(
+                                    view, "colorosmod_launcher_predraw");
+                        }
+                        if (XposedHelpers.getAdditionalInstanceField(
+                                view, "colorosmod_launcher_predraw_detach") == this) {
+                            XposedHelpers.removeAdditionalInstanceField(
+                                    view, "colorosmod_launcher_predraw_detach");
+                        }
+                        view.removeOnAttachStateChangeListener(this);
+                    }
+                };
+        content.addOnAttachStateChangeListener(detachListener);
+        XposedHelpers.setAdditionalInstanceField(content,
+                "colorosmod_launcher_predraw_detach", detachListener);
+    }
+
+    public static Object captureHotReloadHosts() {
+        java.util.ArrayList<Object> saved = new java.util.ArrayList<>();
+        synchronized (sDrawerIconStates) {
+            for (java.util.Map.Entry<Object, DrawerIconState> entry : sDrawerIconStates.entrySet()) {
+                Object owner = entry.getKey();
+                if (!(owner instanceof android.view.View)) continue;
+                android.view.View view = (android.view.View) owner;
+                DrawerIconState baseline = entry.getValue();
+                int iconSize = -1;
+                try {
+                    Object size = XposedHelpers.callMethod(owner, "getIconSize");
+                    if (size instanceof Integer) iconSize = (Integer) size;
+                } catch (Throwable ignored) {
+                }
+                android.view.ViewGroup.LayoutParams lp = view.getLayoutParams();
+                int height = lp == null ? Integer.MIN_VALUE : lp.height;
+                saved.add(new Object[] { owner,
+                        Integer.valueOf(view.getPaddingLeft()), Integer.valueOf(view.getPaddingTop()),
+                        Integer.valueOf(view.getPaddingRight()), Integer.valueOf(view.getPaddingBottom()),
+                        Integer.valueOf(iconSize), Integer.valueOf(height),
+                        Integer.valueOf(baseline.iconSize), Integer.valueOf(baseline.layoutHeight) });
+            }
+        }
+        if (sRecentsSavedBlend != null && sRecentsSavedDepthController != null) {
+            saved.add(new Object[] { "recentsBlend", sRecentsSavedDepthController,
+                    sRecentsSavedBlend.clone() });
+        }
+        XposedHelpers.forEachTrackedOwner("colorosmodPopupBlurTarget",
+                new XposedHelpers.TrackedOwnerConsumer() {
+                    @Override public void accept(Object owner) {
+                        if (!(owner instanceof android.view.View)) return;
+                        Object value = XposedHelpers.getAdditionalInstanceField(
+                                owner, "colorosmodPopupBlurTarget");
+                        if (!(value instanceof PopupBlurTarget)) return;
+                        PopupBlurTarget target = (PopupBlurTarget) value;
+                        saved.add(new Object[] { "popupBlur", owner,
+                                Float.valueOf(target.progress), Boolean.valueOf(target.opening) });
+                    }
                 });
+        return saved.toArray();
+    }
+
+    public static void restoreHotReloadHosts(Object saved) {
+        if (!(saved instanceof Object[])) return;
+        for (Object value : (Object[]) saved) {
+            if (!(value instanceof Object[])) continue;
+            Object[] state = (Object[]) value;
+            if (state.length >= 3 && "recentsBlend".equals(state[0])
+                    && state[1] != null && state[2] instanceof float[]) {
+                try {
+                    Object depthController = state[1];
+                    float[] savedBlend = ((float[]) state[2]).clone();
+                    float[] blend = (float[]) XposedHelpers.getObjectField(
+                            depthController, "mBlurBlendColor");
+                    System.arraycopy(RECENTS_CLEAR_BLEND, 0, blend, 0,
+                            Math.min(blend.length, RECENTS_CLEAR_BLEND.length));
+                    sRecentsSavedDepthController = depthController;
+                    sRecentsSavedBlend = savedBlend;
+                } catch (Throwable t) {
+                    log("launcher recents blend restore failed: " + t);
+                }
+                continue;
+            }
+            if (state.length >= 4 && "popupBlur".equals(state[0])
+                    && state[1] instanceof android.view.View
+                    && state[2] instanceof Float && state[3] instanceof Boolean) {
+                try {
+                    android.view.View view = (android.view.View) state[1];
+                    PopupBlurTarget target = popupBlurTarget(view);
+                    target.progress = (Float) state[2];
+                    target.opening = (Boolean) state[3];
+                    applyPopupBgEffect(view, target.progress);
+                    view.setAlpha(target.opening ? 1f : target.progress);
+                } catch (Throwable t) {
+                    log("launcher popup blur restore failed: " + t);
+                }
+                continue;
+            }
+            if (state.length < 9 || !(state[0] instanceof android.view.View)) continue;
+            try {
+                Object owner = state[0];
+                android.view.View view = (android.view.View) owner;
+                DrawerIconState baseline = new DrawerIconState(view);
+                baseline.iconSize = (Integer) state[7];
+                baseline.layoutHeight = (Integer) state[8];
+                sDrawerIconStates.put(owner, baseline);
+                view.setPadding((Integer) state[1], (Integer) state[2],
+                        (Integer) state[3], (Integer) state[4]);
+                int iconSize = (Integer) state[5];
+                if (iconSize >= 0) {
+                    XposedHelpers.setIntField(owner, "mIconSize", iconSize);
+                    Object drawable = XposedHelpers.callMethod(owner, "getIcon");
+                    if (drawable instanceof android.graphics.drawable.Drawable) {
+                        XposedHelpers.callMethod(owner, "applyCompoundDrawables", drawable);
+                    }
+                }
+                android.view.ViewGroup.LayoutParams lp = view.getLayoutParams();
+                int height = (Integer) state[6];
+                if (lp != null && height != Integer.MIN_VALUE) {
+                    lp.height = height;
+                    view.setLayoutParams(lp);
+                } else {
+                    view.requestLayout();
+                }
+                XposedHelpers.setAdditionalInstanceField(owner,
+                        "colorosmod_drawer_gap", Boolean.TRUE);
+                if (baseline.iconSize >= 0) {
+                    XposedHelpers.setAdditionalInstanceField(owner,
+                            "colorosmod_drawer_icon_base", Integer.valueOf(baseline.iconSize));
+                }
+                if (baseline.layoutHeight != Integer.MIN_VALUE && height != Integer.MIN_VALUE) {
+                    XposedHelpers.setAdditionalInstanceField(owner,
+                            "colorosmod_drawer_h_comp",
+                            Integer.valueOf(height - baseline.layoutHeight));
+                }
+            } catch (Throwable t) {
+                log("launcher drawer icon restore failed: " + t);
+            }
+        }
+    }
+
+    public static void cleanupForHotReload() {
+        if (sRecentsSavedBlend != null && sRecentsSavedDepthController != null) {
+            try {
+                float[] blend = (float[]) XposedHelpers.getObjectField(
+                        sRecentsSavedDepthController, "mBlurBlendColor");
+                System.arraycopy(sRecentsSavedBlend, 0, blend, 0,
+                        Math.min(blend.length, sRecentsSavedBlend.length));
+            } catch (Throwable t) {
+                log("launcher recents blend cleanup failed: " + t);
+            }
+        }
+        sRecentsSavedBlend = null;
+        sRecentsSavedDepthController = null;
+        synchronized (sDrawerIconStates) {
+            for (java.util.Map.Entry<Object, DrawerIconState> entry :
+                    new java.util.ArrayList<>(sDrawerIconStates.entrySet())) {
+                try {
+                    Object owner = entry.getKey();
+                    if (!(owner instanceof android.view.View)) continue;
+                    android.view.View view = (android.view.View) owner;
+                    DrawerIconState state = entry.getValue();
+                    view.setPadding(state.paddingLeft, state.paddingTop,
+                            state.paddingRight, state.paddingBottom);
+                    if (state.iconSize >= 0) {
+                        XposedHelpers.setIntField(owner, "mIconSize", state.iconSize);
+                        Object drawable = XposedHelpers.callMethod(owner, "getIcon");
+                        if (drawable instanceof android.graphics.drawable.Drawable) {
+                            XposedHelpers.callMethod(owner, "applyCompoundDrawables", drawable);
+                        }
+                    }
+                    android.view.ViewGroup.LayoutParams lp = view.getLayoutParams();
+                    if (lp != null && state.layoutHeight != Integer.MIN_VALUE) {
+                        lp.height = state.layoutHeight;
+                        view.setLayoutParams(lp);
+                    } else {
+                        view.requestLayout();
+                    }
+                } catch (Throwable t) {
+                    log("launcher drawer icon cleanup failed: " + t);
+                }
+            }
+            sDrawerIconStates.clear();
+        }
+        XposedHelpers.cancelTrackedCallbacksAndAnimators();
+        XposedHelpers.forEachTrackedOwner("colorosmod_launcher_predraw_detach",
+                new XposedHelpers.TrackedOwnerConsumer() {
+                    @Override public void accept(Object owner) {
+                        if (!(owner instanceof android.view.View)) return;
+                        Object value = XposedHelpers.getAdditionalInstanceField(
+                                owner, "colorosmod_launcher_predraw_detach");
+                        if (value instanceof android.view.View.OnAttachStateChangeListener) {
+                            ((android.view.View) owner).removeOnAttachStateChangeListener(
+                                    (android.view.View.OnAttachStateChangeListener) value);
+                        }
+                        XposedHelpers.removeAdditionalInstanceField(
+                                owner, "colorosmod_launcher_predraw_detach");
+                    }
+                });
+        if (!XposedHelpers.removeTrackedPreDrawListeners("colorosmod_launcher_predraw")) {
+            log("launcher hot reload pre-draw cleanup incomplete");
+        }
     }
 
     // 每个 DeepShortcutView 内的 R.id.divider 是列表项之间的分割线, 其高度来自
@@ -1265,6 +1530,7 @@ public final class LauncherHooks {
                                 if ((Boolean) param.args[0]) {
                                     if (sRecentsSavedBlend == null) {
                                         sRecentsSavedBlend = blend.clone();
+                                        sRecentsSavedDepthController = depthController;
                                     }
                                     System.arraycopy(RECENTS_CLEAR_BLEND, 0, blend, 0,
                                             blend.length);
@@ -1272,6 +1538,7 @@ public final class LauncherHooks {
                                     System.arraycopy(sRecentsSavedBlend, 0, blend, 0,
                                             blend.length);
                                     sRecentsSavedBlend = null;
+                                    sRecentsSavedDepthController = null;
                                 }
                             } catch (Throwable t) {
                                 log("recents swipe blend hook error: " + t);
@@ -2146,6 +2413,7 @@ public final class LauncherHooks {
             return;
         }
         android.view.View v = (android.view.View) btv;
+        sDrawerIconStates.put(btv, new DrawerIconState(v));
         v.setPadding(Math.round(v.getPaddingLeft() * DRAWER_ICON_GAP_KEEP), v.getPaddingTop(),
                 Math.round(v.getPaddingRight() * DRAWER_ICON_GAP_KEEP), v.getPaddingBottom());
         XposedHelpers.setAdditionalInstanceField(btv, "colorosmod_drawer_gap", Boolean.TRUE);
@@ -2161,6 +2429,11 @@ public final class LauncherHooks {
             if (!(size instanceof Integer)) return;
             int cur = (Integer) size;
             if (cur <= 0) return;
+            DrawerIconState state = sDrawerIconStates.get(btv);
+            if (state == null) {
+                state = new DrawerIconState(v);
+                sDrawerIconStates.put(btv, state);
+            }
             Object baseObj = XposedHelpers.getAdditionalInstanceField(btv, "colorosmod_drawer_icon_base");
             int base;
             if (baseObj instanceof Integer) {
@@ -2169,6 +2442,7 @@ public final class LauncherHooks {
                 base = cur;
                 XposedHelpers.setAdditionalInstanceField(btv, "colorosmod_drawer_icon_base", base);
             }
+            if (state.iconSize < 0) state.iconSize = base;
             int gap = w - base;
             if (gap <= 0) return;
             int newIcon = base + Math.round(gap * (1f - DRAWER_ICON_GAP_KEEP));
@@ -2180,6 +2454,7 @@ public final class LauncherHooks {
             // 图标是方的, 加大后会吃掉上下空隙; 把格子高度补回同样增量, 上下间距保持原样。
             android.view.ViewGroup.LayoutParams lp = v.getLayoutParams();
             if (lp != null && lp.height > 0) {
+                if (state.layoutHeight == Integer.MIN_VALUE) state.layoutHeight = lp.height;
                 Object prev = XposedHelpers.getAdditionalInstanceField(btv, "colorosmod_drawer_h_comp");
                 int prevGrow = prev instanceof Integer ? (Integer) prev : 0;
                 int grow = newIcon - base;
@@ -2628,6 +2903,8 @@ public final class LauncherHooks {
                                 target.opening = open;
                                 view.setAlpha(open ? 1f : target.progress);
                                 applyPopupBgEffect(view, target.progress);
+                                XposedHelpers.setAdditionalInstanceField(view,
+                                        "colorosmod_popup_blur_animator", anim);
                                 param.setResult(anim);
                             } catch (Throwable t) {
                                 log("popup blur anim error: " + t);

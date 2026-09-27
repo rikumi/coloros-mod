@@ -29,6 +29,10 @@ public final class XposedBridge {
         sFramework = framework;
     }
 
+    public static void detachFramework() {
+        sFramework = null;
+    }
+
     static XposedInterface framework() {
         XposedInterface fx = sFramework;
         if (fx == null) {

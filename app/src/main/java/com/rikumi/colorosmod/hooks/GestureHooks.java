@@ -872,10 +872,49 @@ public final class GestureHooks {
             }
         }
         Object surface = XposedHelpers.getAdditionalInstanceField(handle, "mback_surface");
-        if (surface instanceof MBackSurface && ((MBackSurface) surface).getParent() instanceof android.view.ViewGroup) {
-            ((android.view.ViewGroup) ((MBackSurface) surface).getParent()).removeView((MBackSurface) surface);
+        if (surface instanceof MBackSurface) {
+            MBackSurface mback = (MBackSurface) surface;
+            mback.removeCallbacks(mback.hideRunnable);
+            if (mback.getParent() instanceof android.view.ViewGroup) {
+                ((android.view.ViewGroup) mback.getParent()).removeView(mback);
+            }
         }
         XposedHelpers.setAdditionalInstanceField(handle, "mback_surface", null);
+    }
+
+
+    public static void cleanupForHotReload() {
+        // Snapshot first: removeMBackSurface also removes entries from MBACK_GESTURES.
+        java.util.List<MBackGesture> gestures =
+                new java.util.ArrayList<MBackGesture>(MBACK_GESTURES.values());
+        final java.util.Set<android.view.View> handles =
+                java.util.Collections.newSetFromMap(
+                        new java.util.IdentityHashMap<android.view.View, Boolean>());
+        XposedHelpers.forEachTrackedOwner("mback_surface",
+                new XposedHelpers.TrackedOwnerConsumer() {
+                    @Override public void accept(Object owner) {
+                        if (owner instanceof android.view.View) {
+                            handles.add((android.view.View) owner);
+                        }
+                    }
+                });
+        for (MBackGesture gesture : gestures) {
+            cancelMBackLongPress(gesture);
+            if (gesture.handle != null) handles.add(gesture.handle);
+        }
+        MBACK_GESTURES.clear();
+        MBACK_IN_RANGE.clear();
+        for (android.view.View handle : handles) {
+            try { removeMBackSurface(handle); }
+            catch (Throwable t) { log("mback surface hot reload cleanup failed: " + t); }
+            try { removeGestureBlockSurfaces(handle); }
+            catch (Throwable t) { log("gesture block hot reload cleanup failed: " + t); }
+        }
+        XposedHelpers.removeTrackedViewChildren("mback_surface", "gesture_block_surface");
+        sBarExtraApplied.clear();
+        sImeVisible = false;
+        sGestureBarHeightPx = -1;
+        sGestureBarHandleBottomPx = -1;
     }
 
     static void triggerNavigation(android.view.View handle, boolean home) {

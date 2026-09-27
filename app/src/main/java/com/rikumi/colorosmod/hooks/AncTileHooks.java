@@ -159,6 +159,11 @@ public final class AncTileHooks {
     private static volatile Resources sRes;
     private static volatile Handler sMain;
     private static volatile ExecutorService sWorker;
+    private static volatile ContentObserver sObserver;
+    /** True after preflight successfully detached the provider observer. */
+    private static volatile boolean sObserverDetachedForHotReload;
+    private static volatile Thread sPollThread;
+    private static volatile boolean sActive;
     private static volatile int[] sIconIds;
     private static volatile int[] sLottieIds;
 
@@ -563,27 +568,32 @@ public final class AncTileHooks {
         }
 
         // 6. 状态源: 后台线程轮询欢律 + ContentObserver 近实时回显。
-        Thread t = new Thread(new Runnable() {
-            @Override
-            public void run() {
+        startInitThread();
+    }
+
+    private static synchronized void startInitThread() {
+        Thread current = sPollThread;
+        if (current != null && current.isAlive()) return;
+        sActive = true;
+        Thread thread = new Thread(new Runnable() {
+            @Override public void run() {
                 Context ctx = null;
-                for (int i = 0; i < 60 && ctx == null; i++) {
+                for (int i = 0; i < 60 && ctx == null && sActive; i++) {
                     ctx = sAppContext != null ? sAppContext : currentApplication();
                     if (ctx == null) sleepQuietly(500L);
                 }
+                if (!sActive) return;
                 if (ctx == null) {
                     log("anc: systemui application not ready, skip");
                     return;
                 }
-                try {
-                    init(ctx);
-                } catch (Throwable t2) {
-                    log("anc init fail: " + t2);
-                }
+                try { init(ctx); }
+                catch (Throwable t) { log("anc init fail: " + t); }
             }
         }, "ColorOSMod-Anc");
-        t.setDaemon(true);
-        t.start();
+        thread.setDaemon(true);
+        sPollThread = thread;
+        thread.start();
     }
 
     private static void init(Context sysuiCtx) {
@@ -604,32 +614,198 @@ public final class AncTileHooks {
         sLottieIds = idsOf(sysuiRes, LOTTIE_ID_NAMES);
 
         try {
-            ctx.getContentResolver().registerContentObserver(
-                    Uri.parse("content://" + MELODY_AUTHORITY), true,
-                    new ContentObserver(sMain) {
-                        @Override
-                        public void onChange(boolean selfChange, Uri uri) {
-                            submit(new Runnable() {
-                                @Override
-                                public void run() {
-                                    refresh();
-                                }
-                            });
-                        }
+            ContentObserver observer = new ContentObserver(sMain) {
+                @Override
+                public void onChange(boolean selfChange, Uri uri) {
+                    submit(new Runnable() {
+                        @Override public void run() { refresh(); }
                     });
+                }
+            };
+            ctx.getContentResolver().registerContentObserver(
+                    Uri.parse("content://" + MELODY_AUTHORITY), true, observer);
+            sObserver = observer;
         } catch (Throwable t) {
             log("anc: register observer fail: " + t);
         }
 
         log("anc: inited");
-        while (true) {
+        while (sActive) {
             try {
                 refresh();
             } catch (Throwable t) {
                 log("anc tick error: " + t);
             }
-            sleepQuietly(POLL_INTERVAL_MS);
+            if (!sActive) break;
+            try {
+                Thread.sleep(POLL_INTERVAL_MS);
+            } catch (InterruptedException ignored) {
+                // Preflight interrupts the poller. If rollback reactivated it while a provider
+                // query was still blocked, InterruptedException clears the flag and polling resumes.
+                if (!sActive) break;
+            }
         }
+    }
+
+
+    /**
+     * Non-destructive preflight: stop only the polling loop and wait for it to leave. No observer,
+     * executor, Handler, or cache is changed until this succeeds.
+     */
+    public static boolean canHotReload() {
+        sActive = false;
+        Thread poll = sPollThread;
+        if (poll != null && poll.isAlive()) {
+            poll.interrupt();
+            try {
+                poll.join(1500L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                cancelHotReloadPreflight();
+                return false;
+            }
+            if (poll.isAlive()) {
+                cancelHotReloadPreflight();
+                return false;
+            }
+        }
+        // The poller may exit immediately after sActive becomes false. Its executor can still
+        // contain provider refresh or ANC synchronization work and must always be drained.
+        ExecutorService worker = sWorker;
+        if (worker != null && !worker.isShutdown()) {
+            java.util.concurrent.CountDownLatch idle = new java.util.concurrent.CountDownLatch(1);
+            try {
+                worker.execute(idle::countDown);
+                if (!idle.await(1500L, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    cancelHotReloadPreflight();
+                    return false;
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                cancelHotReloadPreflight();
+                return false;
+            } catch (Throwable t) {
+                // A concurrently stopped executor is already quiescent; other failures reject.
+                if (!worker.isShutdown()) {
+                    cancelHotReloadPreflight();
+                    return false;
+                }
+            }
+        }
+        ContentObserver observer = sObserver;
+        Context context = sContext;
+        if (observer != null && context != null && !sObserverDetachedForHotReload) {
+            try {
+                context.getContentResolver().unregisterContentObserver(observer);
+                sObserverDetachedForHotReload = true;
+            } catch (Throwable t) {
+                log("anc hot reload observer preflight failed: " + t);
+                cancelHotReloadPreflight();
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Restore resources detached by preflight and re-arm the stopped polling loop. */
+    public static synchronized void cancelHotReloadPreflight() {
+        if (sObserverDetachedForHotReload) {
+            ContentObserver observer = sObserver;
+            Context context = sContext;
+            try {
+                if (observer != null && context != null) {
+                    context.getContentResolver().registerContentObserver(
+                            Uri.parse("content://" + MELODY_AUTHORITY), true, observer);
+                }
+                sObserverDetachedForHotReload = false;
+            } catch (Throwable t) {
+                log("anc hot reload observer rollback failed: " + t);
+            }
+        }
+        if (sActive) return;
+        sActive = true;
+        Thread current = sPollThread;
+        if (current != null && current.isAlive()) return;
+        if (sContext == null || sWorker == null || sMain == null) {
+            // Preflight may happen before initialization reached init(); full init is safe only then.
+            startInitThread();
+            return;
+        }
+        Thread thread = new Thread(new Runnable() {
+            @Override public void run() {
+                while (sActive) {
+                    try { refresh(); }
+                    catch (Throwable t) { log("anc tick error: " + t); }
+                    if (!sActive) break;
+                    try {
+                        Thread.sleep(POLL_INTERVAL_MS);
+                    } catch (InterruptedException ignored) {
+                        if (!sActive) break;
+                    }
+                }
+            }
+        }, "ColorOSMod-Anc");
+        thread.setDaemon(true);
+        sPollThread = thread;
+        thread.start();
+    }
+
+    /** Preserve host-owned tile/view identities whose constructors are not replayed by reload. */
+    public static Object captureHotReloadHosts() {
+        return new Object[] {
+                sTileRef.get(), sVolumeIconRef.get(), Boolean.valueOf(sVolumeAboveThreshold),
+                sAncLayouts.keySet().toArray(), sAncLottieViews.keySet().toArray()
+        };
+    }
+
+    public static void restoreHotReloadHosts(Object saved) {
+        if (!(saved instanceof Object[])) return;
+        Object[] state = (Object[]) saved;
+        if (state.length < 5) return;
+        sTileRef = new WeakReference<Object>(state[0]);
+        sVolumeIconRef = new WeakReference<Object>(state[1]);
+        if (state[2] instanceof Boolean) sVolumeAboveThreshold = (Boolean) state[2];
+        if (state[3] instanceof Object[]) {
+            for (Object layout : (Object[]) state[3]) {
+                if (layout != null) sAncLayouts.put(layout, Boolean.TRUE);
+            }
+        }
+        if (state[4] instanceof Object[]) {
+            for (Object lottie : (Object[]) state[4]) {
+                if (lottie != null) sAncLottieViews.put(lottie, Boolean.TRUE);
+            }
+        }
+        Handler main = sMain;
+        if (main != null) postUiRefresh();
+    }
+
+    /** Destructive commit. Preflight already proved the poller stopped; this method never rejects. */
+    public static void cleanupForHotReload() {
+        sActive = false;
+        // The provider observer was detached during the rollback-safe preflight.
+        sObserverDetachedForHotReload = false;
+        ExecutorService worker = sWorker;
+        if (worker != null) {
+            try { worker.shutdownNow(); }
+            catch (Throwable t) { log("anc hot reload worker cleanup failed: " + t); }
+        }
+        sPollThread = null;
+        sObserver = null;
+        sWorker = null;
+        if (sMain != null) {
+            try { sMain.removeCallbacksAndMessages(null); }
+            catch (Throwable t) { log("anc hot reload main callback cleanup failed: " + t); }
+        }
+        sMain = null;
+        sContext = null;
+        sRes = null;
+        sState = null;
+        sTargetType = null;
+        sSyncing = false;
+        sTileRef = new WeakReference<Object>(null);
+        sVolumeIconRef = new WeakReference<Object>(null);
+        sAncLottieViews.clear();
+        sAncLayouts.clear();
     }
 
     private static int[] idsOf(Resources res, String[] names) {
@@ -647,7 +823,7 @@ public final class AncTileHooks {
 
     private static void submit(Runnable r) {
         ExecutorService w = sWorker;
-        if (w != null) w.execute(r);
+        if (sActive && w != null && !w.isShutdown()) w.execute(r);
     }
 
     /** 拉一次状态, 变化时才通知蓝牙磁贴刷新。 */
@@ -1117,6 +1293,7 @@ public final class AncTileHooks {
         try {
             Thread.sleep(ms);
         } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
         }
     }
 }

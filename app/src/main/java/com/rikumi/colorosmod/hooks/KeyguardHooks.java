@@ -177,6 +177,21 @@ public final class KeyguardHooks {
     /** 缓存 StatusBarKeyguardViewManager 实例, 供触发 onBackPressed() 使用。 */
     private static volatile Object sKeyguardViewManager;
 
+    /** Preserve the process-lifetime manager because its constructor is not replayed after reload. */
+    public static Object captureHotReloadHost() {
+        return sKeyguardViewManager;
+    }
+
+    public static void restoreHotReloadHost(Object host) {
+        if (host != null && CLS_STATUS_BAR_KEYGUARD_VIEW_MANAGER.equals(host.getClass().getName())) {
+            sKeyguardViewManager = host;
+        }
+    }
+
+    public static void cleanupForHotReload() {
+        sKeyguardViewManager = null;
+    }
+
     public static void hookBouncerSwipeBack(final XC_LoadPackage.LoadPackageParam lpparam) {
         // 0) 缓存 StatusBarKeyguardViewManager 实例, 供触发 onBackPressed() 使用。
         //    用 hookAllConstructors(免签名) 而不是等某个方法被调用 —— 后者若总不被调用则实例为 null,

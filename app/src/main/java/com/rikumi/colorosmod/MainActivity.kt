@@ -6,8 +6,10 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
 import android.os.Build
-import android.os.Bundle
 import android.os.Handler
+import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -59,6 +61,7 @@ import top.yukonga.miuix.kmp.icon.extended.Folder
 import top.yukonga.miuix.kmp.icon.extended.Hide
 import top.yukonga.miuix.kmp.icon.extended.Lock
 import top.yukonga.miuix.kmp.icon.extended.Refresh
+import top.yukonga.miuix.kmp.icon.extended.Update
 import top.yukonga.miuix.kmp.icon.extended.Tune
 import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -73,13 +76,35 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import io.github.libxposed.service.HookedTarget
+import io.github.libxposed.service.HotReloadResult
+import io.github.libxposed.service.XposedService
+import io.github.libxposed.service.XposedServiceHelper
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.ConcurrentHashMap
 import androidx.navigationevent.NavigationEventDispatcher
 import androidx.navigationevent.NavigationEventDispatcherOwner
 import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        private val listenerRegistered = AtomicBoolean(false)
+        internal val xposedServices: MutableSet<XposedService> =
+            java.util.Collections.newSetFromMap(ConcurrentHashMap<XposedService, Boolean>())
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (listenerRegistered.compareAndSet(false, true)) {
+            XposedServiceHelper.registerListener(object : XposedServiceHelper.OnServiceListener {
+                override fun onServiceBind(service: XposedService) { xposedServices.add(service) }
+                override fun onServiceDied(service: XposedService) {
+                    xposedServices.remove(service)
+                    activeHotReloadBatches.forEach { it.serviceDied(service) }
+                }
+            })
+        }
         checkEnvironment(this)
         setContent {
             val context = LocalContext.current
@@ -489,7 +514,10 @@ private fun HomeScreen(
             CouixLargeTitle(
                 title = "ColorOS Mod",
                 dividerProgress = couixTopBarDividerProgress(listState, overscrollOffset),
-                actions = { RestartMenu(ctx) },
+                actions = {
+                    HotReloadButton(ctx)
+                    RestartMenu(ctx)
+                },
             )
         },
     ) { padding ->
@@ -777,6 +805,149 @@ private fun launchApp(ctx: Context, command: String) {
             android.widget.Toast.makeText(ctx, "未授予 root 权限", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
+}
+
+private val hotReloadBusy = AtomicBoolean(false)
+private val activeHotReloadBatches: MutableSet<HotReloadBatch> =
+    java.util.Collections.newSetFromMap(ConcurrentHashMap<HotReloadBatch, Boolean>())
+
+private class HotReloadBatch(
+    private val context: Context,
+    private val total: Int,
+) {
+    private val remaining = AtomicInteger(total)
+    private val success = AtomicInteger()
+    private val rejected = AtomicInteger()
+    private val failed = AtomicInteger()
+    private val tokenLock = Any()
+    private val tokens = HashMap<XposedService, MutableList<AtomicBoolean>>()
+    private val finished = AtomicBoolean(false)
+
+    fun token(service: XposedService): AtomicBoolean {
+        val token = AtomicBoolean(false)
+        synchronized(tokenLock) {
+            tokens.getOrPut(service) { mutableListOf() }.add(token)
+        }
+        return token
+    }
+
+    fun complete(token: AtomicBoolean, status: HotReloadResult.Status?, message: String?) {
+        if (!token.compareAndSet(false, true)) return
+        when (status) {
+            HotReloadResult.Status.SUCCEEDED -> success.incrementAndGet()
+            HotReloadResult.Status.FAILED -> {
+                if (message == null) rejected.incrementAndGet() else failed.incrementAndGet()
+            }
+            HotReloadResult.Status.IN_PROGRESS -> rejected.incrementAndGet()
+            else -> failed.incrementAndGet()
+        }
+        finishOne()
+    }
+
+    fun serviceDied(service: XposedService) {
+        val serviceTokens = synchronized(tokenLock) {
+            tokens.remove(service)?.toList()
+        } ?: return
+        serviceTokens.forEach { token ->
+            if (token.compareAndSet(false, true)) {
+                failed.incrementAndGet()
+                finishOne()
+            }
+        }
+    }
+
+    private fun finishOne() {
+        if (remaining.decrementAndGet() != 0 || !finished.compareAndSet(false, true)) return
+        activeHotReloadBatches.remove(this)
+        hotReloadBusy.set(false)
+        showHotReloadToast(context,
+            "热重载：成功 ${success.get()}，拒绝 ${rejected.get()}，失败 ${failed.get()}")
+    }
+}
+
+@Composable
+private fun HotReloadButton(ctx: Context) {
+    var confirming by remember { mutableStateOf(false) }
+    IconButton(onClick = {
+        if (!hotReloadBusy.get()) confirming = true
+    }) {
+        Icon(
+            painter = rememberVectorPainter(MiuixIcons.Update),
+            contentDescription = "热重载",
+        )
+    }
+    if (confirming) {
+        CouixConfirmDialog(
+            title = "热重载全部作用域",
+            text = "将尝试在所有正在运行的作用域中加载新版模块。正在执行的危险操作会拒绝重载。",
+            onConfirm = {
+                confirming = false
+                requestHotReloadAll(ctx)
+            },
+            onDismiss = { confirming = false },
+            confirmLabel = "热重载",
+        )
+    }
+}
+
+private fun requestHotReloadAll(ctx: Context) {
+    val appContext = ctx.applicationContext
+    if (!hotReloadBusy.compareAndSet(false, true)) {
+        Toast.makeText(appContext, "热重载处理中", Toast.LENGTH_SHORT).show()
+        return
+    }
+    val services = MainActivity.xposedServices.toList()
+    if (services.isEmpty()) {
+        hotReloadBusy.set(false)
+        Toast.makeText(appContext, "Xposed 服务不可用", Toast.LENGTH_SHORT).show()
+        return
+    }
+    Thread({
+        try {
+            val work = ArrayList<Pair<XposedService, HookedTarget>>()
+            services.forEach { service ->
+                try {
+                    if (service.apiVersion >= XposedService.API_102) {
+                        service.runningTargets.forEach { target -> work.add(service to target) }
+                    }
+                } catch (t: Throwable) {
+                    Log.e("ColorOSMod", "hot reload target query failed", t)
+                }
+            }
+            if (work.isEmpty()) {
+                hotReloadBusy.set(false)
+                showHotReloadToast(appContext, "没有可热重载的运行中作用域")
+                return@Thread
+            }
+            val batch = HotReloadBatch(appContext, work.size)
+            activeHotReloadBatches.add(batch)
+            showHotReloadToast(appContext, "热重载处理中：${work.size} 个作用域")
+            work.forEach { (service, target) ->
+                val token = batch.token(service)
+                try {
+                    // A service can die between the initial snapshot and submission.
+                    if (!MainActivity.xposedServices.contains(service)) {
+                        batch.serviceDied(service)
+                    } else {
+                        service.hotReloadModule(target, null) { _: HookedTarget, result: HotReloadResult ->
+                            batch.complete(token, result.status(), result.message())
+                        }
+                    }
+                } catch (t: Throwable) {
+                    Log.e("ColorOSMod", "hot reload submit failed", t)
+                    batch.complete(token, null, t.message)
+                }
+            }
+        } catch (t: Throwable) {
+            Log.e("ColorOSMod", "hot reload failed", t)
+            hotReloadBusy.set(false)
+            showHotReloadToast(appContext, "热重载失败")
+        }
+    }, "ColorOSMod-HotReload").start()
+}
+
+private fun showHotReloadToast(ctx: Context, text: String) {
+    Handler(ctx.mainLooper).post { Toast.makeText(ctx, text, Toast.LENGTH_SHORT).show() }
 }
 
 /** 标题栏右侧的重启菜单（首页与子页面共用）。 */

@@ -6,7 +6,12 @@ import android.net.Uri;
 import android.util.Log;
 
 import com.rikumi.colorosmod.hooks.GestureHooks;
+import com.rikumi.colorosmod.hooks.AncTileHooks;
+import com.rikumi.colorosmod.hooks.NotificationHooks;
+import com.rikumi.colorosmod.hooks.PasswordInputHooks;
+import com.rikumi.colorosmod.hooks.StatusBarLyricHooks;
 import com.rikumi.colorosmod.hooks.LauncherHooks;
+import com.rikumi.colorosmod.hooks.KeyguardHooks;
 import com.rikumi.colorosmod.hooks.MediaProviderHooks;
 import com.rikumi.colorosmod.hooks.MultiWindowHooks;
 import com.rikumi.colorosmod.hooks.SafecenterHooks;
@@ -43,6 +48,8 @@ public class XposedInit extends XposedModule {
     private static volatile boolean sIsSystemServer = false;
     private static volatile boolean sSystemServerHooked = false;
     private static volatile boolean sAppProcessHooked = false;
+    /** Package whose hooks were actually installed; process names may include a custom suffix. */
+    private static volatile String sHookedPackageName = "";
 
     public static final String TAG = "ColorOSMod";
     public static final String MODULE_PACKAGE = "com.rikumi.colorosmod";
@@ -357,6 +364,7 @@ public class XposedInit extends XposedModule {
 
     // 必须在 worker 线程调用: 注册 ContentObserver, callback handler = sWorkerHandler。
     private static boolean registerSettingsObserverOnWorker() {
+        if (!sSyncActive) return false;
         if (sObserver != null) return true;
         if (sAppContext == null) return false;
         try {
@@ -370,6 +378,10 @@ public class XposedInit extends XposedModule {
                 }
             };
             cr.registerContentObserver(uri, true, observer);
+            if (!sSyncActive) {
+                try { cr.unregisterContentObserver(observer); } catch (Throwable ignored) { }
+                return false;
+            }
             sObserver = observer;
             log("settings content observer registered");
             return true;
@@ -509,14 +521,8 @@ public class XposedInit extends XposedModule {
         sRefreshQueued = false;
         sRetryQueued = false;
         sObserverRetryQueued = false;
-        android.database.ContentObserver o = sObserver;
-        if (o != null && sAppContext != null) {
-            try {
-                sAppContext.getContentResolver().unregisterContentObserver(o);
-            } catch (Throwable ignored) {
-            }
-        }
-        sObserver = null;
+        // Keep the final observer registered until the worker barrier succeeds. On timeout the
+        // old generation must remain fully usable, including its existing observer registration.
         wh.removeCallbacksAndMessages(null);
         // barrier: 投递一个不可中断的标记到 worker 队列末尾; 只有当所有已执行或正在执行的
         // message(包括卡在 Binder query 之前的)结束后, barrier 才会执行。
@@ -543,17 +549,31 @@ public class XposedInit extends XposedModule {
             // worker 还卡在 in-flight query 中, barrier 未能执行 → 拒绝 reload。
             // 关键: 没有调 quitSafely, worker Looper 正常运行, 可完全恢复。
             sSyncActive = true;
-            // 重新注册 observer + 重试初始 fetch
+            // The observer was deliberately retained; only re-arm refresh work.
             wh.post(new Runnable() {
-                @Override
-                public void run() {
-                    registerSettingsObserverOnWorker();
-                    refreshSettings();
-                }
+                @Override public void run() { refreshSettings(); }
             });
             log("ColorOSMod-SettingsWorker barrier timeout, rejecting reload");
             return false;
         }
+        // Only after the barrier may the final observer be unregistered: no worker callback can
+        // race registration now, and a timeout above leaves the old observer untouched.
+        android.database.ContentObserver o = sObserver;
+        if (o != null && sAppContext != null) {
+            try {
+                sAppContext.getContentResolver().unregisterContentObserver(o);
+            } catch (Throwable t) {
+                // Keep the old generation intact: the resolver may still own this observer.
+                // Retain its reference and restart refresh work before rejecting the reload.
+                sSyncActive = true;
+                wh.post(new Runnable() {
+                    @Override public void run() { refreshSettings(); }
+                });
+                log("settings observer cleanup failed, rejecting reload: " + t);
+                return false;
+            }
+        }
+        sObserver = null;
         // barrier 已执行, 所有先前的 work 已完成; handler queue 已清空且无 in-flight query,
         // 直接 quit (不需要 quitSafely drain 剩余 message), 循环 join 直到线程真正死亡。
         ht.quit();
@@ -650,6 +670,106 @@ public class XposedInit extends XposedModule {
         Log.e(TAG, msg);
     }
 
+    private static boolean preflightProcessResources() {
+        if (sIsSystemServer) return SystemServerHooks.canHotReload();
+        if ("com.android.systemui".equals(sHookedPackageName)) {
+            if (!AncTileHooks.canHotReload()) return false;
+            if (!StatusBarLyricHooks.prepareHotReloadListeners()) {
+                AncTileHooks.cancelHotReloadPreflight();
+                return false;
+            }
+            return true;
+        }
+        return true;
+    }
+
+    private static void cancelProcessPreflight() {
+        if ("com.android.systemui".equals(sHookedPackageName)) {
+            StatusBarLyricHooks.cancelHotReloadPreflight();
+            AncTileHooks.cancelHotReloadPreflight();
+        }
+    }
+
+    private static void cleanupProcessResourcesOnMain() {
+        if (sIsSystemServer) {
+            try { SystemServerHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("system_server hot reload cleanup failed: " + t); }
+            return;
+        }
+        if ("com.android.systemui".equals(sHookedPackageName)) {
+            try { AncTileHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("anc hot reload cleanup failed: " + t); }
+            try { StatusBarLyricHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("lyric hot reload cleanup failed: " + t); }
+            try { NotificationHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("notification hot reload cleanup failed: " + t); }
+            try { GestureHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("gesture hot reload cleanup failed: " + t); }
+            try { PasswordInputHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("password hot reload cleanup failed: " + t); }
+            try { KeyguardHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("keyguard hot reload cleanup failed: " + t); }
+        } else if ("com.android.launcher".equals(sHookedPackageName)) {
+            try { LauncherHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("launcher hot reload cleanup failed: " + t); }
+        } else if ("com.oplus.wallpapers".equals(sHookedPackageName)) {
+            try { WallpapersHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("wallpapers hot reload cleanup failed: " + t); }
+        }
+        try { XposedHelpers.cancelTrackedCallbacksAndAnimators(); }
+        catch (Throwable t) { log("tracked callback cleanup failed: " + t); }
+    }
+
+    // A queued commit can be cancelled only while it is provably still pending. Once the main
+    // thread changes PENDING to RUNNING, rollback is forbidden and this method waits for commit.
+    private static boolean commitProcessCleanup() {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            cleanupProcessResourcesOnMain();
+            return true;
+        }
+        final int PENDING = 0, RUNNING = 1, CANCELLED = 2, DONE = 3;
+        java.util.concurrent.atomic.AtomicInteger state =
+                new java.util.concurrent.atomic.AtomicInteger(PENDING);
+        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch finished = new java.util.concurrent.CountDownLatch(1);
+        Runnable commit = new Runnable() {
+            @Override public void run() {
+                if (!state.compareAndSet(PENDING, RUNNING)) {
+                    started.countDown();
+                    finished.countDown();
+                    return;
+                }
+                started.countDown();
+                try { cleanupProcessResourcesOnMain(); }
+                finally { state.set(DONE); finished.countDown(); }
+            }
+        };
+        android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+        if (!main.post(commit)) return false;
+        try {
+            if (!started.await(3000L, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                if (state.compareAndSet(PENDING, CANCELLED)) {
+                    main.removeCallbacks(commit);
+                    return false;
+                }
+                // Commit started concurrently with timeout: rollback is no longer allowed.
+            }
+            finished.await();
+            return state.get() == DONE;
+        } catch (InterruptedException e) {
+            if (state.compareAndSet(PENDING, CANCELLED)) {
+                main.removeCallbacks(commit);
+                Thread.currentThread().interrupt();
+                return false;
+            }
+            while (state.get() != DONE) {
+                try { finished.await(); } catch (InterruptedException ignored) { }
+            }
+            Thread.currentThread().interrupt();
+            return true;
+        }
+    }
+
     // ---- 生命周期: 新版 API 把"包加载"与"system_server 启动"分成两个回调 ----
 
     @Override
@@ -672,13 +792,68 @@ public class XposedInit extends XposedModule {
     // API 102 hot reload: 返回 true 之前必须停止所有 module-owned thread、注销 callback、释放旧
     // classloader 的引用, 否则旧 classloader 会被后台线程/observer 回调整代强引用住, 无法 GC。
     // 若无法在超时内干净停止所有 worker, 返回 false 拒绝 reload, 由框架保持旧 gen 继续运行。
-    // 当前暂不实现 hot reload。SystemUI/Launcher 有大量 module-defined View/Handler/ContentObserver
-    // 注册到宿主, system_server 也有 sHungTaskIds/sPamExt 等 generation-local 状态及 Handler
-    // 回调。写入 per-module cleanup 前所有进程均拒绝 reload。
+    // 所有可能拒绝的检查都在无破坏 preflight 中完成；commit 一旦开始便只前进。
     @Override
     public boolean onHotReloading(@NonNull HotReloadingParam param) {
-        log("onHotReloading: hot reload not supported yet, rejecting");
-        return false;
+        log("onHotReloading: quiescing process=" + sProcessName);
+        // Close the hook admission gate first, then inspect subsystem state. This makes the
+        // preflight snapshot stable instead of racing callbacks that start after canHotReload().
+        if (!XposedHelpers.beginQuiescing(2000L)) {
+            log("onHotReloading: in-flight hook timeout, rejecting");
+            return false;
+        }
+        if (!preflightProcessResources()) {
+            cancelProcessPreflight();
+            XposedHelpers.cancelQuiescing();
+            return false;
+        }
+        try {
+            Object[] state = new Object[8];
+            state[0] = StatusBarLyricHooks.captureHotReloadHost();
+            state[1] = NotificationHooks.captureHotReloadHost();
+            state[2] = SystemServerHooks.captureHotReloadHost();
+            state[3] = WallpapersHooks.captureHotReloadHosts();
+            state[4] = KeyguardHooks.captureHotReloadHost();
+            state[5] = NotificationHooks.captureHotReloadViews();
+            state[6] = LauncherHooks.captureHotReloadHosts();
+            state[7] = AncTileHooks.captureHotReloadHosts();
+            param.setSavedInstanceState(state);
+        } catch (Throwable t) {
+            cancelProcessPreflight();
+            XposedHelpers.cancelQuiescing();
+            log("onHotReloading: save host state failed: " + t);
+            return false;
+        }
+        if (!stopSettingsLoader()) {
+            cancelProcessPreflight();
+            XposedHelpers.cancelQuiescing();
+            return false;
+        }
+        if (!commitProcessCleanup()) {
+            cancelProcessPreflight();
+            XposedHelpers.cancelQuiescing();
+            startSettingsLoader();
+            log("onHotReloading: main cleanup did not start, old generation resumed");
+            return false;
+        }
+        // Cleanup has committed and cannot be rolled back. From here on every release is
+        // best-effort and we must not throw/reject, otherwise the framework would resume a
+        // deliberately deactivated old generation.
+        try { detach(); } catch (Throwable t) { log("hot reload detach failed: " + t); }
+        try { XposedHelpers.clearGenerationState(); }
+        catch (Throwable t) { log("hot reload generation state clear failed: " + t); }
+        try { sCache.clear(); } catch (Throwable t) { log("hot reload cache clear failed: " + t); }
+        sSnapshot = java.util.Collections.emptyMap();
+        sSettingsLoaded = false;
+        sFirstWaitDone = false;
+        sAppContext = null;
+        sAppProcessHooked = false;
+        sSystemServerHooked = false;
+        sHookedPackageName = "";
+        try { XposedBridge.detachFramework(); }
+        catch (Throwable t) { log("hot reload framework detach failed: " + t); }
+        log("onHotReloading: old generation detached");
+        return true;
     }
 
     // hot reload 后框架不会自动 replay onModuleLoaded/onPackageReady。HotReloadedParam 继承
@@ -693,6 +868,9 @@ public class XposedInit extends XposedModule {
         super.onHotReloaded(param);
 
         XposedBridge.attachFramework(this);
+        XposedHelpers.cancelQuiescing();
+        sAppProcessHooked = false;
+        sSystemServerHooked = false;
         // 重要: HotReloadedParam 就是 ModuleLoadedParam 的子类, 恢复进程身份, 否则新 hooks 挂不上。
         sProcessName = param.getProcessName();
         sIsSystemServer = param.isSystemServer();
@@ -731,6 +909,65 @@ public class XposedInit extends XposedModule {
                 }
             }
         }
+        try {
+            Object saved = param.getSavedInstanceState();
+            if (saved instanceof Object[]) {
+                final Object[] state = (Object[]) saved;
+                // These restorers only replace Java references and do not touch host Views.
+                try {
+                    if (state.length > 1) NotificationHooks.restoreHotReloadHost(state[1]);
+                } catch (Throwable t) {
+                    log("onHotReloaded: restore notification host failed: " + t);
+                }
+                try {
+                    if (state.length > 2) SystemServerHooks.restoreHotReloadHost(state[2]);
+                } catch (Throwable t) {
+                    log("onHotReloaded: restore system-server host failed: " + t);
+                }
+                try {
+                    if (state.length > 4) KeyguardHooks.restoreHotReloadHost(state[4]);
+                } catch (Throwable t) {
+                    log("onHotReloaded: restore keyguard host failed: " + t);
+                }
+
+                Runnable restoreViews = new Runnable() {
+                    @Override public void run() {
+                        try {
+                            if (state.length > 0) StatusBarLyricHooks.restoreHotReloadHost(state[0]);
+                        } catch (Throwable t) {
+                            log("onHotReloaded: restore lyric host failed: " + t);
+                        }
+                        try {
+                            if (state.length > 3) WallpapersHooks.restoreHotReloadHosts(state[3]);
+                        } catch (Throwable t) {
+                            log("onHotReloaded: restore wallpaper hosts failed: " + t);
+                        }
+                        try {
+                            if (state.length > 5) NotificationHooks.restoreHotReloadViews(state[5]);
+                        } catch (Throwable t) {
+                            log("onHotReloaded: restore notification views failed: " + t);
+                        }
+                        try {
+                            if (state.length > 6) LauncherHooks.restoreHotReloadHosts(state[6]);
+                        } catch (Throwable t) {
+                            log("onHotReloaded: restore launcher hosts failed: " + t);
+                        }
+                        try {
+                            if (state.length > 7) AncTileHooks.restoreHotReloadHosts(state[7]);
+                        } catch (Throwable t) {
+                            log("onHotReloaded: restore ANC hosts failed: " + t);
+                        }
+                    }
+                };
+                if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                    restoreViews.run();
+                } else {
+                    new android.os.Handler(android.os.Looper.getMainLooper()).post(restoreViews);
+                }
+            }
+        } catch (Throwable t) {
+            log("onHotReloaded: restore host state failed: " + t);
+        }
     }
 
     private static XC_LoadPackage.LoadPackageParam systemServerLpparam() {
@@ -739,7 +976,7 @@ public class XposedInit extends XposedModule {
         lpp.processName = sProcessName;
         // 不能使用 getSystemClassLoader() — Android system_server 有自己的 classloader
         // (从 SYSTEMSERVERCLASSPATH 构建), 由 Zygote 设为 context classloader。
-        // 虽然当前 onHotReloaded 不会执行(hot reload 全拒), 保留修复防后续误开放。
+        // 热重载时也必须沿用 system_server 自己的 context classloader。
         lpp.classLoader = java.lang.Thread.currentThread().getContextClassLoader();
         lpp.isFirstApplication = true;
         return lpp;
@@ -826,6 +1063,7 @@ public class XposedInit extends XposedModule {
 
     private void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lpparam) {
         log("handleLoadPackage pkg=" + lpparam.packageName);
+        sHookedPackageName = lpparam.packageName;
         // 缓存被 hook 进程自身的 Application Context, 供 readBool 通过 ContentResolver 跨进程查询设置。
         if (sAppContext == null) {
             sAppContext = currentApplication();

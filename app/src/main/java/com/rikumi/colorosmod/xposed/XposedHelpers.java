@@ -25,6 +25,10 @@ import io.github.libxposed.api.XposedInterface;
  */
 public final class XposedHelpers {
 
+    private static final Object QUIESCE_LOCK = new Object();
+    private static volatile boolean QUIESCING;
+    private static int IN_FLIGHT;
+
     private XposedHelpers() {
     }
 
@@ -70,7 +74,12 @@ public final class XposedHelpers {
                 .intercept(new XposedInterface.Hooker() {
                     @Override
                     public Object intercept(XposedInterface.Chain chain) throws Throwable {
-                        return hook.handleHookedMethod(chain);
+                        if (!enterHook()) return chain.proceed();
+                        try {
+                            return hook.handleHookedMethod(chain);
+                        } finally {
+                            leaveHook();
+                        }
                     }
                 });
         return new XC_MethodHook.Unhook(handle);
@@ -470,6 +479,150 @@ public final class XposedHelpers {
         Map<String, Object> fields = ADDITIONAL_FIELDS.get(obj);
         if (fields == null) return null;
         return fields.remove(key);
+    }
+
+
+    /** Stop admitting module callbacks and wait for callbacks already inside old code. */
+    public static boolean beginQuiescing(long timeoutMs) {
+        long deadline = android.os.SystemClock.uptimeMillis() + timeoutMs;
+        synchronized (QUIESCE_LOCK) {
+            QUIESCING = true;
+            while (IN_FLIGHT != 0) {
+                long left = deadline - android.os.SystemClock.uptimeMillis();
+                if (left <= 0) {
+                    QUIESCING = false;
+                    QUIESCE_LOCK.notifyAll();
+                    return false;
+                }
+                try {
+                    QUIESCE_LOCK.wait(left);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    QUIESCING = false;
+                    QUIESCE_LOCK.notifyAll();
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    public static void cancelQuiescing() {
+        synchronized (QUIESCE_LOCK) {
+            QUIESCING = false;
+            QUIESCE_LOCK.notifyAll();
+        }
+    }
+
+    private static boolean enterHook() {
+        synchronized (QUIESCE_LOCK) {
+            if (QUIESCING) return false;
+            IN_FLIGHT++;
+            return true;
+        }
+    }
+
+    private static void leaveHook() {
+        synchronized (QUIESCE_LOCK) {
+            if (--IN_FLIGHT == 0) QUIESCE_LOCK.notifyAll();
+        }
+    }
+
+
+    public interface TrackedOwnerConsumer { void accept(Object owner); }
+
+    public static void forEachTrackedOwner(String key, TrackedOwnerConsumer consumer) {
+        synchronized (ADDITIONAL_FIELDS) {
+            for (Map.Entry<Object, Map<String, Object>> entry :
+                    new ArrayList<Map.Entry<Object, Map<String, Object>>>(ADDITIONAL_FIELDS.entrySet())) {
+                if (entry.getValue().containsKey(key)) consumer.accept(entry.getKey());
+            }
+        }
+    }
+
+    public static boolean removeTrackedPreDrawListeners(String key) {
+        boolean complete = true;
+        synchronized (ADDITIONAL_FIELDS) {
+            for (Map.Entry<Object, Map<String, Object>> entry :
+                    new ArrayList<Map.Entry<Object, Map<String, Object>>>(ADDITIONAL_FIELDS.entrySet())) {
+                Object owner = entry.getKey();
+                Object listener = entry.getValue().get(key);
+                if (!(owner instanceof android.view.View)
+                        || !(listener instanceof android.view.ViewTreeObserver.OnPreDrawListener)) continue;
+                try {
+                    android.view.ViewTreeObserver observer =
+                            ((android.view.View) owner).getViewTreeObserver();
+                    if (observer.isAlive()) observer.removeOnPreDrawListener(
+                            (android.view.ViewTreeObserver.OnPreDrawListener) listener);
+                } catch (Throwable t) {
+                    complete = false;
+                } finally {
+                    entry.getValue().remove(key);
+                }
+            }
+        }
+        return complete;
+    }
+
+
+    public static void removeTrackedViewChildren(String... keys) {
+        synchronized (ADDITIONAL_FIELDS) {
+            for (Map.Entry<Object, Map<String, Object>> entry :
+                    new ArrayList<Map.Entry<Object, Map<String, Object>>>(ADDITIONAL_FIELDS.entrySet())) {
+                for (String key : keys) {
+                    Object value = entry.getValue().remove(key);
+                    if (!(value instanceof android.view.View)) continue;
+                    android.view.View view = (android.view.View) value;
+                    try { view.animate().cancel(); } catch (Throwable ignored) { }
+                    try {
+                        if (view.getParent() instanceof android.view.ViewGroup) {
+                            ((android.view.ViewGroup) view.getParent()).removeView(view);
+                        }
+                    } catch (Throwable ignored) { }
+                }
+            }
+        }
+    }
+
+    public static void cancelTrackedCallbacksAndAnimators() {
+        synchronized (ADDITIONAL_FIELDS) {
+            for (Map.Entry<Object, Map<String, Object>> entry :
+                    new ArrayList<Map.Entry<Object, Map<String, Object>>>(ADDITIONAL_FIELDS.entrySet())) {
+                Object owner = entry.getKey();
+                for (Object value : new ArrayList<Object>(entry.getValue().values())) {
+                    if (owner instanceof android.view.View && value instanceof Runnable) {
+                        try { ((android.view.View) owner).removeCallbacks((Runnable) value); }
+                        catch (Throwable ignored) { }
+                    }
+                    if (value instanceof android.animation.Animator) {
+                        try { ((android.animation.Animator) value).cancel(); }
+                        catch (Throwable ignored) { }
+                    }
+                    if (value == null) continue;
+                    Field[] fields;
+                    try { fields = value.getClass().getDeclaredFields(); }
+                    catch (Throwable ignored) { continue; }
+                    for (Field field : fields) {
+                        if (!android.animation.Animator.class.isAssignableFrom(field.getType())) continue;
+                        try {
+                            field.setAccessible(true);
+                            Object animator = field.get(value);
+                            if (animator instanceof android.animation.Animator) {
+                                ((android.animation.Animator) animator).cancel();
+                            }
+                        } catch (Throwable ignored) { }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Drop Java-only generation state. UI/Animator cleanup is committed on main beforehand. */
+    public static void clearGenerationState() {
+        FIELD_CACHE.clear();
+        synchronized (ADDITIONAL_FIELDS) {
+            ADDITIONAL_FIELDS.clear();
+        }
     }
 
     // ------------------------------------------------------------------ 内部工具
