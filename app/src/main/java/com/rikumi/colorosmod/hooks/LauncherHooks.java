@@ -514,6 +514,8 @@ public final class LauncherHooks {
         content.getViewTreeObserver().addOnPreDrawListener(listener);
         XposedHelpers.setAdditionalInstanceField(content,
                 "colorosmod_launcher_predraw", listener);
+        XposedHelpers.setAdditionalInstanceField(content,
+                "colorosmod_launcher_predraw_wrapper", wrapperRef);
         android.view.View.OnAttachStateChangeListener detachListener =
                 new android.view.View.OnAttachStateChangeListener() {
                     @Override public void onViewAttachedToWindow(android.view.View view) { }
@@ -526,6 +528,8 @@ public final class LauncherHooks {
                             if (observer.isAlive()) observer.removeOnPreDrawListener(listener);
                             XposedHelpers.removeAdditionalInstanceField(
                                     view, "colorosmod_launcher_predraw");
+                            XposedHelpers.removeAdditionalInstanceField(
+                                    view, "colorosmod_launcher_predraw_wrapper");
                         }
                         if (XposedHelpers.getAdditionalInstanceField(
                                 view, "colorosmod_launcher_predraw_detach") == this) {
@@ -567,6 +571,21 @@ public final class LauncherHooks {
             saved.add(new Object[] { "recentsBlend", sRecentsSavedDepthController,
                     sRecentsSavedBlend.clone() });
         }
+        XposedHelpers.forEachTrackedOwner("colorosmod_launcher_predraw",
+                new XposedHelpers.TrackedOwnerConsumer() {
+                    @Override public void accept(Object owner) {
+                        if (!(owner instanceof android.view.View)) return;
+                        Object wrapperValue = XposedHelpers.getAdditionalInstanceField(
+                                owner, "colorosmod_launcher_predraw_wrapper");
+                        if (!(wrapperValue instanceof java.lang.ref.WeakReference)) return;
+                        Object wrapper = ((java.lang.ref.WeakReference<?>) wrapperValue).get();
+                        android.view.View content = (android.view.View) owner;
+                        android.view.ViewOutlineProvider provider = content.getOutlineProvider();
+                        if (wrapper instanceof android.view.View && provider != null) {
+                            saved.add(new Object[] { "submenuOutline", wrapper, content, provider });
+                        }
+                    }
+                });
         XposedHelpers.forEachTrackedOwner("colorosmodPopupBlurTarget",
                 new XposedHelpers.TrackedOwnerConsumer() {
                     @Override public void accept(Object owner) {
@@ -603,16 +622,32 @@ public final class LauncherHooks {
                 }
                 continue;
             }
+            if (state.length >= 4 && "submenuOutline".equals(state[0])
+                    && state[1] instanceof android.view.View
+                    && state[2] instanceof android.view.View
+                    && state[3] instanceof android.view.ViewOutlineProvider) {
+                try {
+                    android.view.View wrapper = (android.view.View) state[1];
+                    android.view.View content = (android.view.View) state[2];
+                    if (wrapper.isAttachedToWindow() && content.isAttachedToWindow()) {
+                        syncPopupSubMenuOutline(wrapper, content,
+                                (android.view.ViewOutlineProvider) state[3]);
+                    }
+                } catch (Throwable t) {
+                    log("launcher submenu outline restore failed: " + t);
+                }
+                continue;
+            }
             if (state.length >= 4 && "popupBlur".equals(state[0])
                     && state[1] instanceof android.view.View
                     && state[2] instanceof Float && state[3] instanceof Boolean) {
                 try {
                     android.view.View view = (android.view.View) state[1];
                     PopupBlurTarget target = popupBlurTarget(view);
-                    target.progress = (Float) state[2];
                     target.opening = (Boolean) state[3];
+                    target.progress = target.opening ? 1f : 0f;
                     applyPopupBgEffect(view, target.progress);
-                    view.setAlpha(target.opening ? 1f : target.progress);
+                    view.setAlpha(target.opening ? 1f : 0f);
                 } catch (Throwable t) {
                     log("launcher popup blur restore failed: " + t);
                 }
@@ -717,6 +752,8 @@ public final class LauncherHooks {
                         }
                         XposedHelpers.removeAdditionalInstanceField(
                                 owner, "colorosmod_launcher_predraw_detach");
+                        XposedHelpers.removeAdditionalInstanceField(
+                                owner, "colorosmod_launcher_predraw_wrapper");
                     }
                 });
         if (!XposedHelpers.removeTrackedPreDrawListeners("colorosmod_launcher_predraw")) {

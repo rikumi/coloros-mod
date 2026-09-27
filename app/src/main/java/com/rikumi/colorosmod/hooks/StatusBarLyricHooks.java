@@ -335,6 +335,7 @@ public final class StatusBarLyricHooks {
                 }
                 manager.addOnActiveSessionsChangedListener(sSessionListener, null, main);
                 sSessionListenerDetachedForHotReload = false;
+                refreshSessions(manager.getActiveSessions(null));
             } catch (Throwable t) {
                 log("statusbar_lyric session listener rollback failed: " + t);
             }
@@ -1072,10 +1073,12 @@ public final class StatusBarLyricHooks {
                 sRegistered.remove(c);
             }
         }
+        Handler main = sMainHandler;
+        if (main == null) main = new Handler(Looper.getMainLooper());
         for (MediaController c : list) {
             if (!sRegistered.contains(c)) {
                 try {
-                    c.registerCallback(sControllerCallback);
+                    c.registerCallback(sControllerCallback, main);
                     sRegistered.add(c);
                 } catch (Throwable t) {
                     log("statusbar_lyric registerCallback error: " + t);
