@@ -141,7 +141,7 @@ public final class StatusBarLyricHooks {
     private static boolean sSessionListenerDetachedForHotReload = false;
     private static boolean sThirdPartyObserverDetachedForHotReload = false;
     private static Context sThirdPartyObserverContextForHotReload = null;
-    private static boolean sHotReloadRollbackRetryQueued = false;
+    private static Runnable sHotReloadRollbackRetry = null;
     private static final List<MediaController> sControllersDetachedForHotReload =
             new ArrayList<>();
 
@@ -266,6 +266,11 @@ public final class StatusBarLyricHooks {
             log("statusbar_lyric listener rollback still pending, rejecting reload");
             return false;
         }
+        Handler main = sMainHandler;
+        if (sHotReloadRollbackRetry != null && main != null) {
+            main.removeCallbacks(sHotReloadRollbackRetry);
+            sHotReloadRollbackRetry = null;
+        }
         sListenersPreparedForHotReload = true;
         try {
             if (sSessionManager != null && sMediaInited) {
@@ -339,17 +344,25 @@ public final class StatusBarLyricHooks {
                 && sControllersDetachedForHotReload.isEmpty();
         if (complete) {
             sListenersPreparedForHotReload = false;
-            sHotReloadRollbackRetryQueued = false;
-        } else if (!sHotReloadRollbackRetryQueued) {
-            sHotReloadRollbackRetryQueued = true;
-            main.postDelayed(new Runnable() {
+            if (sHotReloadRollbackRetry != null) {
+                main.removeCallbacks(sHotReloadRollbackRetry);
+                sHotReloadRollbackRetry = null;
+            }
+        } else if (sHotReloadRollbackRetry == null) {
+            Runnable retry = new Runnable() {
                 @Override public void run() {
                     synchronized (StatusBarLyricHooks.class) {
-                        sHotReloadRollbackRetryQueued = false;
+                        if (sHotReloadRollbackRetry != this) return;
+                        sHotReloadRollbackRetry = null;
                         if (sListenersPreparedForHotReload) rollbackHotReloadListeners();
                     }
                 }
-            }, 500L);
+            };
+            sHotReloadRollbackRetry = retry;
+            if (!main.postDelayed(retry, 500L)) {
+                sHotReloadRollbackRetry = null;
+                log("statusbar_lyric listener rollback retry post failed");
+            }
         }
     }
 
@@ -387,7 +400,10 @@ public final class StatusBarLyricHooks {
         sSessionListenerDetachedForHotReload = false;
         sThirdPartyObserverDetachedForHotReload = false;
         sThirdPartyObserverContextForHotReload = null;
-        sHotReloadRollbackRetryQueued = false;
+        if (sHotReloadRollbackRetry != null && handler != null) {
+            handler.removeCallbacks(sHotReloadRollbackRetry);
+        }
+        sHotReloadRollbackRetry = null;
         sControllersDetachedForHotReload.clear();
         sThirdPartyWindowObserver = null;
         sThirdPartyObserverRegistered = false;
