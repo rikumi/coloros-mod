@@ -1036,7 +1036,7 @@ public final class StatusBarLyricHooks {
     private static void initMediaListener(Context ctx) {
         if (sMediaInited || sListenersPreparedForHotReload) return;
         final Context appCtx = ctx.getApplicationContext();
-        sMainHandler = new Handler(Looper.getMainLooper());
+        if (sMainHandler == null) sMainHandler = new Handler(Looper.getMainLooper());
         sMainHandler.post(() -> registerMediaListenerOnMain(appCtx));
     }
 

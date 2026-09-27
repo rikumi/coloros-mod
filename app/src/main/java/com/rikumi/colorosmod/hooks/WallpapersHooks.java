@@ -49,8 +49,8 @@ public final class WallpapersHooks {
     }
 
     private static final class AppliedState {
-        final android.graphics.drawable.Drawable background;
-        final android.graphics.drawable.Drawable image;
+        final java.lang.ref.WeakReference<android.graphics.drawable.Drawable> background;
+        final java.lang.ref.WeakReference<android.graphics.drawable.Drawable> image;
         final Integer backgroundColor;
         final Integer imageColor;
         final android.graphics.ColorFilter colorFilter;
@@ -60,15 +60,17 @@ public final class WallpapersHooks {
         final int height;
 
         AppliedState(View view) {
-            background = view.getBackground();
-            backgroundColor = drawableColor(background);
+            android.graphics.drawable.Drawable currentBackground = view.getBackground();
+            background = new java.lang.ref.WeakReference<>(currentBackground);
+            backgroundColor = drawableColor(currentBackground);
             if (view instanceof ImageView) {
                 ImageView imageView = (ImageView) view;
-                image = imageView.getDrawable();
-                imageColor = drawableColor(image);
+                android.graphics.drawable.Drawable currentImage = imageView.getDrawable();
+                image = new java.lang.ref.WeakReference<>(currentImage);
+                imageColor = drawableColor(currentImage);
                 colorFilter = imageView.getColorFilter();
             } else {
-                image = null;
+                image = new java.lang.ref.WeakReference<>(null);
                 imageColor = null;
                 colorFilter = null;
             }
@@ -247,7 +249,7 @@ public final class WallpapersHooks {
             ViewBaseline baseline = baselineFor(view);
             AppliedState applied = sAppliedStates.get(view);
             if (applied == null || !matchesAppliedDrawable(view.getBackground(),
-                    applied.background, applied.backgroundColor)) {
+                    applied.background.get(), applied.backgroundColor)) {
                 baseline.background = copyDrawable(view.getBackground(), view);
             }
         }
@@ -258,13 +260,13 @@ public final class WallpapersHooks {
             ViewBaseline baseline = baselineFor(view);
             AppliedState applied = sAppliedStates.get(view);
             if (applied == null || !matchesAppliedDrawable(view.getBackground(),
-                    applied.background, applied.backgroundColor)) {
+                    applied.background.get(), applied.backgroundColor)) {
                 baseline.background = copyDrawable(view.getBackground(), view);
             }
             if (view instanceof ImageView) {
                 ImageView image = (ImageView) view;
                 if (applied == null || !matchesAppliedDrawable(image.getDrawable(),
-                        applied.image, applied.imageColor)) {
+                        applied.image.get(), applied.imageColor)) {
                     baseline.image = image.getDrawable();
                 }
                 if (applied == null || image.getColorFilter() != applied.colorFilter) {

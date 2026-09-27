@@ -752,9 +752,15 @@ public final class AncTileHooks {
 
     /** Preserve host-owned tile/view identities whose constructors are not replayed by reload. */
     public static Object captureHotReloadHosts() {
+        State current = sState;
+        Object state = current == null ? null : new Object[] {
+                current.name, current.address, Integer.valueOf(current.type),
+                current.supports.toArray(new Integer[0])
+        };
         return new Object[] {
                 sTileRef.get(), sVolumeIconRef.get(), Boolean.valueOf(sVolumeAboveThreshold),
-                sAncLayouts.keySet().toArray(), sAncLottieViews.keySet().toArray()
+                sAncLayouts.keySet().toArray(), sAncLottieViews.keySet().toArray(), state,
+                sTargetType
         };
     }
 
@@ -774,6 +780,23 @@ public final class AncTileHooks {
             for (Object lottie : (Object[]) state[4]) {
                 if (lottie != null) sAncLottieViews.put(lottie, Boolean.TRUE);
             }
+        }
+        if (state.length > 5 && state[5] instanceof Object[]) {
+            Object[] savedState = (Object[]) state[5];
+            if (savedState.length >= 4 && savedState[2] instanceof Integer
+                    && savedState[3] instanceof Object[]) {
+                State restored = new State();
+                restored.name = savedState[0] instanceof String ? (String) savedState[0] : null;
+                restored.address = savedState[1] instanceof String ? (String) savedState[1] : null;
+                restored.type = ((Integer) savedState[2]).intValue();
+                for (Object supported : (Object[]) savedState[3]) {
+                    if (supported instanceof Integer) restored.supports.add((Integer) supported);
+                }
+                sState = restored;
+            }
+        }
+        if (state.length > 6 && state[6] instanceof Integer) {
+            sTargetType = (Integer) state[6];
         }
         Handler main = sMain;
         if (main != null) postUiRefresh();
