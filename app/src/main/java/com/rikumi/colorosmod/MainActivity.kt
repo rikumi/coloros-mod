@@ -81,7 +81,6 @@ import io.github.libxposed.service.HotReloadResult
 import io.github.libxposed.service.XposedService
 import io.github.libxposed.service.XposedServiceHelper
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.ConcurrentHashMap
 import androidx.navigationevent.NavigationEventDispatcher
 import androidx.navigationevent.NavigationEventDispatcherOwner
@@ -807,61 +806,119 @@ private fun launchApp(ctx: Context, command: String) {
     }
 }
 
+private const val HOT_RELOAD_TIMEOUT_MS = 30_000L
 private val hotReloadBusy = AtomicBoolean(false)
 private val activeHotReloadBatches: MutableSet<HotReloadBatch> =
     java.util.Collections.newSetFromMap(ConcurrentHashMap<HotReloadBatch, Boolean>())
 
-private class HotReloadBatch(
-    private val context: Context,
-    private val total: Int,
-) {
-    private val remaining = AtomicInteger(total)
-    private val success = AtomicInteger()
-    private val rejected = AtomicInteger()
-    private val failed = AtomicInteger()
-    private val tokenLock = Any()
+private class HotReloadBatch(private val context: Context) {
+    private val lock = Any()
+    private val handler = Handler(context.mainLooper)
     private val tokens = HashMap<XposedService, MutableList<AtomicBoolean>>()
-    private val finished = AtomicBoolean(false)
+    private var remaining = 0
+    private var success = 0
+    private var rejected = 0
+    private var failed = 0
+    private var submissionsClosed = false
+    private var finished = false
+    private val timeout = Runnable { finishTimedOut() }
 
-    fun token(service: XposedService): AtomicBoolean {
-        val token = AtomicBoolean(false)
-        synchronized(tokenLock) {
-            tokens.getOrPut(service) { mutableListOf() }.add(token)
-        }
-        return token
+    init {
+        handler.postDelayed(timeout, HOT_RELOAD_TIMEOUT_MS)
     }
 
-    fun complete(token: AtomicBoolean, status: HotReloadResult.Status?, message: String?) {
-        if (!token.compareAndSet(false, true)) return
-        when (status) {
-            HotReloadResult.Status.SUCCEEDED -> success.incrementAndGet()
-            HotReloadResult.Status.FAILED -> {
-                if (message == null) rejected.incrementAndGet() else failed.incrementAndGet()
-            }
-            HotReloadResult.Status.IN_PROGRESS -> rejected.incrementAndGet()
-            else -> failed.incrementAndGet()
+    fun token(service: XposedService): AtomicBoolean? = synchronized(lock) {
+        if (finished || submissionsClosed) return@synchronized null
+        AtomicBoolean(false).also {
+            tokens.getOrPut(service) { mutableListOf() }.add(it)
+            remaining++
         }
-        finishOne()
+    }
+
+    fun closeSubmissions() {
+        val shouldRelease = synchronized(lock) {
+            if (finished) return@synchronized false
+            submissionsClosed = true
+            if (remaining == 0) {
+                finished = true
+                true
+            } else {
+                false
+            }
+        }
+        if (shouldRelease) release()
+    }
+
+    fun finishWithoutTargets() {
+        val shouldRelease = synchronized(lock) {
+            if (finished || remaining != 0) return@synchronized false
+            finished = true
+            submissionsClosed = true
+            true
+        }
+        if (shouldRelease) release("没有可热重载的运行中作用域")
+    }
+
+    fun failOperation() {
+        val shouldRelease = synchronized(lock) {
+            if (finished) return@synchronized false
+            finished = true
+            submissionsClosed = true
+            tokens.values.flatten().forEach { token ->
+                if (token.compareAndSet(false, true)) failed++
+            }
+            true
+        }
+        if (shouldRelease) release("热重载失败")
+    }
+
+    fun complete(token: AtomicBoolean, status: HotReloadResult.Status?) {
+        val shouldRelease = synchronized(lock) {
+            if (!token.compareAndSet(false, true)) return@synchronized false
+            when (status) {
+                HotReloadResult.Status.SUCCEEDED -> success++
+                HotReloadResult.Status.UNSUPPORTED,
+                HotReloadResult.Status.IN_PROGRESS -> rejected++
+                HotReloadResult.Status.FAILED,
+                HotReloadResult.Status.PROCESS_DIED,
+                null -> failed++
+            }
+            remaining--
+            if (submissionsClosed && remaining == 0 && !finished) {
+                finished = true
+                true
+            } else {
+                false
+            }
+        }
+        if (shouldRelease) release()
     }
 
     fun serviceDied(service: XposedService) {
-        val serviceTokens = synchronized(tokenLock) {
-            tokens.remove(service)?.toList()
-        } ?: return
-        serviceTokens.forEach { token ->
-            if (token.compareAndSet(false, true)) {
-                failed.incrementAndGet()
-                finishOne()
-            }
-        }
+        val serviceTokens = synchronized(lock) { tokens[service]?.toList() } ?: return
+        serviceTokens.forEach { complete(it, HotReloadResult.Status.PROCESS_DIED) }
     }
 
-    private fun finishOne() {
-        if (remaining.decrementAndGet() != 0 || !finished.compareAndSet(false, true)) return
+    private fun finishTimedOut() {
+        synchronized(lock) {
+            if (finished) return
+            finished = true
+            submissionsClosed = true
+            tokens.values.flatten().forEach { token ->
+                if (token.compareAndSet(false, true)) failed++
+            }
+        }
+        release("热重载超时：成功 $success，拒绝 $rejected，失败 $failed")
+    }
+
+    private fun release(message: String? = null) {
+        handler.removeCallbacks(timeout)
         activeHotReloadBatches.remove(this)
         hotReloadBusy.set(false)
-        showHotReloadToast(context,
-            "热重载：成功 ${success.get()}，拒绝 ${rejected.get()}，失败 ${failed.get()}")
+        val summary = synchronized(lock) {
+            message ?: "热重载：成功 $success，拒绝 $rejected，失败 $failed"
+        }
+        showHotReloadToast(context, summary)
     }
 }
 
@@ -902,6 +959,8 @@ private fun requestHotReloadAll(ctx: Context) {
         Toast.makeText(appContext, "Xposed 服务不可用", Toast.LENGTH_SHORT).show()
         return
     }
+    val batch = HotReloadBatch(appContext)
+    activeHotReloadBatches.add(batch)
     Thread({
         try {
             val work = ArrayList<Pair<XposedService, HookedTarget>>()
@@ -915,33 +974,30 @@ private fun requestHotReloadAll(ctx: Context) {
                 }
             }
             if (work.isEmpty()) {
-                hotReloadBusy.set(false)
-                showHotReloadToast(appContext, "没有可热重载的运行中作用域")
+                batch.finishWithoutTargets()
                 return@Thread
             }
-            val batch = HotReloadBatch(appContext, work.size)
-            activeHotReloadBatches.add(batch)
             showHotReloadToast(appContext, "热重载处理中：${work.size} 个作用域")
             work.forEach { (service, target) ->
-                val token = batch.token(service)
+                val token = batch.token(service) ?: return@forEach
                 try {
                     // A service can die between the initial snapshot and submission.
                     if (!MainActivity.xposedServices.contains(service)) {
                         batch.serviceDied(service)
                     } else {
                         service.hotReloadModule(target, null) { _: HookedTarget, result: HotReloadResult ->
-                            batch.complete(token, result.status(), result.message())
+                            batch.complete(token, result.status())
                         }
                     }
                 } catch (t: Throwable) {
                     Log.e("ColorOSMod", "hot reload submit failed", t)
-                    batch.complete(token, null, t.message)
+                    batch.complete(token, null)
                 }
             }
+            batch.closeSubmissions()
         } catch (t: Throwable) {
             Log.e("ColorOSMod", "hot reload failed", t)
-            hotReloadBusy.set(false)
-            showHotReloadToast(appContext, "热重载失败")
+            batch.failOperation()
         }
     }, "ColorOSMod-HotReload").start()
 }

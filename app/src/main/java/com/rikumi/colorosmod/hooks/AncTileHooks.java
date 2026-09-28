@@ -162,6 +162,10 @@ public final class AncTileHooks {
     private static volatile ContentObserver sObserver;
     /** True after preflight successfully detached the provider observer. */
     private static volatile boolean sObserverDetachedForHotReload;
+    private static final int OBSERVER_ROLLBACK_MAX_ATTEMPTS = 4;
+    private static final long OBSERVER_ROLLBACK_BASE_DELAY_MS = 250L;
+    private static int sObserverRollbackAttempts;
+    private static Runnable sObserverRollbackRetry;
     private static volatile Thread sPollThread;
     private static volatile boolean sActive;
     private static volatile int[] sIconIds;
@@ -653,6 +657,12 @@ public final class AncTileHooks {
      * executor, Handler, or cache is changed until this succeeds.
      */
     public static boolean canHotReload() {
+        // A rejected reload may still be restoring the observer. Do not enter another preflight
+        // with ambiguous registration ownership or create a duplicate registration.
+        if (sObserverDetachedForHotReload) {
+            log("anc observer rollback still pending, rejecting reload");
+            return false;
+        }
         sActive = false;
         Thread poll = sPollThread;
         if (poll != null && poll.isAlive()) {
@@ -709,19 +719,7 @@ public final class AncTileHooks {
 
     /** Restore resources detached by preflight and re-arm the stopped polling loop. */
     public static synchronized void cancelHotReloadPreflight() {
-        if (sObserverDetachedForHotReload) {
-            ContentObserver observer = sObserver;
-            Context context = sContext;
-            try {
-                if (observer != null && context != null) {
-                    context.getContentResolver().registerContentObserver(
-                            Uri.parse("content://" + MELODY_AUTHORITY), true, observer);
-                }
-                sObserverDetachedForHotReload = false;
-            } catch (Throwable t) {
-                log("anc hot reload observer rollback failed: " + t);
-            }
-        }
+        restoreObserverAfterHotReloadPreflight();
         if (sActive) return;
         sActive = true;
         Thread current = sPollThread;
@@ -748,6 +746,58 @@ public final class AncTileHooks {
         thread.setDaemon(true);
         sPollThread = thread;
         thread.start();
+    }
+
+    private static void restoreObserverAfterHotReloadPreflight() {
+        if (!sObserverDetachedForHotReload) {
+            cancelObserverRollbackRetry();
+            return;
+        }
+        ContentObserver observer = sObserver;
+        Context context = sContext;
+        try {
+            if (observer == null || context == null) {
+                throw new IllegalStateException("observer rollback target unavailable");
+            }
+            context.getContentResolver().registerContentObserver(
+                    Uri.parse("content://" + MELODY_AUTHORITY), true, observer);
+            sObserverDetachedForHotReload = false;
+            cancelObserverRollbackRetry();
+        } catch (Throwable t) {
+            log("anc hot reload observer rollback failed: " + t);
+            scheduleObserverRollbackRetry();
+        }
+    }
+
+    private static void scheduleObserverRollbackRetry() {
+        if (!sObserverDetachedForHotReload || sObserverRollbackRetry != null
+                || sObserverRollbackAttempts >= OBSERVER_ROLLBACK_MAX_ATTEMPTS) return;
+        Handler main = sMain;
+        if (main == null) return;
+        final int attempt = ++sObserverRollbackAttempts;
+        Runnable retry = new Runnable() {
+            @Override public void run() {
+                synchronized (AncTileHooks.class) {
+                    if (sObserverRollbackRetry != this) return;
+                    sObserverRollbackRetry = null;
+                    restoreObserverAfterHotReloadPreflight();
+                }
+            }
+        };
+        sObserverRollbackRetry = retry;
+        long delay = OBSERVER_ROLLBACK_BASE_DELAY_MS << (attempt - 1);
+        if (!main.postDelayed(retry, delay)) {
+            sObserverRollbackRetry = null;
+            log("anc hot reload observer rollback retry post failed");
+        }
+    }
+
+    private static void cancelObserverRollbackRetry() {
+        Runnable retry = sObserverRollbackRetry;
+        Handler main = sMain;
+        if (retry != null && main != null) main.removeCallbacks(retry);
+        sObserverRollbackRetry = null;
+        sObserverRollbackAttempts = 0;
     }
 
     /** Preserve host-owned tile/view identities whose constructors are not replayed by reload. */
@@ -803,8 +853,9 @@ public final class AncTileHooks {
     }
 
     /** Destructive commit. Preflight already proved the poller stopped; this method never rejects. */
-    public static void cleanupForHotReload() {
+    public static synchronized void cleanupForHotReload() {
         sActive = false;
+        cancelObserverRollbackRetry();
         // The provider observer was detached during the rollback-safe preflight.
         sObserverDetachedForHotReload = false;
         ExecutorService worker = sWorker;

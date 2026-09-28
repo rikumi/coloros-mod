@@ -137,7 +137,10 @@ public final class StatusBarLyricHooks {
     private static volatile MediaSessionManager sSessionManager = null;
     private static volatile boolean sMediaInited = false;
     private static final Set<MediaController> sRegistered = new HashSet<>();
-    private static boolean sListenersPreparedForHotReload = false;
+    private static volatile long sSessionListenerGeneration = 0L;
+    private static volatile MediaSessionManager.OnActiveSessionsChangedListener sSessionListener =
+            createSessionListener(sSessionListenerGeneration);
+    private static volatile boolean sListenersPreparedForHotReload = false;
     private static boolean sSessionListenerDetachedForHotReload = false;
     private static boolean sThirdPartyObserverDetachedForHotReload = false;
     private static Context sThirdPartyObserverContextForHotReload = null;
@@ -289,6 +292,8 @@ public final class StatusBarLyricHooks {
         try {
             if (sSessionManager != null && sMediaInited) {
                 sSessionManager.removeOnActiveSessionsChangedListener(sSessionListener);
+                // Invalidate deliveries from the removed listener before rollback can reopen the gate.
+                sSessionListenerGeneration++;
                 sSessionListenerDetachedForHotReload = true;
             }
             for (MediaController controller : new ArrayList<>(sRegistered)) {
@@ -348,9 +353,11 @@ public final class StatusBarLyricHooks {
                 if (manager == null) {
                     throw new IllegalStateException("session manager unavailable");
                 }
-                manager.addOnActiveSessionsChangedListener(sSessionListener, null, main);
+                MediaSessionManager.OnActiveSessionsChangedListener listener =
+                        createSessionListener(sSessionListenerGeneration);
+                manager.addOnActiveSessionsChangedListener(listener, null, main);
+                sSessionListener = listener;
                 sSessionListenerDetachedForHotReload = false;
-                refreshSessions(manager.getActiveSessions(null));
             } catch (Throwable t) {
                 log("statusbar_lyric session listener rollback failed: " + t);
             }
@@ -359,10 +366,20 @@ public final class StatusBarLyricHooks {
                 && !sSessionListenerDetachedForHotReload
                 && sControllersDetachedForHotReload.isEmpty();
         if (complete) {
+            // Open the callback gate only after every old-generation registration is restored.
+            // refreshSessions itself observes this gate, so it must happen after the flag changes.
             sListenersPreparedForHotReload = false;
             if (sHotReloadRollbackRetry != null) {
                 main.removeCallbacks(sHotReloadRollbackRetry);
                 sHotReloadRollbackRetry = null;
+            }
+            try {
+                MediaSessionManager manager = sSessionManager;
+                if (manager != null && sGenerationActive) {
+                    refreshSessions(manager.getActiveSessions(null));
+                }
+            } catch (Throwable t) {
+                log("statusbar_lyric session refresh after rollback failed: " + t);
             }
         } else if (sHotReloadRollbackRetry == null) {
             Runnable retry = new Runnable() {
@@ -390,6 +407,12 @@ public final class StatusBarLyricHooks {
             if (handler != null) handler.removeCallbacksAndMessages(null);
         } catch (Throwable t) {
             log("statusbar_lyric handler cleanup failed: " + t);
+        }
+        // A session callback queued before preflight may have entered just before the gate closed.
+        // Unregister a defensive snapshot before discarding the old generation's bookkeeping.
+        for (MediaController controller : new ArrayList<>(sRegistered)) {
+            try { controller.unregisterCallback(sControllerCallback); }
+            catch (Throwable t) { log("statusbar_lyric controller cleanup failed: " + t); }
         }
         sRegistered.clear();
         try {
@@ -1028,13 +1051,15 @@ public final class StatusBarLyricHooks {
 
     // ---------------------------------------------------------------- 数据: 监听 MediaSession
 
-    private static final MediaSessionManager.OnActiveSessionsChangedListener sSessionListener =
-            new MediaSessionManager.OnActiveSessionsChangedListener() {
-                @Override
-                public void onActiveSessionsChanged(List<MediaController> controllers) {
-                    refreshSessions(controllers);
-                }
-            };
+    private static MediaSessionManager.OnActiveSessionsChangedListener createSessionListener(
+            final long generation) {
+        return new MediaSessionManager.OnActiveSessionsChangedListener() {
+            @Override
+            public void onActiveSessionsChanged(List<MediaController> controllers) {
+                refreshSessions(controllers, generation);
+            }
+        };
+    }
 
     private static final MediaController.Callback sControllerCallback =
             new MediaController.Callback() {
@@ -1077,7 +1102,14 @@ public final class StatusBarLyricHooks {
         }
     }
 
-    private static synchronized void refreshSessions(List<MediaController> controllers) {
+    private static void refreshSessions(List<MediaController> controllers) {
+        refreshSessions(controllers, sSessionListenerGeneration);
+    }
+
+    private static synchronized void refreshSessions(List<MediaController> controllers,
+            long listenerGeneration) {
+        if (!sGenerationActive || sListenersPreparedForHotReload
+                || listenerGeneration != sSessionListenerGeneration) return;
         List<MediaController> list = controllers != null ? controllers
                 : new ArrayList<MediaController>();
         for (MediaController c : new ArrayList<>(sRegistered)) {
