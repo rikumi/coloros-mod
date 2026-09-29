@@ -682,6 +682,12 @@ public class XposedInit extends XposedModule {
             }
             return true;
         }
+        if ("com.android.launcher".equals(sHookedPackageName)) {
+            return LauncherHooks.prepareHotReloadListeners();
+        }
+        if ("com.oplus.wallpapers".equals(sHookedPackageName)) {
+            return WallpapersHooks.prepareHotReloadListeners();
+        }
         return true;
     }
 
@@ -689,6 +695,10 @@ public class XposedInit extends XposedModule {
         if ("com.android.systemui".equals(sHookedPackageName)) {
             StatusBarLyricHooks.cancelHotReloadPreflight();
             AncTileHooks.cancelHotReloadPreflight();
+        } else if ("com.android.launcher".equals(sHookedPackageName)) {
+            LauncherHooks.cancelHotReloadPreflight();
+        } else if ("com.oplus.wallpapers".equals(sHookedPackageName)) {
+            WallpapersHooks.cancelHotReloadPreflight();
         }
     }
 

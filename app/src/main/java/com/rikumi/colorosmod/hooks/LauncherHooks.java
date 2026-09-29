@@ -696,6 +696,17 @@ public final class LauncherHooks {
         }
     }
 
+    public static boolean prepareHotReloadListeners() {
+        return XposedHelpers.prepareTrackedPreDrawListeners("colorosmod_launcher_predraw");
+    }
+
+    public static void cancelHotReloadPreflight() {
+        if (!XposedHelpers.cancelTrackedPreDrawListenerPreflight(
+                "colorosmod_launcher_predraw")) {
+            log("launcher hot reload pre-draw rollback incomplete");
+        }
+    }
+
     public static void cleanupForHotReload() {
         if (sRecentsSavedBlend != null && sRecentsSavedDepthController != null) {
             try {
@@ -756,8 +767,9 @@ public final class LauncherHooks {
                                 owner, "colorosmod_launcher_predraw_wrapper");
                     }
                 });
-        if (!XposedHelpers.removeTrackedPreDrawListeners("colorosmod_launcher_predraw")) {
-            log("launcher hot reload pre-draw cleanup incomplete");
+        if (!XposedHelpers.commitTrackedPreDrawListenerPreflight(
+                "colorosmod_launcher_predraw")) {
+            log("launcher hot reload pre-draw cleanup missing preflight");
         }
     }
 

@@ -679,18 +679,18 @@ public final class GestureHooks {
                 ((android.view.ViewGroup) parent).removeView((GestureBlockSurface) surface);
             }
         }
-        XposedHelpers.setAdditionalInstanceField(handle, "gesture_block_surface", null);
+        XposedHelpers.removeAdditionalInstanceField(handle, "gesture_block_surface");
     }
 
     static void removeGestureBlockSurfaces(android.view.View view) {
         android.view.View current = view;
         while (current != null) {
             removeGestureBlockSurface(current);
-            if (XposedHelpers.getAdditionalInstanceField(
-                    current, "gesture_block_insets_applied") != null) {
-                XposedHelpers.setAdditionalInstanceField(
-                        current, "gesture_block_insets_applied", null);
-                if (current.isAttachedToWindow()) current.requestLayout();
+            if (XposedHelpers.removeAdditionalInstanceField(
+                    current, "gesture_block_insets_applied") != null
+                    && current.isAttachedToWindow()) {
+                current.requestApplyInsets();
+                current.requestLayout();
             }
             android.view.ViewParent parent = current.getParent();
             current = parent instanceof android.view.View ? (android.view.View) parent : null;
@@ -879,7 +879,7 @@ public final class GestureHooks {
                 ((android.view.ViewGroup) mback.getParent()).removeView(mback);
             }
         }
-        XposedHelpers.setAdditionalInstanceField(handle, "mback_surface", null);
+        XposedHelpers.removeAdditionalInstanceField(handle, "mback_surface");
     }
 
 
@@ -890,14 +890,17 @@ public final class GestureHooks {
         final java.util.Set<android.view.View> handles =
                 java.util.Collections.newSetFromMap(
                         new java.util.IdentityHashMap<android.view.View, Boolean>());
-        XposedHelpers.forEachTrackedOwner("mback_surface",
+        XposedHelpers.TrackedOwnerConsumer collectView =
                 new XposedHelpers.TrackedOwnerConsumer() {
                     @Override public void accept(Object owner) {
                         if (owner instanceof android.view.View) {
                             handles.add((android.view.View) owner);
                         }
                     }
-                });
+                };
+        XposedHelpers.forEachTrackedOwner("mback_surface", collectView);
+        XposedHelpers.forEachTrackedOwner("gesture_block_surface", collectView);
+        XposedHelpers.forEachTrackedOwner("gesture_block_insets_applied", collectView);
         for (MBackGesture gesture : gestures) {
             cancelMBackLongPress(gesture);
             if (gesture.handle != null) handles.add(gesture.handle);

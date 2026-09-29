@@ -8,6 +8,8 @@ import java.lang.reflect.Member;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -448,6 +450,21 @@ public final class XposedHelpers {
     // 因包装对象仍在栈上而幸存, 故其他功能看似正常。这是 libxposed 迁移后兼容层引入的回归。
     private static final Map<Object, Map<String, Object>> ADDITIONAL_FIELDS =
             java.util.Collections.synchronizedMap(new WeakHashMap<Object, Map<String, Object>>());
+    private static final Map<String, List<TrackedPreDrawListener>> PREPARED_PRE_DRAW =
+            new HashMap<String, List<TrackedPreDrawListener>>();
+    private static final Map<String, Runnable> PRE_DRAW_ROLLBACK_RETRIES =
+            new HashMap<String, Runnable>();
+
+    private static final class TrackedPreDrawListener {
+        final android.view.View owner;
+        final android.view.ViewTreeObserver.OnPreDrawListener listener;
+
+        TrackedPreDrawListener(android.view.View owner,
+                android.view.ViewTreeObserver.OnPreDrawListener listener) {
+            this.owner = owner;
+            this.listener = listener;
+        }
+    }
 
     public static Object setAdditionalInstanceField(Object obj, String key, Object value) {
         if (obj == null) throw new NullPointerException("object must not be null");
@@ -540,9 +557,12 @@ public final class XposedHelpers {
         }
     }
 
-    public static boolean removeTrackedPreDrawListeners(String key) {
-        boolean complete = true;
+    /** Detach tracked listeners without dropping bookkeeping so a rejected reload can restore them. */
+    public static boolean prepareTrackedPreDrawListeners(String key) {
         synchronized (ADDITIONAL_FIELDS) {
+            if (PREPARED_PRE_DRAW.containsKey(key)) return false;
+            List<TrackedPreDrawListener> detached = new ArrayList<TrackedPreDrawListener>();
+            PREPARED_PRE_DRAW.put(key, detached);
             for (Map.Entry<Object, Map<String, Object>> entry :
                     new ArrayList<Map.Entry<Object, Map<String, Object>>>(ADDITIONAL_FIELDS.entrySet())) {
                 Object owner = entry.getKey();
@@ -550,18 +570,95 @@ public final class XposedHelpers {
                 if (!(owner instanceof android.view.View)
                         || !(listener instanceof android.view.ViewTreeObserver.OnPreDrawListener)) continue;
                 try {
-                    android.view.ViewTreeObserver observer =
-                            ((android.view.View) owner).getViewTreeObserver();
-                    if (observer.isAlive()) observer.removeOnPreDrawListener(
+                    android.view.View view = (android.view.View) owner;
+                    android.view.ViewTreeObserver observer = view.getViewTreeObserver();
+                    if (!observer.isAlive()) continue;
+                    observer.removeOnPreDrawListener(
                             (android.view.ViewTreeObserver.OnPreDrawListener) listener);
+                    detached.add(new TrackedPreDrawListener(view,
+                            (android.view.ViewTreeObserver.OnPreDrawListener) listener));
                 } catch (Throwable t) {
-                    complete = false;
-                } finally {
-                    entry.getValue().remove(key);
+                    boolean restored = cancelTrackedPreDrawListenerPreflightLocked(key);
+                    if (!restored) scheduleTrackedPreDrawRollbackLocked(key);
+                    return false;
                 }
             }
+            return true;
         }
-        return complete;
+    }
+
+    /** Restore listeners detached by a rejected hot-reload preflight. */
+    public static boolean cancelTrackedPreDrawListenerPreflight(String key) {
+        synchronized (ADDITIONAL_FIELDS) {
+            boolean restored = cancelTrackedPreDrawListenerPreflightLocked(key);
+            if (!restored) scheduleTrackedPreDrawRollbackLocked(key);
+            return restored;
+        }
+    }
+
+    private static boolean cancelTrackedPreDrawListenerPreflightLocked(String key) {
+        List<TrackedPreDrawListener> detached = PREPARED_PRE_DRAW.get(key);
+        if (detached == null) return true;
+        for (Iterator<TrackedPreDrawListener> iterator = detached.iterator(); iterator.hasNext(); ) {
+            TrackedPreDrawListener tracked = iterator.next();
+            Map<String, Object> fields = ADDITIONAL_FIELDS.get(tracked.owner);
+            if (fields == null || fields.get(key) != tracked.listener) {
+                iterator.remove();
+                continue;
+            }
+            try {
+                android.view.ViewTreeObserver observer = tracked.owner.getViewTreeObserver();
+                if (!observer.isAlive()) {
+                    // A dead observer cannot retain or invoke the old-generation listener.
+                    iterator.remove();
+                    continue;
+                }
+                observer.addOnPreDrawListener(tracked.listener);
+                iterator.remove();
+            } catch (Throwable ignored) { }
+        }
+        if (!detached.isEmpty()) return false;
+        PREPARED_PRE_DRAW.remove(key);
+        Runnable retry = PRE_DRAW_ROLLBACK_RETRIES.remove(key);
+        if (retry != null) {
+            new android.os.Handler(android.os.Looper.getMainLooper()).removeCallbacks(retry);
+        }
+        return true;
+    }
+
+    private static void scheduleTrackedPreDrawRollbackLocked(final String key) {
+        if (PRE_DRAW_ROLLBACK_RETRIES.containsKey(key)) return;
+        final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+        Runnable retry = new Runnable() {
+            @Override public void run() {
+                synchronized (ADDITIONAL_FIELDS) {
+                    if (PRE_DRAW_ROLLBACK_RETRIES.get(key) != this) return;
+                    PRE_DRAW_ROLLBACK_RETRIES.remove(key);
+                    if (!cancelTrackedPreDrawListenerPreflightLocked(key)) {
+                        scheduleTrackedPreDrawRollbackLocked(key);
+                    }
+                }
+            }
+        };
+        PRE_DRAW_ROLLBACK_RETRIES.put(key, retry);
+        main.postDelayed(retry, 1000L);
+    }
+
+    /** Finalize a successful preflight without attempting to detach the same listeners twice. */
+    public static boolean commitTrackedPreDrawListenerPreflight(String key) {
+        synchronized (ADDITIONAL_FIELDS) {
+            if (!PREPARED_PRE_DRAW.containsKey(key)) return false;
+            Runnable retry = PRE_DRAW_ROLLBACK_RETRIES.remove(key);
+            if (retry != null) {
+                new android.os.Handler(android.os.Looper.getMainLooper()).removeCallbacks(retry);
+            }
+            for (Map.Entry<Object, Map<String, Object>> entry :
+                    new ArrayList<Map.Entry<Object, Map<String, Object>>>(ADDITIONAL_FIELDS.entrySet())) {
+                entry.getValue().remove(key);
+            }
+            PREPARED_PRE_DRAW.remove(key);
+            return true;
+        }
     }
 
 
@@ -622,6 +719,8 @@ public final class XposedHelpers {
         FIELD_CACHE.clear();
         synchronized (ADDITIONAL_FIELDS) {
             ADDITIONAL_FIELDS.clear();
+            PREPARED_PRE_DRAW.clear();
+            PRE_DRAW_ROLLBACK_RETRIES.clear();
         }
     }
 

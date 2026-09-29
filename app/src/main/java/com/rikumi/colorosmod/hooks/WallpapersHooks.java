@@ -337,9 +337,21 @@ public final class WallpapersHooks {
         }
     }
 
+    public static boolean prepareHotReloadListeners() {
+        return XposedHelpers.prepareTrackedPreDrawListeners("colorosmod_wallpaper_bg_predraw");
+    }
+
+    public static void cancelHotReloadPreflight() {
+        if (!XposedHelpers.cancelTrackedPreDrawListenerPreflight(
+                "colorosmod_wallpaper_bg_predraw")) {
+            log("wallpapers hot reload pre-draw rollback incomplete");
+        }
+    }
+
     public static void cleanupForHotReload() {
-        if (!XposedHelpers.removeTrackedPreDrawListeners("colorosmod_wallpaper_bg_predraw")) {
-            log("wallpapers hot reload pre-draw cleanup incomplete");
+        if (!XposedHelpers.commitTrackedPreDrawListenerPreflight(
+                "colorosmod_wallpaper_bg_predraw")) {
+            log("wallpapers hot reload pre-draw cleanup missing preflight");
         }
         synchronized (sViewBaselines) {
             for (java.util.Map.Entry<View, ViewBaseline> entry :
