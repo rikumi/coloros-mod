@@ -136,6 +136,8 @@ public final class StatusBarLyricHooks {
     private static ContentObserver sThirdPartyWindowObserver = null;
     private static volatile MediaSessionManager sSessionManager = null;
     private static volatile boolean sMediaInited = false;
+    /** Tracks the external registration itself; initialization may fail after registration succeeds. */
+    private static volatile boolean sSessionListenerRegistered = false;
     private static final Set<MediaController> sRegistered = new HashSet<>();
     private static volatile long sSessionListenerGeneration = 0L;
     private static volatile MediaSessionManager.OnActiveSessionsChangedListener sSessionListener =
@@ -145,6 +147,10 @@ public final class StatusBarLyricHooks {
     private static boolean sThirdPartyObserverDetachedForHotReload = false;
     private static Context sThirdPartyObserverContextForHotReload = null;
     private static Runnable sHotReloadRollbackRetry = null;
+    private static int sHotReloadRollbackAttempts = 0;
+    private static final int HOT_RELOAD_ROLLBACK_MAX_ATTEMPTS = 5;
+    private static final long HOT_RELOAD_ROLLBACK_INITIAL_DELAY_MS = 250L;
+    private static final long HOT_RELOAD_ROLLBACK_MAX_DELAY_MS = 4000L;
     private static final List<MediaController> sControllersDetachedForHotReload =
             new ArrayList<>();
 
@@ -289,21 +295,25 @@ public final class StatusBarLyricHooks {
             sHotReloadRollbackRetry = null;
         }
         sListenersPreparedForHotReload = true;
+        sHotReloadRollbackAttempts = 0;
         try {
-            if (sSessionManager != null && sMediaInited) {
+            if (sSessionManager != null && sSessionListenerRegistered) {
                 sSessionManager.removeOnActiveSessionsChangedListener(sSessionListener);
+                sSessionListenerRegistered = false;
                 // Invalidate deliveries from the removed listener before rollback can reopen the gate.
                 sSessionListenerGeneration++;
                 sSessionListenerDetachedForHotReload = true;
             }
             for (MediaController controller : new ArrayList<>(sRegistered)) {
                 controller.unregisterCallback(sControllerCallback);
+                sRegistered.remove(controller);
                 sControllersDetachedForHotReload.add(controller);
             }
             Context context = sStatusBarRoot == null ? sAppContext : sStatusBarRoot.getContext();
             if (context != null && sThirdPartyWindowObserver != null
                     && sThirdPartyObserverRegistered) {
                 context.getContentResolver().unregisterContentObserver(sThirdPartyWindowObserver);
+                sThirdPartyObserverRegistered = false;
                 sThirdPartyObserverContextForHotReload = context;
                 sThirdPartyObserverDetachedForHotReload = true;
             }
@@ -332,21 +342,16 @@ public final class StatusBarLyricHooks {
                 context.getContentResolver().registerContentObserver(
                         Settings.Global.getUriFor(KEY_STATUSBAR_OVERLAY_EVENT), false,
                         sThirdPartyWindowObserver);
+                sThirdPartyObserverRegistered = true;
                 sThirdPartyObserverDetachedForHotReload = false;
                 sThirdPartyObserverContextForHotReload = null;
             } catch (Throwable t) {
                 log("statusbar_lyric observer rollback failed: " + t);
             }
         }
-        for (MediaController controller : new ArrayList<>(sControllersDetachedForHotReload)) {
-            try {
-                controller.registerCallback(sControllerCallback, main);
-                sRegistered.add(controller);
-                sControllersDetachedForHotReload.remove(controller);
-            } catch (Throwable t) {
-                log("statusbar_lyric controller rollback failed: " + t);
-            }
-        }
+        // MediaController snapshots can become invalid while preflight is in progress. Never
+        // retry those old handles indefinitely; rebuild callback registrations from live sessions.
+        sControllersDetachedForHotReload.clear();
         if (sSessionListenerDetachedForHotReload) {
             try {
                 MediaSessionManager manager = sSessionManager;
@@ -357,31 +362,34 @@ public final class StatusBarLyricHooks {
                         createSessionListener(sSessionListenerGeneration);
                 manager.addOnActiveSessionsChangedListener(listener, null, main);
                 sSessionListener = listener;
+                sSessionListenerRegistered = true;
                 sSessionListenerDetachedForHotReload = false;
             } catch (Throwable t) {
                 log("statusbar_lyric session listener rollback failed: " + t);
             }
         }
         boolean complete = !sThirdPartyObserverDetachedForHotReload
-                && !sSessionListenerDetachedForHotReload
-                && sControllersDetachedForHotReload.isEmpty();
+                && !sSessionListenerDetachedForHotReload;
         if (complete) {
-            // Open the callback gate only after every old-generation registration is restored.
-            // refreshSessions itself observes this gate, so it must happen after the flag changes.
-            sListenersPreparedForHotReload = false;
-            if (sHotReloadRollbackRetry != null) {
-                main.removeCallbacks(sHotReloadRollbackRetry);
-                sHotReloadRollbackRetry = null;
+            finishHotReloadListenerRollback(main, false);
+        } else if (sHotReloadRollbackAttempts >= HOT_RELOAD_ROLLBACK_MAX_ATTEMPTS) {
+            log("statusbar_lyric listener rollback exhausted; resuming in degraded state");
+            // Nothing still marked detached is externally registered. Drop obsolete references,
+            // reopen admission, and let normal initialization rebuild missing infrastructure.
+            sSessionListenerDetachedForHotReload = false;
+            sThirdPartyObserverDetachedForHotReload = false;
+            sThirdPartyObserverContextForHotReload = null;
+            if (!sSessionListenerRegistered) {
+                // A failed add leaves sSessionListener pointing at the pre-invalidation listener.
+                // Normal initialization must use a listener carrying the current generation.
+                sSessionListener = createSessionListener(sSessionListenerGeneration);
             }
-            try {
-                MediaSessionManager manager = sSessionManager;
-                if (manager != null && sGenerationActive) {
-                    refreshSessions(manager.getActiveSessions(null));
-                }
-            } catch (Throwable t) {
-                log("statusbar_lyric session refresh after rollback failed: " + t);
-            }
+            if (!sThirdPartyObserverRegistered) sThirdPartyWindowObserver = null;
+            finishHotReloadListenerRollback(main, true);
         } else if (sHotReloadRollbackRetry == null) {
+            final int attempt = ++sHotReloadRollbackAttempts;
+            final long delay = Math.min(HOT_RELOAD_ROLLBACK_MAX_DELAY_MS,
+                    HOT_RELOAD_ROLLBACK_INITIAL_DELAY_MS << (attempt - 1));
             Runnable retry = new Runnable() {
                 @Override public void run() {
                     synchronized (StatusBarLyricHooks.class) {
@@ -392,10 +400,36 @@ public final class StatusBarLyricHooks {
                 }
             };
             sHotReloadRollbackRetry = retry;
-            if (!main.postDelayed(retry, 500L)) {
+            if (!main.postDelayed(retry, delay)) {
                 sHotReloadRollbackRetry = null;
-                log("statusbar_lyric listener rollback retry post failed");
+                sHotReloadRollbackAttempts = HOT_RELOAD_ROLLBACK_MAX_ATTEMPTS;
+                rollbackHotReloadListeners();
             }
+        }
+    }
+
+    private static void finishHotReloadListenerRollback(Handler main, boolean degraded) {
+        sListenersPreparedForHotReload = false;
+        sHotReloadRollbackAttempts = 0;
+        if (sHotReloadRollbackRetry != null) {
+            main.removeCallbacks(sHotReloadRollbackRetry);
+            sHotReloadRollbackRetry = null;
+        }
+        MediaSessionManager manager = sSessionManager;
+        if (manager != null && sGenerationActive && sSessionListenerRegistered) {
+            try {
+                refreshSessions(manager.getActiveSessions(null));
+                sMediaInited = true;
+            } catch (Throwable t) {
+                sMediaInited = false;
+                log("statusbar_lyric session rebuild after rollback failed: " + t);
+            }
+        } else {
+            sMediaInited = false;
+        }
+        if (degraded && sGenerationActive && sStatusBarRoot != null) {
+            initMediaListener(sStatusBarRoot.getContext());
+            registerThirdPartyWindowObserver(sStatusBarRoot.getContext());
         }
     }
 
@@ -407,6 +441,13 @@ public final class StatusBarLyricHooks {
             if (handler != null) handler.removeCallbacksAndMessages(null);
         } catch (Throwable t) {
             log("statusbar_lyric handler cleanup failed: " + t);
+        }
+        // Preflight normally detached this listener. Check the actual registration state so a
+        // partial initialization or defensive cleanup cannot leak an old-generation callback.
+        if (sSessionManager != null && sSessionListenerRegistered) {
+            try { sSessionManager.removeOnActiveSessionsChangedListener(sSessionListener); }
+            catch (Throwable t) { log("statusbar_lyric session listener cleanup failed: " + t); }
+            sSessionListenerRegistered = false;
         }
         // A session callback queued before preflight may have entered just before the gate closed.
         // Unregister a defensive snapshot before discarding the old generation's bookkeeping.
@@ -443,12 +484,14 @@ public final class StatusBarLyricHooks {
             handler.removeCallbacks(sHotReloadRollbackRetry);
         }
         sHotReloadRollbackRetry = null;
+        sHotReloadRollbackAttempts = 0;
         sControllersDetachedForHotReload.clear();
         sThirdPartyWindowObserver = null;
         sThirdPartyObserverRegistered = false;
         sThirdPartyMonitorStarted = false;
         sSessionManager = null;
         sMediaInited = false;
+        sSessionListenerRegistered = false;
         sController = null;
         sLines = null;
         sLyricSource = null;
@@ -1075,14 +1118,15 @@ public final class StatusBarLyricHooks {
             };
 
     private static void initMediaListener(Context ctx) {
-        if (sMediaInited || sListenersPreparedForHotReload) return;
+        if (sMediaInited || sSessionListenerRegistered || sListenersPreparedForHotReload) return;
         final Context appCtx = ctx.getApplicationContext();
         if (sMainHandler == null) sMainHandler = new Handler(Looper.getMainLooper());
         sMainHandler.post(() -> registerMediaListenerOnMain(appCtx));
     }
 
     private static synchronized void registerMediaListenerOnMain(Context appCtx) {
-        if (sMediaInited || sListenersPreparedForHotReload || !sGenerationActive) return;
+        if (sMediaInited || sSessionListenerRegistered
+                || sListenersPreparedForHotReload || !sGenerationActive) return;
         try {
             // 不判断开关: 监听始终注册, 开关在 refreshLyric 里判断, 以便开关可实时生效。
             MediaSessionManager msm = (MediaSessionManager)
@@ -1094,10 +1138,31 @@ public final class StatusBarLyricHooks {
             sSessionManager = msm;
             // 传 null 表示监听全部会话, 需要 MEDIA_CONTENT_CONTROL(SystemUI 已具备)。
             msm.addOnActiveSessionsChangedListener(sSessionListener, null);
+            sSessionListenerRegistered = true;
             refreshSessions(msm.getActiveSessions(null));
             sMediaInited = true;
             log("statusbar_lyric media listener inited");
         } catch (Throwable t) {
+            // Registration can succeed before a later initialization step throws. Track and undo
+            // that registration independently so hot reload never loses an old-generation listener.
+            MediaSessionManager manager = sSessionManager;
+            if (manager != null && sSessionListenerRegistered) {
+                try {
+                    manager.removeOnActiveSessionsChangedListener(sSessionListener);
+                    sSessionListenerRegistered = false;
+                } catch (Throwable cleanupError) {
+                    // The listener is still live and usable; retain truthful state so preflight can
+                    // detach it later and prevent a duplicate registration attempt.
+                    log("statusbar_lyric partial listener cleanup failed: " + cleanupError);
+                }
+            }
+            for (MediaController controller : new ArrayList<>(sRegistered)) {
+                try { controller.unregisterCallback(sControllerCallback); }
+                catch (Throwable ignored) { }
+            }
+            sRegistered.clear();
+            sMediaInited = sSessionListenerRegistered;
+            if (!sSessionListenerRegistered) sSessionManager = null;
             log("statusbar_lyric initMediaListener error: " + t);
         }
     }

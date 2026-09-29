@@ -547,6 +547,7 @@ public final class SystemServerHooks {
                             // 已还原成浮窗/已关闭: 焦点归它是对的, 交还系统。
                             sHungTaskIds.remove(id);
                             sHungTasks.remove(id);
+                            releaseHungTaskMuteAsync(id.intValue());
                             return;
                         }
                         Object behind = findBehindActivity(t);
@@ -814,12 +815,14 @@ public final class SystemServerHooks {
                 if (task == null) {
                     sHungTaskIds.remove(id);
                     sHungTasks.remove(id);
+                    releaseHungTaskMuteAsync(id.intValue());
                     continue;
                 }
                 if (!isTaskInFloatingList(id)) {
                     // 已还原成浮窗: 焦点归它是对的, 不再干预。
                     sHungTaskIds.remove(id);
                     sHungTasks.remove(id);
+                    releaseHungTaskMuteAsync(id.intValue());
                     continue;
                 }
                 if (!isFocusedTask(task)) continue;
@@ -921,6 +924,10 @@ public final class SystemServerHooks {
     private static int sMutedTaskId = -1;
     private static int sMutedUid = -1;
     private static float sMutedPrevGain = 1.0f;
+    // Pending mute is recorded before posting so hot-reload preflight can see the race window.
+    private static int sPendingMuteTaskId = -1;
+    private static int sPendingMuteUid = -1;
+    private static long sMuteGeneration = 0L;
     private static Handler sHandler;
 
     public static void hookFloatWindowEdgeHangMute(final XC_LoadPackage.LoadPackageParam lpparam) {
@@ -967,26 +974,63 @@ public final class SystemServerHooks {
         }
     }
 
-    // 贴边成浮窗时静音: 先记下原音量再置 0, 回到前台按原值恢复。
+    // 贴边成浮窗时静音: 先同步登记 pending, 再把音量调用抛到主线程，封住 preflight 间隙。
     private static void muteFloatTask(final int taskId, Object task) {
         final int uid = taskUid(task);
         if (uid <= 0) return;
-        postAsync(new Runnable() {
-            @Override
-            public void run() {
-                synchronized (MUTE_LOCK) {
-                    if (sPamExt == null) return;
-                    // 同一应用重复贴边: 已静音, 保留最初记录的原始音量, 勿把 0 记成原值。
-                    if (sMutedUid == uid) {
+        final long generation;
+        synchronized (MUTE_LOCK) {
+            generation = ++sMuteGeneration;
+            sPendingMuteTaskId = taskId;
+            sPendingMuteUid = uid;
+        }
+        try {
+            if (sHandler == null) sHandler = new Handler(Looper.getMainLooper());
+            if (!sHandler.post(new Runnable() {
+                @Override public void run() {
+                    synchronized (MUTE_LOCK) {
+                        if (generation != sMuteGeneration
+                                || sPendingMuteTaskId != taskId
+                                || sPendingMuteUid != uid) return;
+                        sPendingMuteTaskId = -1;
+                        sPendingMuteUid = -1;
+                        // The task may have left the floating list while this runnable was queued.
+                        if (!isTaskInFloatingList(taskId) || sPamExt == null) return;
+                        // 同一应用重复贴边: 已静音, 保留最初记录的原始音量, 勿把 0 记成原值。
+                        if (sMutedUid == uid) {
+                            sMutedTaskId = taskId;
+                            return;
+                        }
+                        if (sMutedUid >= 0) applyAppVolume(sMutedUid, sMutedPrevGain);
+                        float prev = applyAppVolume(uid, 0.0f);
                         sMutedTaskId = taskId;
-                        return;
+                        sMutedUid = uid;
+                        sMutedPrevGain = prev;
                     }
-                    if (sMutedUid >= 0) applyAppVolume(sMutedUid, sMutedPrevGain);
-                    float prev = applyAppVolume(uid, 0.0f);
-                    sMutedTaskId = taskId;
-                    sMutedUid = uid;
-                    sMutedPrevGain = prev;
                 }
+            })) {
+                synchronized (MUTE_LOCK) {
+                    if (generation == sMuteGeneration) cancelPendingMuteLocked();
+                }
+                log("!!! edge_hang_mute post failed");
+            }
+        } catch (Throwable t) {
+            synchronized (MUTE_LOCK) {
+                if (generation == sMuteGeneration) cancelPendingMuteLocked();
+            }
+            log("!!! edge_hang_mute post failed: " + t);
+        }
+    }
+
+    // WM hooks can run while holding the global lock. Invalidate a queued mute synchronously,
+    // then defer PackageManager/audio work until after the hook returns.
+    private static void releaseHungTaskMuteAsync(final int taskId) {
+        synchronized (MUTE_LOCK) {
+            if (sPendingMuteTaskId == taskId) cancelPendingMuteLocked();
+        }
+        postAsync(new Runnable() {
+            @Override public void run() {
+                restoreMuteIfNeeded();
             }
         });
     }
@@ -997,11 +1041,19 @@ public final class SystemServerHooks {
     // 用户并没有点开它。静音必须贯穿整个挂机期间, 直到用户主动点开小窗。
     private static void restoreMuteIfNeeded() {
         synchronized (MUTE_LOCK) {
-            if (sMutedUid < 0) return;
-            if (!isTaskInFloatingList(sMutedTaskId)) {
+            if (sPendingMuteTaskId >= 0 && !isTaskInFloatingList(sPendingMuteTaskId)) {
+                cancelPendingMuteLocked();
+            }
+            if (sMutedUid >= 0 && !isTaskInFloatingList(sMutedTaskId)) {
                 restoreMutedLocked();
             }
         }
+    }
+
+    private static void cancelPendingMuteLocked() {
+        sMuteGeneration++;
+        sPendingMuteTaskId = -1;
+        sPendingMuteUid = -1;
     }
 
     private static void restoreMutedLocked() {
@@ -1678,7 +1730,7 @@ public final class SystemServerHooks {
     public static boolean canHotReload() {
         // Never alter a user's mute state during reload. If it is active, reject before cleanup.
         synchronized (MUTE_LOCK) {
-            if (sMutedUid >= 0 || !sKillThreads.isEmpty()
+            if (sPendingMuteTaskId >= 0 || sMutedUid >= 0 || !sKillThreads.isEmpty()
                     || !sHungTaskIds.isEmpty() || !sHungTasks.isEmpty()) {
                 log("system_server hot reload rejected: hung/mute/kill operation active");
                 return false;
@@ -1717,6 +1769,11 @@ public final class SystemServerHooks {
     }
 
     public static void cleanupForHotReload() {
+        synchronized (MUTE_LOCK) {
+            cancelPendingMuteLocked();
+            // canHotReload rejects active mute, but restore defensively before dropping sPamExt.
+            if (sMutedUid >= 0) restoreMutedLocked();
+        }
         if (sStatusBarOverlayEventHandler != null) {
             sStatusBarOverlayEventHandler.removeCallbacks(sStatusBarOverlayEventRunnable);
         }
