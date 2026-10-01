@@ -25,6 +25,7 @@ import io.github.libxposed.api.XposedModule;
 import io.github.libxposed.api.XposedModuleInterface.HotReloadedParam;
 import io.github.libxposed.api.XposedModuleInterface.HotReloadingParam;
 import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam;
+import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam;
 import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam;
 import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam;
 
@@ -232,6 +233,7 @@ public class XposedInit extends XposedModule {
     // 故只过滤目标组件。配置表见 HIDDEN_LAUNCHER_TARGETS: { 门控偏好键, 包名, 活动类名 }。
     public static final String KEY_HIDE_CONTACTS_ENABLED = "hide_contacts_enabled";
     public static final String KEY_HIDE_GBOARD_ENABLED = "hide_gboard_enabled";
+    public static final String KEY_HIDE_LSPOSED_MODULES_ENABLED = "hide_lsposed_modules_enabled";
     // Feature 15 — 隐藏 GhostLock 图标(com.ghostlock.app): 已有 root 时无需再 root。
     public static final String KEY_HIDE_GHOSTLOCK_ENABLED = "hide_ghostlock_enabled";
     // 解锁时关机无需校验密码(com.android.systemui): 系统"关机校验密码"(Settings.Secure
@@ -493,6 +495,9 @@ public class XposedInit extends XposedModule {
         if (!sSyncActive || all == null) return;
         boolean first = !sSettingsLoaded;
         sSnapshot = all;
+        if ("com.android.launcher".equals(sProcessName)) {
+            LauncherHooks.onSettingsSnapshotPublished(all);
+        }
         if (first) {
             synchronized (sLoadLock) {
                 sSettingsLoaded = true;
@@ -662,6 +667,13 @@ public class XposedInit extends XposedModule {
         XposedBridge.attachFramework(this);
         sProcessName = param.getProcessName();
         sIsSystemServer = param.isSystemServer();
+        // 尽早启动设置预热, 使 Launcher 首次加载应用列表时已能读取隐藏图标开关。
+        if (!sIsSystemServer) {
+            sAppContext = currentApplication();
+            if (sAppContext != null) {
+                startSettingsLoader();
+            }
+        }
         log("module loaded: framework=" + getFrameworkName() + " v" + getFrameworkVersion()
                 + " api=" + getApiVersion() + " process=" + sProcessName);
     }
@@ -743,7 +755,30 @@ public class XposedInit extends XposedModule {
     }
 
     @Override
+    public void onPackageLoaded(@NonNull PackageLoadedParam param) {
+        // Launcher 的应用模型和相机的静态配置可能在 Application/Activity 初始化期间立即读取。
+        // 提前安装 hook，避免错过首次应用列表构建或相机配置初始化。
+        String packageName = param.getPackageName();
+        if (!"com.android.launcher".equals(packageName)
+                && !"com.oplus.camera".equals(packageName)) return;
+        synchronized (XposedInit.class) {
+            if (sAppProcessHooked) return;
+            sAppProcessHooked = true;
+        }
+        XC_LoadPackage.LoadPackageParam lpparam = new XC_LoadPackage.LoadPackageParam();
+        lpparam.packageName = packageName;
+        lpparam.processName = sProcessName;
+        lpparam.classLoader = param.getDefaultClassLoader();
+        lpparam.appInfo = param.getApplicationInfo();
+        lpparam.isFirstApplication = param.isFirstPackage();
+        handleLoadPackage(lpparam);
+    }
+
+    @Override
     public void onPackageReady(@NonNull PackageReadyParam param) {
+        if (!sIsSystemServer && sAppContext == null) {
+            sAppContext = currentApplication();
+        }
         XC_LoadPackage.LoadPackageParam lpparam = new XC_LoadPackage.LoadPackageParam();
         lpparam.packageName = param.getPackageName();
         lpparam.processName = sProcessName;
@@ -802,13 +837,12 @@ public class XposedInit extends XposedModule {
 
     private void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lpparam) {
         log("handleLoadPackage pkg=" + lpparam.packageName);
-        // 后台预热模块设置(见 startSettingsLoader 注释): 尽早开始, 让首次 readBool 通常已有值,
-        // 避免开机早期把默认值固化下来。
-        startSettingsLoader();
         // 缓存被 hook 进程自身的 Application Context, 供 readBool 通过 ContentResolver 跨进程查询设置。
         if (sAppContext == null) {
             sAppContext = currentApplication();
         }
+        // 先取得 Application Context 再启动预热, 避免 worker 在 Context 尚未创建时进入退避重试。
+        startSettingsLoader();
         if ("com.android.launcher".equals(lpparam.packageName)) {
             LauncherHooks.hookLauncher(lpparam);
         } else if ("com.android.systemui".equals(lpparam.packageName)) {
@@ -903,6 +937,19 @@ public class XposedInit extends XposedModule {
     public static int readInt(String key, int def) {
         Object v = settingsValue(key);
         if (v instanceof Number) return ((Number) v).intValue();
+        return def;
+    }
+
+    // 仅读取内存快照或有效缓存，不等待首轮加载，也不通过 ContentProvider 同步查询。
+    // 相机初始化会在主线程高频调用相关判定，不能在这些 hook 中等待设置服务。
+    public static int readIntCached(String key, int def) {
+        Integer snapshot = sSnapshot.get(key);
+        if (snapshot != null) return snapshot;
+        Object[] cached = sCache.get(key);
+        if (cached != null && System.currentTimeMillis() - (Long) cached[0] < CACHE_TTL_MS
+                && cached[1] instanceof Number) {
+            return ((Number) cached[1]).intValue();
+        }
         return def;
     }
 

@@ -5,7 +5,8 @@ import static com.rikumi.colorosmod.XposedInit.CAMERA_FIND_LIGHT_STYLE_DISABLED;
 import static com.rikumi.colorosmod.XposedInit.CAMERA_FIND_LIGHT_STYLE_ENABLED;
 import static com.rikumi.colorosmod.XposedInit.KEY_CAMERA_FIND_LIGHT_STYLE;
 import static com.rikumi.colorosmod.XposedInit.KEY_CAMERA_HASSELBLAD_ORANGE_UI;
-import static com.rikumi.colorosmod.XposedInit.readInt;
+import static com.rikumi.colorosmod.XposedInit.log;
+import static com.rikumi.colorosmod.XposedInit.readIntCached;
 
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
@@ -24,7 +25,9 @@ public final class CameraHooks {
                     applyTriState(param, KEY_CAMERA_FIND_LIGHT_STYLE);
                 }
             });
-        } catch (Throwable ignored) {
+            log("HOOK OK camera r7.z0#l");
+        } catch (Throwable t) {
+            log("HOOK FAIL camera r7.z0#l: " + t);
         }
 
         try {
@@ -35,12 +38,14 @@ public final class CameraHooks {
                     applyTriState(param, KEY_CAMERA_HASSELBLAD_ORANGE_UI);
                 }
             });
-        } catch (Throwable ignored) {
+            log("HOOK OK camera x7.e#e");
+        } catch (Throwable t) {
+            log("HOOK FAIL camera x7.e#e: " + t);
         }
     }
 
     private static void applyTriState(XC_MethodHook.MethodHookParam param, String key) {
-        int style = readInt(key, CAMERA_FIND_LIGHT_STYLE_DEFAULT);
+        int style = readIntCached(key, CAMERA_FIND_LIGHT_STYLE_DEFAULT);
         if (style == CAMERA_FIND_LIGHT_STYLE_ENABLED) {
             param.setResult(true);
         } else if (style == CAMERA_FIND_LIGHT_STYLE_DISABLED) {

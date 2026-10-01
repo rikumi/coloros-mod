@@ -208,6 +208,7 @@ private val HIDDEN: List<SettingsItem> = listOf(
     SwitchItem("hide_contacts_enabled", "彻底隐藏电话本图标"),
     SwitchItem("hide_gboard_enabled", "彻底隐藏 Gboard 图标"),
     SwitchItem("hide_ghostlock_enabled", "彻底隐藏 GhostLock 图标", subtitle = "显然已经有 root 的时候不需要再 root"),
+    SwitchItem("hide_lsposed_modules_enabled", "彻底隐藏所有 LSPosed 模块图标"),
 )
 
 // 小窗相关设置: 改动需重启 system_server(框架) 才生效(本模块该作用域为 android/system_server)。

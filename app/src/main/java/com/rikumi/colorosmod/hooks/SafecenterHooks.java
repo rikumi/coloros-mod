@@ -40,7 +40,7 @@ public final class SafecenterHooks {
 
     /** Feature 7 实现: 在 AppHideNewCheckActivity#d0() 前把字段 I(noNeedCheckPrivacyPwd) 置 true。 */
     public static void hookSafecenterNoverify(final XC_LoadPackage.LoadPackageParam lpparam) {
-        log("hide_apps_noverify enabled=" + readBool(KEY_HIDE_APPS_NOVERIFY_ENABLED, false));
+        log("hide_apps_noverify enabled=" + readBoolCached(KEY_HIDE_APPS_NOVERIFY_ENABLED, false));
         try {
             XposedHelpers.findAndHookMethod(
                     "com.oplus.safecenter.privacy.view.space.AppHideNewCheckActivity",
@@ -50,7 +50,7 @@ public final class SafecenterHooks {
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
                                 // 运行时动态门控: 关闭则不跳过密码校验。
-                                if (!readBool(KEY_HIDE_APPS_NOVERIFY_ENABLED, false)) return;
+                                if (!readBoolCached(KEY_HIDE_APPS_NOVERIFY_ENABLED, false)) return;
                                 Object obj = param.thisObject;
                                 // noNeedCheckPrivacyPwd = true -> 跳过密码/指纹, 直接进入已验证流程
                                 Class<?> c = obj.getClass();
@@ -92,7 +92,7 @@ public final class SafecenterHooks {
                 protected void beforeHookedMethod(MethodHookParam param) {
                     try {
                         // 运行时动态门控: 关闭则保持系统原标题("应用隐藏")。
-                        if (!readBool(KEY_HIDE_APPS_TITLE_FOLDER_ENABLED, false)) return;
+                        if (!readBoolCached(KEY_HIDE_APPS_TITLE_FOLDER_ENABLED, false)) return;
                         Object obj = param.thisObject;
                         if (!(obj instanceof android.app.Activity)) return;
                         android.app.Activity act = (android.app.Activity) obj;
