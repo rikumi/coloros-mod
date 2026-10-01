@@ -8,7 +8,6 @@ import android.util.Log;
 import com.rikumi.colorosmod.hooks.GestureHooks;
 import com.rikumi.colorosmod.hooks.LauncherHooks;
 import com.rikumi.colorosmod.hooks.MediaProviderHooks;
-import com.rikumi.colorosmod.hooks.CameraHooks;
 import com.rikumi.colorosmod.hooks.MultiWindowHooks;
 import com.rikumi.colorosmod.hooks.SafecenterHooks;
 import com.rikumi.colorosmod.hooks.SettingsHooks;
@@ -295,14 +294,6 @@ public class XposedInit extends XposedModule {
     // 显示按下态; 离开该键范围则取消(不重复输入)。见 SystemUiHooks#hookKeyguardSlideInput ——
     // 接管 COUINumericKeyboard 的 handleActionDown/Move/Up, 改"矩形命中+抬起才输入"为"圆形命中+进入即输入"。
     public static final String KEY_KEYGUARD_SLIDE_INPUT_ENABLED = "keyguard_slide_input_enabled";
-    // 系统相机 Find 界面总开关: 0=不修改, 1=开启, 2=关闭。
-    public static final String KEY_CAMERA_FIND_LIGHT_STYLE = "camera_find_light_style";
-    // 系统相机哈苏橙色 UI 总开关: 0=不修改, 1=开启, 2=关闭。
-    public static final String KEY_CAMERA_HASSELBLAD_ORANGE_UI =
-            "camera_hasselblad_orange_ui";
-    public static final int CAMERA_FIND_LIGHT_STYLE_DEFAULT = 0;
-    public static final int CAMERA_FIND_LIGHT_STYLE_ENABLED = 1;
-    public static final int CAMERA_FIND_LIGHT_STYLE_DISABLED = 2;
     public static final String KEY_KEYGUARD_NO_CHARGE_ANIM_ENABLED =
             "keyguard_no_charge_anim_enabled";
 
@@ -756,11 +747,10 @@ public class XposedInit extends XposedModule {
 
     @Override
     public void onPackageLoaded(@NonNull PackageLoadedParam param) {
-        // Launcher 的应用模型和相机的静态配置可能在 Application/Activity 初始化期间立即读取。
-        // 提前安装 hook，避免错过首次应用列表构建或相机配置初始化。
+        // Launcher 的应用模型可能在 Application/桌面 Activity 初始化期间立即开始加载。
+        // 提前安装 hook，避免错过首次应用列表构建。
         String packageName = param.getPackageName();
-        if (!"com.android.launcher".equals(packageName)
-                && !"com.oplus.camera".equals(packageName)) return;
+        if (!"com.android.launcher".equals(packageName)) return;
         synchronized (XposedInit.class) {
             if (sAppProcessHooked) return;
             sAppProcessHooked = true;
@@ -819,7 +809,6 @@ public class XposedInit extends XposedModule {
                 || "com.oplus.safecenter".equals(packageName)
                 || "com.android.settings".equals(packageName)
                 || "com.oplus.wallpapers".equals(packageName)
-                || "com.oplus.camera".equals(packageName)
                 || "com.android.providers.media.module".equals(packageName);
     }
 
@@ -855,8 +844,6 @@ public class XposedInit extends XposedModule {
             SettingsHooks.hookSettings(lpparam);
         } else if ("com.oplus.wallpapers".equals(lpparam.packageName)) {
             WallpapersHooks.hookWallpapers(lpparam);
-        } else if ("com.oplus.camera".equals(lpparam.packageName)) {
-            CameraHooks.hookCamera(lpparam);
         } else if ("com.android.providers.media.module".equals(lpparam.packageName)) {
             MediaProviderHooks.hookMediaProvider(lpparam);
         } else if ("android".equals(lpparam.packageName)) {
@@ -937,19 +924,6 @@ public class XposedInit extends XposedModule {
     public static int readInt(String key, int def) {
         Object v = settingsValue(key);
         if (v instanceof Number) return ((Number) v).intValue();
-        return def;
-    }
-
-    // 仅读取内存快照或有效缓存，不等待首轮加载，也不通过 ContentProvider 同步查询。
-    // 相机初始化会在主线程高频调用相关判定，不能在这些 hook 中等待设置服务。
-    public static int readIntCached(String key, int def) {
-        Integer snapshot = sSnapshot.get(key);
-        if (snapshot != null) return snapshot;
-        Object[] cached = sCache.get(key);
-        if (cached != null && System.currentTimeMillis() - (Long) cached[0] < CACHE_TTL_MS
-                && cached[1] instanceof Number) {
-            return ((Number) cached[1]).intValue();
-        }
         return def;
     }
 
