@@ -820,7 +820,7 @@ public class XposedInit extends XposedModule {
             return false;
         }
         try {
-            Object[] state = new Object[9];
+            Object[] state = new Object[10];
             state[0] = StatusBarLyricHooks.captureHotReloadHost();
             state[1] = NotificationHooks.captureHotReloadHost();
             state[2] = SystemServerHooks.captureHotReloadHost();
@@ -830,6 +830,7 @@ public class XposedInit extends XposedModule {
             state[6] = LauncherHooks.captureHotReloadHosts();
             state[7] = AncTileHooks.captureHotReloadHosts();
             state[8] = sSystemServerClassLoader;
+            state[9] = LauncherHooks.captureHotReloadSettings();
             param.setSavedInstanceState(state);
         } catch (Throwable t) {
             cancelProcessPreflight();
@@ -888,10 +889,15 @@ public class XposedInit extends XposedModule {
         sProcessName = param.getProcessName();
         sIsSystemServer = param.isSystemServer();
         Object savedState = param.getSavedInstanceState();
-        if (sIsSystemServer && savedState instanceof Object[]) {
+        if (savedState instanceof Object[]) {
             Object[] state = (Object[]) savedState;
-            if (state.length > 8 && state[8] instanceof ClassLoader) {
+            if (sIsSystemServer && state.length > 8 && state[8] instanceof ClassLoader) {
                 sSystemServerClassLoader = (ClassLoader) state[8];
+            }
+            // 必须早于 startSettingsLoader: 否则首个 snapshot 可能先发布, 导致无谓的 forceReload。
+            if (!sIsSystemServer && state.length > 9) {
+                try { LauncherHooks.restoreHotReloadSettings(state[9]); }
+                catch (Throwable t) { log("onHotReloaded: restore launcher settings failed: " + t); }
             }
         }
         log("onHotReloaded: process=" + sProcessName + " isSystemServer=" + sIsSystemServer);

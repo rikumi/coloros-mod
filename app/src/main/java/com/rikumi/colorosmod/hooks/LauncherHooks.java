@@ -160,6 +160,7 @@ public final class LauncherHooks {
 
     /** Refresh Launcher after the first settings snapshot or a relevant change. */
     public static void onSettingsSnapshotPublished(java.util.Map<String, Integer> settings) {
+        if (!sModelReloadActive) return;
         int contacts = settingValue(settings, KEY_HIDE_CONTACTS_ENABLED);
         int gboard = settingValue(settings, KEY_HIDE_GBOARD_ENABLED);
         int ghostLock = settingValue(settings, KEY_HIDE_GHOSTLOCK_ENABLED);
@@ -177,17 +178,33 @@ public final class LauncherHooks {
             sLastGboardHidden = gboard;
             sLastGhostLockHidden = ghostLock;
             sLastLsposedModulesHidden = lsposedModules;
+            // 与设置值在同一把锁内计数, 使 captureHotReloadSettings 看到一致的"值 + 是否待刷新"。
+            sPendingModelReloads++;
         }
 
         android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
         reloadLauncherModelWhenReady(main, 0);
     }
 
+    // hot reload: 旧 generation 的刷新 runnable 统一带此 token 投递, cleanup 时一次性移除。
+    private static final Object sModelReloadToken = new Object();
+    // hot reload cleanup 后置 false, 已出队的 runnable 与迟到的 snapshot 都不再触碰宿主。
+    private static volatile boolean sModelReloadActive = true;
+    // 尚未结束(成功/放弃/出错)的刷新链数量; 受 sHiddenSettingsLock 保护。
+    private static int sPendingModelReloads;
+
+    private static void finishModelReload() {
+        synchronized (sHiddenSettingsLock) {
+            if (sPendingModelReloads > 0) sPendingModelReloads--;
+        }
+    }
+
     private static void reloadLauncherModelWhenReady(final android.os.Handler main,
             final int attempt) {
-        main.postDelayed(new Runnable() {
+        Runnable reload = new Runnable() {
             @Override
             public void run() {
+                if (!sModelReloadActive) return;
                 try {
                     ClassLoader classLoader = sLauncherClassLoader;
                     if (classLoader == null) {
@@ -208,15 +225,52 @@ public final class LauncherHooks {
                         return;
                     }
                     XposedHelpers.callMethod(model, "forceReload");
+                    finishModelReload();
                 } catch (Throwable t) {
+                    finishModelReload();
                     log("hide launcher apps refresh error: " + t);
                 }
             }
-        }, attempt == 0 ? 0 : 300);
+        };
+        long delay = attempt == 0 ? 0 : 300;
+        if (!main.postAtTime(reload, sModelReloadToken,
+                android.os.SystemClock.uptimeMillis() + delay)) {
+            finishModelReload();
+        }
     }
 
     private static void retryLauncherModelReload(android.os.Handler main, int attempt) {
-        if (attempt < 10) reloadLauncherModelWhenReady(main, attempt + 1);
+        if (attempt < 10) {
+            reloadLauncherModelWhenReady(main, attempt + 1);
+        } else {
+            finishModelReload();
+        }
+    }
+
+    /**
+     * 保存已应用到 Launcher 模型的隐藏开关, 让新 generation 在设置未变时跳过 forceReload(避免桌面闪烁)。
+     * 若仍有未完成的刷新(cleanup 会取消它), 返回 null, 让新 generation 首个 snapshot 重新刷新。
+     */
+    public static Object captureHotReloadSettings() {
+        synchronized (sHiddenSettingsLock) {
+            if (!sHiddenSettingsInitialized || sPendingModelReloads > 0) return null;
+            return new int[] { sLastContactsHidden, sLastGboardHidden,
+                    sLastGhostLockHidden, sLastLsposedModulesHidden };
+        }
+    }
+
+    /** 必须在新 generation 启动设置加载之前调用, 否则首个 snapshot 可能先于种子值发布。 */
+    public static void restoreHotReloadSettings(Object saved) {
+        if (!(saved instanceof int[]) || ((int[]) saved).length < 4) return;
+        int[] values = (int[]) saved;
+        synchronized (sHiddenSettingsLock) {
+            if (sHiddenSettingsInitialized) return;
+            sHiddenSettingsInitialized = true;
+            sLastContactsHidden = values[0];
+            sLastGboardHidden = values[1];
+            sLastGhostLockHidden = values[2];
+            sLastLsposedModulesHidden = values[3];
+        }
     }
 
     private static int settingValue(java.util.Map<String, Integer> settings, String key) {
@@ -708,6 +762,10 @@ public final class LauncherHooks {
     }
 
     public static void cleanupForHotReload() {
+        // 在主线程执行: 置 false 后再移除队列, 保证旧 generation 不会再调用 forceReload。
+        sModelReloadActive = false;
+        new android.os.Handler(android.os.Looper.getMainLooper())
+                .removeCallbacksAndMessages(sModelReloadToken);
         if (sRecentsSavedBlend != null && sRecentsSavedDepthController != null) {
             try {
                 float[] blend = (float[]) XposedHelpers.getObjectField(
