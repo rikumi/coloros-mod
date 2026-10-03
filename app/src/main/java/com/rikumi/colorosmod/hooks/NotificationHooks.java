@@ -59,22 +59,12 @@ public final class NotificationHooks {
                                 int padPx = Math.round(SUBTITLE_PAD_DP * t * density);
                                 Object view = param.thisObject;
                                 Object label = XposedHelpers.getObjectField(view, "mLabelView");
-                                if (label instanceof android.widget.TextView) {
-                                    android.widget.TextView tv = (android.widget.TextView) label;
-                                    tv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, fontSizePx);
-                                    tv.setTranslationX(offsetPx);
-                                    tv.setTranslationY(0f);
-                                    tv.setPaddingRelative(tv.getPaddingStart(),
-                                            tv.getPaddingTop() + padPx,
-                                            tv.getPaddingEnd(),
-                                            tv.getPaddingBottom() + padPx);
-                                }
                                 Object contents = XposedHelpers.getObjectField(view, "mContents");
-                                if (contents instanceof android.view.ViewGroup) {
-                                    android.view.ViewGroup c = (android.view.ViewGroup) contents;
-                                    c.setPaddingRelative(c.getPaddingStart(),
-                                            Math.max(0, c.getPaddingTop() - (int) offsetPx),
-                                            c.getPaddingEnd(), c.getPaddingBottom());
+                                if (label instanceof android.widget.TextView) {
+                                    applyNotificationSubtitle(view, (android.widget.TextView) label,
+                                            contents instanceof android.view.ViewGroup
+                                                    ? (android.view.ViewGroup) contents : null,
+                                            fontSizePx, offsetPx, padPx);
                                 }
                                 log("notification_subtitle applied");
                             } catch (Throwable t) {
@@ -94,6 +84,76 @@ public final class NotificationHooks {
     static final int TAG_NOTIF_PAD_BOTTOM = 0x4E0F0002;
 
     static final int TAG_NOTIF_GROUP_HEADER_TRANSLATION = 0x4E0F0003;
+
+    private static final class SubtitleState {
+        final java.lang.ref.WeakReference<android.widget.TextView> labelRef;
+        final java.lang.ref.WeakReference<android.view.ViewGroup> contentsRef;
+        final float textSize;
+        final float translationX;
+        final float translationY;
+        final int[] labelPadding;
+        final int[] contentsPadding;
+
+        SubtitleState(android.widget.TextView label, android.view.ViewGroup contents) {
+            this(label, contents, label.getTextSize(), label.getTranslationX(),
+                    label.getTranslationY(), paddingOf(label), paddingOf(contents));
+        }
+
+        SubtitleState(android.widget.TextView label, android.view.ViewGroup contents,
+                float textSize, float translationX, float translationY,
+                int[] labelPadding, int[] contentsPadding) {
+            this.labelRef = new java.lang.ref.WeakReference<>(label);
+            this.contentsRef = new java.lang.ref.WeakReference<>(contents);
+            this.textSize = textSize;
+            this.translationX = translationX;
+            this.translationY = translationY;
+            this.labelPadding = labelPadding;
+            this.contentsPadding = contentsPadding;
+        }
+    }
+
+    private static final java.util.Map<Object, SubtitleState> sSubtitleStates =
+            java.util.Collections.synchronizedMap(
+                    new java.util.WeakHashMap<Object, SubtitleState>());
+
+    private static int[] paddingOf(android.view.View view) {
+        if (view == null) return null;
+        return new int[] { view.getPaddingStart(), view.getPaddingTop(),
+                view.getPaddingEnd(), view.getPaddingBottom() };
+    }
+
+    private static void setPadding(android.view.View view, int[] padding) {
+        if (view == null || padding == null || padding.length < 4) return;
+        view.setPaddingRelative(padding[0], padding[1], padding[2], padding[3]);
+    }
+
+    private static void applyNotificationSubtitle(Object owner, android.widget.TextView label,
+            android.view.ViewGroup contents, float fontSizePx, float offsetPx, int padPx) {
+        SubtitleState state;
+        synchronized (sSubtitleStates) {
+            state = sSubtitleStates.get(owner);
+            if (state == null || state.labelRef.get() != label
+                    || state.contentsRef.get() != contents) {
+                state = new SubtitleState(label, contents);
+                sSubtitleStates.put(owner, state);
+            }
+        }
+        label.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, fontSizePx);
+        label.setTranslationX(offsetPx);
+        label.setTranslationY(0f);
+        label.setPaddingRelative(state.labelPadding[0], state.labelPadding[1] + padPx,
+                state.labelPadding[2], state.labelPadding[3] + padPx);
+        if (contents != null && state.contentsPadding != null) {
+            contents.setPaddingRelative(state.contentsPadding[0],
+                    Math.max(0, state.contentsPadding[1] - (int) offsetPx),
+                    state.contentsPadding[2], state.contentsPadding[3]);
+        }
+    }
+
+    private static final java.util.Set<android.view.View> sMutatedNotificationViews =
+            java.util.Collections.synchronizedSet(
+                    java.util.Collections.newSetFromMap(
+                            new java.util.WeakHashMap<android.view.View, Boolean>()));
 
     // 高频路径缓存: 由 onNotificationUpdated (低频) 刷新, onLayout/onMeasure/applyState 直接读。
     static volatile boolean sNotifPadEnabled = false;
@@ -504,6 +564,8 @@ public final class NotificationHooks {
     /** 显示模式对齐间隔(ms): 只在目标值与仓库当前值不同时才写, 平时只读一次 StateFlow。 */
     private static final long SHOW_MODE_APPLY_INTERVAL_MS = 500L;
     private static volatile boolean sShowModeLoopStarted = false;
+    private static volatile boolean sShowModeLoopActive = false;
+    private static Handler sShowModeHandler;
 
     public static void hookNotificationIconAreaRepository(
             final XC_LoadPackage.LoadPackageParam lpparam) {
@@ -537,7 +599,9 @@ public final class NotificationHooks {
     private static void startShowModeLoop() {
         if (sShowModeLoopStarted) return;
         sShowModeLoopStarted = true;
+        sShowModeLoopActive = true;
         final Handler handler = new Handler(Looper.getMainLooper());
+        sShowModeHandler = handler;
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
@@ -546,9 +610,184 @@ public final class NotificationHooks {
                 } catch (Throwable t) {
                     log("notification show mode loop fail: " + t);
                 }
-                handler.postDelayed(this, SHOW_MODE_APPLY_INTERVAL_MS);
+                if (sShowModeLoopActive) {
+                    handler.postDelayed(this, SHOW_MODE_APPLY_INTERVAL_MS);
+                }
             }
         }, SHOW_MODE_APPLY_INTERVAL_MS);
+    }
+
+
+    /** Capture only the host-owned repository for API 102 cross-generation handoff. */
+    public static Object captureHotReloadHost() {
+        return sIconAreaRepository;
+    }
+
+    /** Capture currently modified host views so the new generation can reapply their effects. */
+    public static Object captureHotReloadViews() {
+        java.util.ArrayList<Object> padded = new java.util.ArrayList<>();
+        java.util.ArrayList<Object> translated = new java.util.ArrayList<>();
+        java.util.ArrayList<Object> subtitles = new java.util.ArrayList<>();
+        synchronized (sMutatedNotificationViews) {
+            for (android.view.View view : sMutatedNotificationViews) {
+                Object top = view.getTag(TAG_NOTIF_PAD_TOP);
+                Object bottom = view.getTag(TAG_NOTIF_PAD_BOTTOM);
+                if (top instanceof Integer && bottom instanceof Integer
+                        && (view.getPaddingTop() != (Integer) top
+                                || view.getPaddingBottom() != (Integer) bottom)) {
+                    padded.add(view);
+                }
+                Object translation = view.getTag(TAG_NOTIF_GROUP_HEADER_TRANSLATION);
+                if (translation instanceof Float
+                        && view.getTranslationY() != (Float) translation) {
+                    translated.add(view);
+                }
+            }
+        }
+        synchronized (sSubtitleStates) {
+            for (java.util.Map.Entry<Object, SubtitleState> entry : sSubtitleStates.entrySet()) {
+                SubtitleState subtitle = entry.getValue();
+                android.widget.TextView label = subtitle.labelRef.get();
+                android.view.ViewGroup contents = subtitle.contentsRef.get();
+                if (label == null) continue;
+                subtitles.add(new Object[] { entry.getKey(), label, contents,
+                        new float[] { subtitle.textSize, subtitle.translationX,
+                                subtitle.translationY, label.getTextSize(),
+                                label.getTranslationX(), label.getTranslationY() },
+                        subtitle.labelPadding, subtitle.contentsPadding,
+                        paddingOf(label), paddingOf(contents) });
+            }
+        }
+        return new Object[] { padded.toArray(), translated.toArray(),
+                Boolean.valueOf(sNotifPadEnabled), Integer.valueOf(sNotifPadPx),
+                subtitles.toArray() };
+    }
+
+    public static void restoreHotReloadViews(Object saved) {
+        if (!(saved instanceof Object[])) return;
+        Object[] state = (Object[]) saved;
+        if (state.length < 4 || !(state[2] instanceof Boolean) || !(state[3] instanceof Integer)) {
+            return;
+        }
+        sNotifPadEnabled = (Boolean) state[2];
+        sNotifPadPx = (Integer) state[3];
+        if (state.length > 4 && state[4] instanceof Object[]) {
+            for (Object object : (Object[]) state[4]) {
+                if (!(object instanceof Object[])) continue;
+                Object[] subtitle = (Object[]) object;
+                if (subtitle.length < 8 || !(subtitle[1] instanceof android.widget.TextView)
+                        || !(subtitle[3] instanceof float[])
+                        || !(subtitle[4] instanceof int[]) || !(subtitle[6] instanceof int[])) {
+                    continue;
+                }
+                try {
+                    Object owner = subtitle[0];
+                    android.widget.TextView label = (android.widget.TextView) subtitle[1];
+                    android.view.ViewGroup contents = subtitle[2] instanceof android.view.ViewGroup
+                            ? (android.view.ViewGroup) subtitle[2] : null;
+                    float[] values = (float[]) subtitle[3];
+                    int[] originalLabelPadding = (int[]) subtitle[4];
+                    int[] originalContentsPadding = subtitle[5] instanceof int[]
+                            ? (int[]) subtitle[5] : null;
+                    int[] appliedLabelPadding = (int[]) subtitle[6];
+                    int[] appliedContentsPadding = subtitle[7] instanceof int[]
+                            ? (int[]) subtitle[7] : null;
+                    if (values.length < 6 || owner == null) continue;
+                    sSubtitleStates.put(owner, new SubtitleState(label, contents,
+                            values[0], values[1], values[2], originalLabelPadding,
+                            originalContentsPadding));
+                    label.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, values[3]);
+                    label.setTranslationX(values[4]);
+                    label.setTranslationY(values[5]);
+                    setPadding(label, appliedLabelPadding);
+                    setPadding(contents, appliedContentsPadding);
+                } catch (Throwable t) {
+                    log("notification subtitle restore failed: " + t);
+                }
+            }
+        }
+        if (!sNotifPadEnabled) return;
+        if (state[0] instanceof Object[]) {
+            for (Object object : (Object[]) state[0]) {
+                if (!(object instanceof android.view.View)) continue;
+                android.view.View view = (android.view.View) object;
+                view.setTag(TAG_NOTIF_PAD_TOP, Integer.valueOf(view.getPaddingTop()));
+                view.setTag(TAG_NOTIF_PAD_BOTTOM, Integer.valueOf(view.getPaddingBottom()));
+                sMutatedNotificationViews.add(view);
+                view.setPaddingRelative(view.getPaddingStart(), view.getPaddingTop() + sNotifPadPx,
+                        view.getPaddingEnd(), view.getPaddingBottom() + sNotifPadPx);
+            }
+        }
+        if (state[1] instanceof Object[]) {
+            for (Object object : (Object[]) state[1]) {
+                if (!(object instanceof android.view.View)) continue;
+                android.view.View view = (android.view.View) object;
+                view.setTag(TAG_NOTIF_GROUP_HEADER_TRANSLATION,
+                        Float.valueOf(view.getTranslationY()));
+                sMutatedNotificationViews.add(view);
+                view.setTranslationY(view.getTranslationY() + sNotifPadPx);
+            }
+        }
+    }
+
+    public static void restoreHotReloadHost(Object host) {
+        if (host == null || !CLS_ICON_AREA_REPOSITORY.equals(host.getClass().getName())) return;
+        sIconAreaRepository = host;
+        startShowModeLoop();
+    }
+
+    public static void cleanupForHotReload() {
+        sShowModeLoopActive = false;
+        Handler handler = sShowModeHandler;
+        if (handler != null) handler.removeCallbacksAndMessages(null);
+        sShowModeHandler = null;
+        sShowModeLoopStarted = false;
+        sIconAreaRepository = null;
+        sLyricNumberMode = false;
+        synchronized (sSubtitleStates) {
+            for (SubtitleState subtitle :
+                    new java.util.ArrayList<SubtitleState>(sSubtitleStates.values())) {
+                try {
+                    android.widget.TextView label = subtitle.labelRef.get();
+                    android.view.ViewGroup contents = subtitle.contentsRef.get();
+                    if (label == null) continue;
+                    label.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                            subtitle.textSize);
+                    label.setTranslationX(subtitle.translationX);
+                    label.setTranslationY(subtitle.translationY);
+                    setPadding(label, subtitle.labelPadding);
+                    setPadding(contents, subtitle.contentsPadding);
+                } catch (Throwable t) {
+                    log("notification subtitle cleanup failed: " + t);
+                }
+            }
+            sSubtitleStates.clear();
+        }
+        synchronized (sMutatedNotificationViews) {
+            for (android.view.View view :
+                    new java.util.ArrayList<>(sMutatedNotificationViews)) {
+                try {
+                    Object top = view.getTag(TAG_NOTIF_PAD_TOP);
+                    Object bottom = view.getTag(TAG_NOTIF_PAD_BOTTOM);
+                    if (top instanceof Integer && bottom instanceof Integer) {
+                        view.setPaddingRelative(view.getPaddingStart(), (Integer) top,
+                                view.getPaddingEnd(), (Integer) bottom);
+                        view.setTag(TAG_NOTIF_PAD_TOP, null);
+                        view.setTag(TAG_NOTIF_PAD_BOTTOM, null);
+                    }
+                    Object translation = view.getTag(TAG_NOTIF_GROUP_HEADER_TRANSLATION);
+                    if (translation instanceof Float) {
+                        view.setTranslationY((Float) translation);
+                        view.setTag(TAG_NOTIF_GROUP_HEADER_TRANSLATION, null);
+                    }
+                } catch (Throwable t) {
+                    log("notification padding cleanup failed: " + t);
+                }
+            }
+            sMutatedNotificationViews.clear();
+        }
+        sNotifPadEnabled = false;
+        sNotifPadPx = 0;
     }
 
     /** 把目标显示模式写进通知图标区仓库; 与当前值一致时不写。 */
@@ -630,6 +869,7 @@ public final class NotificationHooks {
         if (!(tag instanceof Float)) {
             view.setTag(TAG_NOTIF_GROUP_HEADER_TRANSLATION, original);
         }
+        sMutatedNotificationViews.add(view);
         float target = enabled ? original + padPx : original;
         if (view.getTranslationY() != target) {
             view.setTranslationY(target);
@@ -647,6 +887,7 @@ public final class NotificationHooks {
             Integer origBottom = (Integer) v.getTag(TAG_NOTIF_PAD_BOTTOM);
             if (origTop == null) { origTop = v.getPaddingTop(); v.setTag(TAG_NOTIF_PAD_TOP, origTop); }
             if (origBottom == null) { origBottom = v.getPaddingBottom(); v.setTag(TAG_NOTIF_PAD_BOTTOM, origBottom); }
+            sMutatedNotificationViews.add(v);
             int top = minimized ? origTop : origTop + padPx;
             int bottom = minimized ? origBottom : origBottom + padPx;
             if (v.getPaddingTop() != top || v.getPaddingBottom() != bottom) {

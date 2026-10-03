@@ -6,8 +6,10 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
 import android.os.Build
-import android.os.Bundle
 import android.os.Handler
+import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -59,6 +61,7 @@ import top.yukonga.miuix.kmp.icon.extended.Folder
 import top.yukonga.miuix.kmp.icon.extended.Hide
 import top.yukonga.miuix.kmp.icon.extended.Lock
 import top.yukonga.miuix.kmp.icon.extended.Refresh
+import top.yukonga.miuix.kmp.icon.extended.Update
 import top.yukonga.miuix.kmp.icon.extended.Tune
 import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -73,13 +76,34 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import io.github.libxposed.service.HookedTarget
+import io.github.libxposed.service.HotReloadResult
+import io.github.libxposed.service.XposedService
+import io.github.libxposed.service.XposedServiceHelper
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.ConcurrentHashMap
 import androidx.navigationevent.NavigationEventDispatcher
 import androidx.navigationevent.NavigationEventDispatcherOwner
 import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        private val listenerRegistered = AtomicBoolean(false)
+        internal val xposedServices: MutableSet<XposedService> =
+            java.util.Collections.newSetFromMap(ConcurrentHashMap<XposedService, Boolean>())
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (listenerRegistered.compareAndSet(false, true)) {
+            XposedServiceHelper.registerListener(object : XposedServiceHelper.OnServiceListener {
+                override fun onServiceBind(service: XposedService) { xposedServices.add(service) }
+                override fun onServiceDied(service: XposedService) {
+                    xposedServices.remove(service)
+                    activeHotReloadBatches.forEach { it.serviceDied(service) }
+                }
+            })
+        }
         checkEnvironment(this)
         setContent {
             val context = LocalContext.current
@@ -489,7 +513,10 @@ private fun HomeScreen(
             CouixLargeTitle(
                 title = "ColorOS Mod",
                 dividerProgress = couixTopBarDividerProgress(listState, overscrollOffset),
-                actions = { RestartMenu(ctx) },
+                actions = {
+                    HotReloadButton(ctx)
+                    RestartMenu(ctx)
+                },
             )
         },
     ) { padding ->
@@ -777,6 +804,288 @@ private fun launchApp(ctx: Context, command: String) {
             android.widget.Toast.makeText(ctx, "未授予 root 权限", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
+}
+
+private const val HOT_RELOAD_TIMEOUT_MS = 30_000L
+private val hotReloadBusy = AtomicBoolean(false)
+private val activeHotReloadBatches: MutableSet<HotReloadBatch> =
+    java.util.Collections.newSetFromMap(ConcurrentHashMap<HotReloadBatch, Boolean>())
+
+private class HotReloadBatch(private val context: Context) {
+    class Pending(val service: XposedService, val targetLabel: String) {
+        val completed = AtomicBoolean(false)
+    }
+
+    private val lock = Any()
+    private val handler = Handler(context.mainLooper)
+    private val pendingByService = HashMap<XposedService, MutableList<Pending>>()
+    private var remaining = 0
+    private var succeeded = 0
+    private var refused = 0
+    private var frameworkFailed = 0
+    private var unsupported = 0
+    private var inProgress = 0
+    private var processDied = 0
+    private var submissionFailed = 0
+    private var queryFailed = 0
+    private var timedOut = 0
+    private var submissionsClosed = false
+    private var finished = false
+    private val timeout = Runnable { finishTimedOut() }
+
+    init {
+        handler.postDelayed(timeout, HOT_RELOAD_TIMEOUT_MS)
+    }
+
+    fun token(service: XposedService, target: HookedTarget): Pending? = synchronized(lock) {
+        if (finished || submissionsClosed) return@synchronized null
+        val label = try {
+            "${target.processName} uid=${target.uid} pid=${target.pid}"
+        } catch (_: Throwable) {
+            "opaque target"
+        }
+        Pending(service, label).also {
+            pendingByService.getOrPut(service) { mutableListOf() }.add(it)
+            remaining++
+        }
+    }
+
+    fun recordQueryFailure(service: XposedService, error: Throwable) {
+        synchronized(lock) { queryFailed++ }
+        Log.e("ColorOSMod", "hot reload target query failed for service $service", error)
+    }
+
+    fun recordUnsupportedService(service: XposedService, apiVersion: Int) {
+        synchronized(lock) { unsupported++ }
+        Log.e("ColorOSMod", "hot reload outcome: unsupported service api=$apiVersion service=$service")
+    }
+
+    fun closeSubmissions() {
+        val shouldRelease = synchronized(lock) {
+            if (finished) return@synchronized false
+            submissionsClosed = true
+            if (remaining == 0) {
+                finished = true
+                true
+            } else false
+        }
+        if (shouldRelease) release()
+    }
+
+    fun finishWithoutTargets() {
+        val message = synchronized(lock) {
+            if (finished || remaining != 0) return
+            finished = true
+            submissionsClosed = true
+            if (queryFailed > 0 || unsupported > 0) {
+                summaryLocked()
+            } else {
+                "没有可热重载的运行中作用域"
+            }
+        }
+        release(message)
+    }
+
+    fun failOperation(error: Throwable) {
+        synchronized(lock) {
+            if (finished) return
+            finished = true
+            submissionsClosed = true
+            pendingByService.values.flatten().forEach { pending ->
+                if (pending.completed.compareAndSet(false, true)) submissionFailed++
+            }
+        }
+        Log.e("ColorOSMod", "hot reload operation failed", error)
+        release("热重载操作失败")
+    }
+
+    fun complete(pending: Pending, result: HotReloadResult) {
+        val status = result.status()
+        val message = result.message()
+        finishPending(
+            pending,
+            account = {
+                when (status) {
+                    HotReloadResult.Status.SUCCEEDED -> succeeded++
+                    HotReloadResult.Status.FAILED -> {
+                        if (message == null) refused++ else frameworkFailed++
+                    }
+                    HotReloadResult.Status.UNSUPPORTED -> unsupported++
+                    HotReloadResult.Status.IN_PROGRESS -> inProgress++
+                    HotReloadResult.Status.PROCESS_DIED -> processDied++
+                }
+            },
+            logAccepted = {
+                Log.e(
+                    "ColorOSMod",
+                    "hot reload outcome target=${pending.targetLabel} status=$status message=$message",
+                )
+            },
+        )
+    }
+
+    fun submissionFailed(pending: Pending, error: Throwable) {
+        finishPending(
+            pending,
+            account = { submissionFailed++ },
+            logAccepted = {
+                Log.e("ColorOSMod", "hot reload submit failed target=${pending.targetLabel}", error)
+            },
+        )
+    }
+
+    private fun finishPending(
+        pending: Pending,
+        account: () -> Unit,
+        logAccepted: () -> Unit,
+    ) {
+        var accepted = false
+        val shouldRelease = synchronized(lock) {
+            if (!pending.completed.compareAndSet(false, true)) return@synchronized false
+            accepted = true
+            account()
+            remaining--
+            if (submissionsClosed && remaining == 0 && !finished) {
+                finished = true
+                true
+            } else false
+        }
+        if (!accepted) return
+        logAccepted()
+        if (shouldRelease) release()
+    }
+
+    fun serviceDied(service: XposedService) {
+        val servicePending = synchronized(lock) { pendingByService[service]?.toList() } ?: return
+        servicePending.forEach { pending ->
+            finishPending(
+                pending,
+                account = { processDied++ },
+                logAccepted = {
+                    Log.e("ColorOSMod", "hot reload outcome: service died target=${pending.targetLabel}")
+                },
+            )
+        }
+    }
+
+    private fun finishTimedOut() {
+        synchronized(lock) {
+            if (finished) return
+            finished = true
+            submissionsClosed = true
+            pendingByService.values.flatten().forEach { pending ->
+                if (pending.completed.compareAndSet(false, true)) timedOut++
+            }
+        }
+        release()
+    }
+
+    private fun release(message: String? = null) {
+        handler.removeCallbacks(timeout)
+        activeHotReloadBatches.remove(this)
+        hotReloadBusy.set(false)
+        val summary = synchronized(lock) { message ?: summaryLocked() }
+        showHotReloadToast(context, summary)
+    }
+
+    private fun summaryLocked(): String {
+        val parts = ArrayList<String>()
+        if (succeeded > 0) parts += "成功 $succeeded"
+        if (refused > 0) parts += "模块拒绝 $refused"
+        if (frameworkFailed > 0) parts += "框架失败 $frameworkFailed"
+        if (unsupported > 0) parts += "不支持 $unsupported"
+        if (inProgress > 0) parts += "进行中 $inProgress"
+        if (processDied > 0) parts += "进程退出 $processDied"
+        if (submissionFailed > 0) parts += "提交失败 $submissionFailed"
+        if (queryFailed > 0) parts += "查询失败 $queryFailed"
+        if (timedOut > 0) parts += "超时 $timedOut"
+        return "热重载：" + if (parts.isEmpty()) "无结果" else parts.joinToString("，")
+    }
+}
+
+@Composable
+private fun HotReloadButton(ctx: Context) {
+    var confirming by remember { mutableStateOf(false) }
+    IconButton(onClick = {
+        if (!hotReloadBusy.get()) confirming = true
+    }) {
+        Icon(
+            painter = rememberVectorPainter(MiuixIcons.Update),
+            contentDescription = "热重载",
+        )
+    }
+    if (confirming) {
+        CouixConfirmDialog(
+            title = "热重载全部作用域",
+            text = "将尝试在所有正在运行的作用域中加载新版模块。正在执行的危险操作会拒绝重载。",
+            onConfirm = {
+                confirming = false
+                requestHotReloadAll(ctx)
+            },
+            onDismiss = { confirming = false },
+            confirmLabel = "热重载",
+        )
+    }
+}
+
+private fun requestHotReloadAll(ctx: Context) {
+    val appContext = ctx.applicationContext
+    if (!hotReloadBusy.compareAndSet(false, true)) {
+        Toast.makeText(appContext, "热重载处理中", Toast.LENGTH_SHORT).show()
+        return
+    }
+    val services = MainActivity.xposedServices.toList()
+    if (services.isEmpty()) {
+        hotReloadBusy.set(false)
+        Toast.makeText(appContext, "Xposed 服务不可用", Toast.LENGTH_SHORT).show()
+        return
+    }
+    val batch = HotReloadBatch(appContext)
+    activeHotReloadBatches.add(batch)
+    Thread({
+        try {
+            val work = ArrayList<Pair<XposedService, HookedTarget>>()
+            services.forEach { service ->
+                try {
+                    val apiVersion = service.apiVersion
+                    if (apiVersion >= XposedService.API_102) {
+                        service.runningTargets.forEach { target -> work.add(service to target) }
+                    } else {
+                        batch.recordUnsupportedService(service, apiVersion)
+                    }
+                } catch (t: Throwable) {
+                    batch.recordQueryFailure(service, t)
+                }
+            }
+            if (work.isEmpty()) {
+                batch.finishWithoutTargets()
+                return@Thread
+            }
+            showHotReloadToast(appContext, "热重载处理中：${work.size} 个作用域")
+            work.forEach { (service, target) ->
+                val token = batch.token(service, target) ?: return@forEach
+                try {
+                    // A service can die between the initial snapshot and submission.
+                    if (!MainActivity.xposedServices.contains(service)) {
+                        batch.serviceDied(service)
+                    } else {
+                        service.hotReloadModule(target, null) { _: HookedTarget, result: HotReloadResult ->
+                            batch.complete(token, result)
+                        }
+                    }
+                } catch (t: Throwable) {
+                    batch.submissionFailed(token, t)
+                }
+            }
+            batch.closeSubmissions()
+        } catch (t: Throwable) {
+            batch.failOperation(t)
+        }
+    }, "ColorOSMod-HotReload").start()
+}
+
+private fun showHotReloadToast(ctx: Context, text: String) {
+    Handler(ctx.mainLooper).post { Toast.makeText(ctx, text, Toast.LENGTH_SHORT).show() }
 }
 
 /** 标题栏右侧的重启菜单（首页与子页面共用）。 */

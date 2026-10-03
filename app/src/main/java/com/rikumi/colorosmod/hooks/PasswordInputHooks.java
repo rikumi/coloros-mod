@@ -763,6 +763,8 @@ public final class PasswordInputHooks {
     // 输入框 / 确定按钮边框原色缓存(首次见到时读取一次, 用于关闭开关时还原)。
     private static int sBorderColorInput = Integer.MIN_VALUE;
     private static int sBorderColorLayout = Integer.MIN_VALUE;
+    private static final java.util.Map<Object, Integer> sBorderOriginalColors =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<Object, Integer>());
 
     // SIM 卡界面输入框(COUILockScreenPwdInputView)与确定按钮(COUILockScreenPwdInputLayout)的边框由 mBorderPaint
     // 以 mBorderLineColor 描边。开启时把颜色置全透明并强制重建 paint -> 不可见; 关闭时还原, 门控即时生效。
@@ -773,6 +775,9 @@ public final class PasswordInputHooks {
             if (cached == Integer.MIN_VALUE) {
                 cached = XposedHelpers.getIntField(view, colorField);
                 if (isLayout) sBorderColorLayout = cached; else sBorderColorInput = cached;
+            }
+            if (!sBorderOriginalColors.containsKey(view)) {
+                sBorderOriginalColors.put(view, cached);
             }
             XposedHelpers.setIntField(view, colorField, enabled ? 0 : cached);
             // 置空 paint, 下次绘制按最新 mBorderLineColor 重建; 既保证即时生效, 也避免持有已被替换的透明 paint。
@@ -1023,4 +1028,26 @@ public final class PasswordInputHooks {
         }
         return sTransparentBitmap;
     }
+    public static void cleanupForHotReload() {
+        // SlideState (including animators) lives only in XposedHelpers additional fields.
+        // The global quiescing gate guarantees no callback is mutating it while that table is cleared.
+        synchronized (sBorderOriginalColors) {
+            for (java.util.Map.Entry<Object, Integer> entry :
+                    new java.util.ArrayList<>(sBorderOriginalColors.entrySet())) {
+                try {
+                    XposedHelpers.setIntField(entry.getKey(), "mBorderLineColor", entry.getValue());
+                    XposedHelpers.setObjectField(entry.getKey(), "mBorderPaint", null);
+                } catch (Throwable t) {
+                    log("no_light_effect border cleanup error: " + t);
+                }
+            }
+            sBorderOriginalColors.clear();
+        }
+        sKeyboardClass = null;
+        sTransparentBitmap = null;
+        sBorderColorInput = Integer.MIN_VALUE;
+        sBorderColorLayout = Integer.MIN_VALUE;
+    }
+
+
 }

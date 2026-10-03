@@ -547,6 +547,7 @@ public final class SystemServerHooks {
                             // 已还原成浮窗/已关闭: 焦点归它是对的, 交还系统。
                             sHungTaskIds.remove(id);
                             sHungTasks.remove(id);
+                            releaseHungTaskMuteAsync(id.intValue());
                             return;
                         }
                         Object behind = findBehindActivity(t);
@@ -814,12 +815,14 @@ public final class SystemServerHooks {
                 if (task == null) {
                     sHungTaskIds.remove(id);
                     sHungTasks.remove(id);
+                    releaseHungTaskMuteAsync(id.intValue());
                     continue;
                 }
                 if (!isTaskInFloatingList(id)) {
                     // 已还原成浮窗: 焦点归它是对的, 不再干预。
                     sHungTaskIds.remove(id);
                     sHungTasks.remove(id);
+                    releaseHungTaskMuteAsync(id.intValue());
                     continue;
                 }
                 if (!isFocusedTask(task)) continue;
@@ -921,6 +924,10 @@ public final class SystemServerHooks {
     private static int sMutedTaskId = -1;
     private static int sMutedUid = -1;
     private static float sMutedPrevGain = 1.0f;
+    // Pending mute is recorded before posting so hot-reload preflight can see the race window.
+    private static int sPendingMuteTaskId = -1;
+    private static int sPendingMuteUid = -1;
+    private static long sMuteGeneration = 0L;
     private static Handler sHandler;
 
     public static void hookFloatWindowEdgeHangMute(final XC_LoadPackage.LoadPackageParam lpparam) {
@@ -967,26 +974,63 @@ public final class SystemServerHooks {
         }
     }
 
-    // 贴边成浮窗时静音: 先记下原音量再置 0, 回到前台按原值恢复。
+    // 贴边成浮窗时静音: 先同步登记 pending, 再把音量调用抛到主线程，封住 preflight 间隙。
     private static void muteFloatTask(final int taskId, Object task) {
         final int uid = taskUid(task);
         if (uid <= 0) return;
-        postAsync(new Runnable() {
-            @Override
-            public void run() {
-                synchronized (MUTE_LOCK) {
-                    if (sPamExt == null) return;
-                    // 同一应用重复贴边: 已静音, 保留最初记录的原始音量, 勿把 0 记成原值。
-                    if (sMutedUid == uid) {
+        final long generation;
+        synchronized (MUTE_LOCK) {
+            generation = ++sMuteGeneration;
+            sPendingMuteTaskId = taskId;
+            sPendingMuteUid = uid;
+        }
+        try {
+            if (sHandler == null) sHandler = new Handler(Looper.getMainLooper());
+            if (!sHandler.post(new Runnable() {
+                @Override public void run() {
+                    synchronized (MUTE_LOCK) {
+                        if (generation != sMuteGeneration
+                                || sPendingMuteTaskId != taskId
+                                || sPendingMuteUid != uid) return;
+                        sPendingMuteTaskId = -1;
+                        sPendingMuteUid = -1;
+                        // The task may have left the floating list while this runnable was queued.
+                        if (!isTaskInFloatingList(taskId) || sPamExt == null) return;
+                        // 同一应用重复贴边: 已静音, 保留最初记录的原始音量, 勿把 0 记成原值。
+                        if (sMutedUid == uid) {
+                            sMutedTaskId = taskId;
+                            return;
+                        }
+                        if (sMutedUid >= 0) applyAppVolume(sMutedUid, sMutedPrevGain);
+                        float prev = applyAppVolume(uid, 0.0f);
                         sMutedTaskId = taskId;
-                        return;
+                        sMutedUid = uid;
+                        sMutedPrevGain = prev;
                     }
-                    if (sMutedUid >= 0) applyAppVolume(sMutedUid, sMutedPrevGain);
-                    float prev = applyAppVolume(uid, 0.0f);
-                    sMutedTaskId = taskId;
-                    sMutedUid = uid;
-                    sMutedPrevGain = prev;
                 }
+            })) {
+                synchronized (MUTE_LOCK) {
+                    if (generation == sMuteGeneration) cancelPendingMuteLocked();
+                }
+                log("!!! edge_hang_mute post failed");
+            }
+        } catch (Throwable t) {
+            synchronized (MUTE_LOCK) {
+                if (generation == sMuteGeneration) cancelPendingMuteLocked();
+            }
+            log("!!! edge_hang_mute post failed: " + t);
+        }
+    }
+
+    // WM hooks can run while holding the global lock. Invalidate a queued mute synchronously,
+    // then defer PackageManager/audio work until after the hook returns.
+    private static void releaseHungTaskMuteAsync(final int taskId) {
+        synchronized (MUTE_LOCK) {
+            if (sPendingMuteTaskId == taskId) cancelPendingMuteLocked();
+        }
+        postAsync(new Runnable() {
+            @Override public void run() {
+                restoreMuteIfNeeded();
             }
         });
     }
@@ -997,11 +1041,19 @@ public final class SystemServerHooks {
     // 用户并没有点开它。静音必须贯穿整个挂机期间, 直到用户主动点开小窗。
     private static void restoreMuteIfNeeded() {
         synchronized (MUTE_LOCK) {
-            if (sMutedUid < 0) return;
-            if (!isTaskInFloatingList(sMutedTaskId)) {
+            if (sPendingMuteTaskId >= 0 && !isTaskInFloatingList(sPendingMuteTaskId)) {
+                cancelPendingMuteLocked();
+            }
+            if (sMutedUid >= 0 && !isTaskInFloatingList(sMutedTaskId)) {
                 restoreMutedLocked();
             }
         }
+    }
+
+    private static void cancelPendingMuteLocked() {
+        sMuteGeneration++;
+        sPendingMuteTaskId = -1;
+        sPendingMuteUid = -1;
     }
 
     private static void restoreMutedLocked() {
@@ -1449,6 +1501,13 @@ public final class SystemServerHooks {
         return (widthPx - margin) * 1.0f / widthPx;
     }
 
+    private static final Object WIDTH_POLICY_LOCK = new Object();
+    private static final java.util.Map<Object, Integer> sOriginalMaxVisualWidths =
+            new java.util.IdentityHashMap<Object, Integer>();
+    private static final java.util.Set<Object> sWidthParameterStores =
+            java.util.Collections.newSetFromMap(
+                    new java.util.IdentityHashMap<Object, Boolean>());
+
     // 把每个比例的 mMaxVisualWidth(dp) 改写成 屏幕宽度 - 左右边距:
     // 竖屏场景(mIsPort)用屏幕短边, 横屏场景用长边, 这样两种旋转下都是"当前屏幕宽度"。
     @SuppressWarnings("unchecked")
@@ -1463,6 +1522,9 @@ public final class SystemServerHooks {
         if (!(raw instanceof java.util.List)) return;
         java.util.List<Object> list = (java.util.List<Object>) raw;
         if (list.isEmpty()) return;
+        synchronized (WIDTH_POLICY_LOCK) {
+            sWidthParameterStores.add(parameterStore);
+        }
 
         float density = 0f;
         int shortSide = 0, longSide = 0;
@@ -1500,6 +1562,12 @@ public final class SystemServerHooks {
             }
             int newWidth = isPort ? portWidthDp : landWidthDp;
             try {
+                synchronized (WIDTH_POLICY_LOCK) {
+                    if (!sOriginalMaxVisualWidths.containsKey(data)) {
+                        sOriginalMaxVisualWidths.put(data,
+                                Integer.valueOf(XposedHelpers.getIntField(data, "mMaxVisualWidth")));
+                    }
+                }
                 XposedHelpers.setIntField(data, "mMaxVisualWidth", newWidth);
             } catch (Throwable t) {
                 log("!!! float_window_size widenMaxVisualWidth set field failed: " + t);
@@ -1515,6 +1583,8 @@ public final class SystemServerHooks {
     // 再以 system_server 的身份升级成 AMS#forceStopPackage, 彻底结束进程。
     // 必须在 mGlobalLock 之外执行, 所以另起线程 + clearCallingIdentity。
     private static volatile int sLauncherUid = -1;
+    private static final java.util.Set<Thread> sKillThreads =
+            java.util.Collections.synchronizedSet(new java.util.HashSet<Thread>());
 
     public static void hookRecentsSwipeUpKillSystemServer(
             final XC_LoadPackage.LoadPackageParam lpparam) {
@@ -1557,44 +1627,60 @@ public final class SystemServerHooks {
                                     } catch (Throwable e) {
                                         return;
                                     }
-                                    new Thread(new Runnable() {
-                                        @Override
-                                        public void run() {
+                                    Thread killThread = new Thread(new Runnable() {
+                                        @Override public void run() {
                                             try {
-                                                Thread.sleep(300L);
-                                            } catch (Throwable ignored) { }
-                                            long id = android.os.Binder.clearCallingIdentity();
-                                            try {
-                                                killTaskProcess(ams, taskId);
+                                                try { Thread.sleep(300L); }
+                                                catch (InterruptedException e) {
+                                                    Thread.currentThread().interrupt();
+                                                    return;
+                                                }
+                                                long id = android.os.Binder.clearCallingIdentity();
+                                                try { killTaskProcess(ams, taskId); }
+                                                finally { android.os.Binder.restoreCallingIdentity(id); }
                                             } finally {
-                                                android.os.Binder.restoreCallingIdentity(id);
+                                                sKillThreads.remove(Thread.currentThread());
                                             }
                                         }
-                                    }).start();
+                                    }, "ColorOSMod-KillTask");
+                                    synchronized (sKillThreads) {
+                                        sKillThreads.add(killThread);
+                                        try { killThread.start(); }
+                                        catch (Throwable t) { sKillThreads.remove(killThread); throw t; }
+                                    }
                                     return;
                                 }
                                 final String pkg = arg;
                                 // 用调用方自身的用户 id, 避免 Launcher 传进来的可能是 USER_CURRENT。
                                 final int userId = uid / 100000;
-                                new Thread(new Runnable() {
-                                    @Override
-                                    public void run() {
+                                Thread killThread = new Thread(new Runnable() {
+                                    @Override public void run() {
                                         try {
-                                            // 等卡片移除/任务清理跑完再强杀, 否则可能撞上收尾流程。
-                                            Thread.sleep(300L);
-                                        } catch (Throwable ignored) { }
-                                        long ident = android.os.Binder.clearCallingIdentity();
-                                        try {
-                                            XposedHelpers.callMethod(
-                                                    ams, "forceStopPackage", pkg, userId);
-                                        } catch (Throwable t) {
-                                            log("!!! recents_swipe_up_kill forceStopPackage "
-                                                    + pkg + " failed: " + t);
+                                            try { Thread.sleep(300L); }
+                                            catch (InterruptedException e) {
+                                                Thread.currentThread().interrupt();
+                                                return;
+                                            }
+                                            long ident = android.os.Binder.clearCallingIdentity();
+                                            try {
+                                                XposedHelpers.callMethod(
+                                                        ams, "forceStopPackage", pkg, userId);
+                                            } catch (Throwable t) {
+                                                log("!!! recents_swipe_up_kill forceStopPackage "
+                                                        + pkg + " failed: " + t);
+                                            } finally {
+                                                android.os.Binder.restoreCallingIdentity(ident);
+                                            }
                                         } finally {
-                                            android.os.Binder.restoreCallingIdentity(ident);
+                                            sKillThreads.remove(Thread.currentThread());
                                         }
                                     }
-                                }).start();
+                                }, "ColorOSMod-ForceStop");
+                                synchronized (sKillThreads) {
+                                    sKillThreads.add(killThread);
+                                    try { killThread.start(); }
+                                    catch (Throwable t) { sKillThreads.remove(killThread); throw t; }
+                                }
                             } catch (Throwable ignored) { }
                         }
                     });
@@ -1641,4 +1727,82 @@ public final class SystemServerHooks {
             if (r instanceof Integer) pids.add((Integer) r);
         } catch (Throwable ignored) { }
     }
+    public static boolean canHotReload() {
+        // Never alter a user's mute state during reload. If it is active, reject before cleanup.
+        synchronized (MUTE_LOCK) {
+            if (sPendingMuteTaskId >= 0 || sMutedUid >= 0 || !sKillThreads.isEmpty()
+                    || !sHungTaskIds.isEmpty() || !sHungTasks.isEmpty()) {
+                log("system_server hot reload rejected: hung/mute/kill operation active");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Preserve host-owned objects whose constructors are not replayed after reload. */
+    public static Object captureHotReloadHost() {
+        synchronized (WIDTH_POLICY_LOCK) {
+            return new Object[] { sPamExt, sWidthParameterStores.toArray() };
+        }
+    }
+
+    public static void restoreHotReloadHost(Object host) {
+        Object pam = host;
+        Object[] stores = null;
+        if (host instanceof Object[]) {
+            Object[] state = (Object[]) host;
+            pam = state.length > 0 ? state[0] : null;
+            stores = state.length > 1 && state[1] instanceof Object[]
+                    ? (Object[]) state[1] : null;
+        }
+        if (pam != null
+                && "com.android.server.audio.PlaybackActivityMonitorExtImpl"
+                        .equals(pam.getClass().getName())) {
+            sPamExt = pam;
+        }
+        if (stores != null && edgeSizeOptimizeEnabled()) {
+            for (Object store : stores) {
+                try { widenMaxVisualWidth(store); }
+                catch (Throwable t) { log("restore float window width policy failed: " + t); }
+            }
+        }
+    }
+
+    public static void cleanupForHotReload() {
+        synchronized (MUTE_LOCK) {
+            cancelPendingMuteLocked();
+            // canHotReload rejects active mute, but restore defensively before dropping sPamExt.
+            if (sMutedUid >= 0) restoreMutedLocked();
+        }
+        if (sStatusBarOverlayEventHandler != null) {
+            sStatusBarOverlayEventHandler.removeCallbacks(sStatusBarOverlayEventRunnable);
+        }
+        if (sHandler != null) sHandler.removeCallbacksAndMessages(null);
+        sStatusBarOverlayEventHandler = null;
+        sStatusBarOverlayEventContext = null;
+        sHandler = null;
+        sPamExt = null;
+        sFlexibleTaskController = null;
+        sFloatHandleController = null;
+        sFlexibleWindowService = null;
+        sHungTaskIds.clear();
+        sHungTasks.clear();
+        sLauncherUid = -1;
+        sSecurityMarginBackup.remove();
+        synchronized (WIDTH_POLICY_LOCK) {
+            for (java.util.Map.Entry<Object, Integer> entry :
+                    new java.util.ArrayList<>(sOriginalMaxVisualWidths.entrySet())) {
+                try {
+                    XposedHelpers.setIntField(entry.getKey(), "mMaxVisualWidth",
+                            entry.getValue().intValue());
+                } catch (Throwable t) {
+                    log("restore float window width policy cleanup failed: " + t);
+                }
+            }
+            sOriginalMaxVisualWidths.clear();
+            sWidthParameterStores.clear();
+        }
+    }
+
+
 }

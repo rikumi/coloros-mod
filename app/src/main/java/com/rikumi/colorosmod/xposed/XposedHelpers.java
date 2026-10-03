@@ -8,6 +8,8 @@ import java.lang.reflect.Member;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +26,10 @@ import io.github.libxposed.api.XposedInterface;
  * 均为 Error), 业务代码里清一色 catch Throwable, 语义不变。
  */
 public final class XposedHelpers {
+
+    private static final Object QUIESCE_LOCK = new Object();
+    private static volatile boolean QUIESCING;
+    private static int IN_FLIGHT;
 
     private XposedHelpers() {
     }
@@ -70,7 +76,12 @@ public final class XposedHelpers {
                 .intercept(new XposedInterface.Hooker() {
                     @Override
                     public Object intercept(XposedInterface.Chain chain) throws Throwable {
-                        return hook.handleHookedMethod(chain);
+                        if (!enterHook()) return chain.proceed();
+                        try {
+                            return hook.handleHookedMethod(chain);
+                        } finally {
+                            leaveHook();
+                        }
                     }
                 });
         return new XC_MethodHook.Unhook(handle);
@@ -439,6 +450,21 @@ public final class XposedHelpers {
     // 因包装对象仍在栈上而幸存, 故其他功能看似正常。这是 libxposed 迁移后兼容层引入的回归。
     private static final Map<Object, Map<String, Object>> ADDITIONAL_FIELDS =
             java.util.Collections.synchronizedMap(new WeakHashMap<Object, Map<String, Object>>());
+    private static final Map<String, List<TrackedPreDrawListener>> PREPARED_PRE_DRAW =
+            new HashMap<String, List<TrackedPreDrawListener>>();
+    private static final Map<String, Runnable> PRE_DRAW_ROLLBACK_RETRIES =
+            new HashMap<String, Runnable>();
+
+    private static final class TrackedPreDrawListener {
+        final android.view.View owner;
+        final android.view.ViewTreeObserver.OnPreDrawListener listener;
+
+        TrackedPreDrawListener(android.view.View owner,
+                android.view.ViewTreeObserver.OnPreDrawListener listener) {
+            this.owner = owner;
+            this.listener = listener;
+        }
+    }
 
     public static Object setAdditionalInstanceField(Object obj, String key, Object value) {
         if (obj == null) throw new NullPointerException("object must not be null");
@@ -470,6 +496,232 @@ public final class XposedHelpers {
         Map<String, Object> fields = ADDITIONAL_FIELDS.get(obj);
         if (fields == null) return null;
         return fields.remove(key);
+    }
+
+
+    /** Stop admitting module callbacks and wait for callbacks already inside old code. */
+    public static boolean beginQuiescing(long timeoutMs) {
+        long deadline = android.os.SystemClock.uptimeMillis() + timeoutMs;
+        synchronized (QUIESCE_LOCK) {
+            QUIESCING = true;
+            while (IN_FLIGHT != 0) {
+                long left = deadline - android.os.SystemClock.uptimeMillis();
+                if (left <= 0) {
+                    QUIESCING = false;
+                    QUIESCE_LOCK.notifyAll();
+                    return false;
+                }
+                try {
+                    QUIESCE_LOCK.wait(left);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    QUIESCING = false;
+                    QUIESCE_LOCK.notifyAll();
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    public static void cancelQuiescing() {
+        synchronized (QUIESCE_LOCK) {
+            QUIESCING = false;
+            QUIESCE_LOCK.notifyAll();
+        }
+    }
+
+    private static boolean enterHook() {
+        synchronized (QUIESCE_LOCK) {
+            if (QUIESCING) return false;
+            IN_FLIGHT++;
+            return true;
+        }
+    }
+
+    private static void leaveHook() {
+        synchronized (QUIESCE_LOCK) {
+            if (--IN_FLIGHT == 0) QUIESCE_LOCK.notifyAll();
+        }
+    }
+
+
+    public interface TrackedOwnerConsumer { void accept(Object owner); }
+
+    public static void forEachTrackedOwner(String key, TrackedOwnerConsumer consumer) {
+        synchronized (ADDITIONAL_FIELDS) {
+            for (Map.Entry<Object, Map<String, Object>> entry :
+                    new ArrayList<Map.Entry<Object, Map<String, Object>>>(ADDITIONAL_FIELDS.entrySet())) {
+                if (entry.getValue().containsKey(key)) consumer.accept(entry.getKey());
+            }
+        }
+    }
+
+    /** Detach tracked listeners without dropping bookkeeping so a rejected reload can restore them. */
+    public static boolean prepareTrackedPreDrawListeners(String key) {
+        synchronized (ADDITIONAL_FIELDS) {
+            if (PREPARED_PRE_DRAW.containsKey(key)) return false;
+            List<TrackedPreDrawListener> detached = new ArrayList<TrackedPreDrawListener>();
+            PREPARED_PRE_DRAW.put(key, detached);
+            for (Map.Entry<Object, Map<String, Object>> entry :
+                    new ArrayList<Map.Entry<Object, Map<String, Object>>>(ADDITIONAL_FIELDS.entrySet())) {
+                Object owner = entry.getKey();
+                Object listener = entry.getValue().get(key);
+                if (!(owner instanceof android.view.View)
+                        || !(listener instanceof android.view.ViewTreeObserver.OnPreDrawListener)) continue;
+                try {
+                    android.view.View view = (android.view.View) owner;
+                    android.view.ViewTreeObserver observer = view.getViewTreeObserver();
+                    if (!observer.isAlive()) continue;
+                    observer.removeOnPreDrawListener(
+                            (android.view.ViewTreeObserver.OnPreDrawListener) listener);
+                    detached.add(new TrackedPreDrawListener(view,
+                            (android.view.ViewTreeObserver.OnPreDrawListener) listener));
+                } catch (Throwable t) {
+                    boolean restored = cancelTrackedPreDrawListenerPreflightLocked(key);
+                    if (!restored) scheduleTrackedPreDrawRollbackLocked(key);
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    /** Restore listeners detached by a rejected hot-reload preflight. */
+    public static boolean cancelTrackedPreDrawListenerPreflight(String key) {
+        synchronized (ADDITIONAL_FIELDS) {
+            boolean restored = cancelTrackedPreDrawListenerPreflightLocked(key);
+            if (!restored) scheduleTrackedPreDrawRollbackLocked(key);
+            return restored;
+        }
+    }
+
+    private static boolean cancelTrackedPreDrawListenerPreflightLocked(String key) {
+        List<TrackedPreDrawListener> detached = PREPARED_PRE_DRAW.get(key);
+        if (detached == null) return true;
+        for (Iterator<TrackedPreDrawListener> iterator = detached.iterator(); iterator.hasNext(); ) {
+            TrackedPreDrawListener tracked = iterator.next();
+            Map<String, Object> fields = ADDITIONAL_FIELDS.get(tracked.owner);
+            if (fields == null || fields.get(key) != tracked.listener) {
+                iterator.remove();
+                continue;
+            }
+            try {
+                android.view.ViewTreeObserver observer = tracked.owner.getViewTreeObserver();
+                if (!observer.isAlive()) {
+                    // A dead observer cannot retain or invoke the old-generation listener.
+                    iterator.remove();
+                    continue;
+                }
+                observer.addOnPreDrawListener(tracked.listener);
+                iterator.remove();
+            } catch (Throwable ignored) { }
+        }
+        if (!detached.isEmpty()) return false;
+        PREPARED_PRE_DRAW.remove(key);
+        Runnable retry = PRE_DRAW_ROLLBACK_RETRIES.remove(key);
+        if (retry != null) {
+            new android.os.Handler(android.os.Looper.getMainLooper()).removeCallbacks(retry);
+        }
+        return true;
+    }
+
+    private static void scheduleTrackedPreDrawRollbackLocked(final String key) {
+        if (PRE_DRAW_ROLLBACK_RETRIES.containsKey(key)) return;
+        final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+        Runnable retry = new Runnable() {
+            @Override public void run() {
+                synchronized (ADDITIONAL_FIELDS) {
+                    if (PRE_DRAW_ROLLBACK_RETRIES.get(key) != this) return;
+                    PRE_DRAW_ROLLBACK_RETRIES.remove(key);
+                    if (!cancelTrackedPreDrawListenerPreflightLocked(key)) {
+                        scheduleTrackedPreDrawRollbackLocked(key);
+                    }
+                }
+            }
+        };
+        PRE_DRAW_ROLLBACK_RETRIES.put(key, retry);
+        main.postDelayed(retry, 1000L);
+    }
+
+    /** Finalize a successful preflight without attempting to detach the same listeners twice. */
+    public static boolean commitTrackedPreDrawListenerPreflight(String key) {
+        synchronized (ADDITIONAL_FIELDS) {
+            if (!PREPARED_PRE_DRAW.containsKey(key)) return false;
+            Runnable retry = PRE_DRAW_ROLLBACK_RETRIES.remove(key);
+            if (retry != null) {
+                new android.os.Handler(android.os.Looper.getMainLooper()).removeCallbacks(retry);
+            }
+            for (Map.Entry<Object, Map<String, Object>> entry :
+                    new ArrayList<Map.Entry<Object, Map<String, Object>>>(ADDITIONAL_FIELDS.entrySet())) {
+                entry.getValue().remove(key);
+            }
+            PREPARED_PRE_DRAW.remove(key);
+            return true;
+        }
+    }
+
+
+    public static void removeTrackedViewChildren(String... keys) {
+        synchronized (ADDITIONAL_FIELDS) {
+            for (Map.Entry<Object, Map<String, Object>> entry :
+                    new ArrayList<Map.Entry<Object, Map<String, Object>>>(ADDITIONAL_FIELDS.entrySet())) {
+                for (String key : keys) {
+                    Object value = entry.getValue().remove(key);
+                    if (!(value instanceof android.view.View)) continue;
+                    android.view.View view = (android.view.View) value;
+                    try { view.animate().cancel(); } catch (Throwable ignored) { }
+                    try {
+                        if (view.getParent() instanceof android.view.ViewGroup) {
+                            ((android.view.ViewGroup) view.getParent()).removeView(view);
+                        }
+                    } catch (Throwable ignored) { }
+                }
+            }
+        }
+    }
+
+    public static void cancelTrackedCallbacksAndAnimators() {
+        synchronized (ADDITIONAL_FIELDS) {
+            for (Map.Entry<Object, Map<String, Object>> entry :
+                    new ArrayList<Map.Entry<Object, Map<String, Object>>>(ADDITIONAL_FIELDS.entrySet())) {
+                Object owner = entry.getKey();
+                for (Object value : new ArrayList<Object>(entry.getValue().values())) {
+                    if (owner instanceof android.view.View && value instanceof Runnable) {
+                        try { ((android.view.View) owner).removeCallbacks((Runnable) value); }
+                        catch (Throwable ignored) { }
+                    }
+                    if (value instanceof android.animation.Animator) {
+                        try { ((android.animation.Animator) value).cancel(); }
+                        catch (Throwable ignored) { }
+                    }
+                    if (value == null) continue;
+                    Field[] fields;
+                    try { fields = value.getClass().getDeclaredFields(); }
+                    catch (Throwable ignored) { continue; }
+                    for (Field field : fields) {
+                        if (!android.animation.Animator.class.isAssignableFrom(field.getType())) continue;
+                        try {
+                            field.setAccessible(true);
+                            Object animator = field.get(value);
+                            if (animator instanceof android.animation.Animator) {
+                                ((android.animation.Animator) animator).cancel();
+                            }
+                        } catch (Throwable ignored) { }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Drop Java-only generation state. UI/Animator cleanup is committed on main beforehand. */
+    public static void clearGenerationState() {
+        FIELD_CACHE.clear();
+        synchronized (ADDITIONAL_FIELDS) {
+            ADDITIONAL_FIELDS.clear();
+            PREPARED_PRE_DRAW.clear();
+            PRE_DRAW_ROLLBACK_RETRIES.clear();
+        }
     }
 
     // ------------------------------------------------------------------ 内部工具
