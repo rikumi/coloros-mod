@@ -101,7 +101,6 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.window.Dialog
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.view.HapticFeedbackConstants
@@ -1483,13 +1482,10 @@ fun CouixSlider(
     }
 }
 
-// 右上角动作按钮: 点击弹出下拉菜单。用 Compose Popup 承载自定义下拉项, 保持与设置 group 一致的样式。
-// 每个菜单项可附带 confirmTitle/confirmText, 点击后先弹确认框再执行, 用于软重启这类较重操作。
+// 右上角动作按钮: 点击弹出下拉菜单，选择菜单项后收起菜单并直接执行。
 data class ActionMenuItem(
     val label: String,
     val onClick: () -> Unit,
-    val confirmTitle: String? = null,
-    val confirmText: String? = null,
 )
 
 @Composable
@@ -1500,7 +1496,6 @@ fun CouixActionMenu(
 ) {
     var expanded by remember { mutableStateOf(false) }
     var popupVisible by remember { mutableStateOf(false) }
-    var pendingConfirm by remember { mutableStateOf<ActionMenuItem?>(null) }
     LaunchedEffect(expanded) {
         if (!expanded) {
             delay(220)
@@ -1591,94 +1586,11 @@ fun CouixActionMenu(
                                     selected = false,
                                 ) {
                                     expanded = false
-                                    if (item.confirmTitle != null) pendingConfirm = item else item.onClick()
+                                    item.onClick()
                                 }
                             }
                         }
                     }
-                    }
-                }
-            }
-        }
-    }
-
-    if (pendingConfirm != null) {
-        CouixConfirmDialog(
-            title = pendingConfirm!!.confirmTitle ?: "",
-            text = pendingConfirm!!.confirmText ?: "",
-            onConfirm = {
-                val action = pendingConfirm!!.onClick
-                pendingConfirm = null
-                action()
-            },
-            onDismiss = { pendingConfirm = null },
-        )
-    }
-}
-
-// 极简单确认弹窗(自绘, 用 androidx.compose.ui.window.Dialog 提供遮罩与居中)。
-// 仅用于"软重启"等较重、需二次确认的动作。
-@Composable
-fun CouixConfirmDialog(
-    title: String,
-    text: String,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit,
-    confirmLabel: String = "确定",
-    dismissLabel: String = "取消",
-) {
-    Dialog(onDismissRequest = onDismiss) {
-        Card(
-            cornerRadius = COUIX_CARD_CORNER,
-            colors = CardDefaults.defaultColors(),
-            modifier = Modifier
-                .fillMaxWidth(0.84f)
-                .padding(horizontal = 8.dp),
-        ) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                BasicText(
-                    text = title,
-                    style = MiuixTheme.textStyles.body1.copy(
-                        color = MiuixTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.Medium,
-                    ),
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                BasicText(
-                    text = text,
-                    style = MiuixTheme.textStyles.body2.copy(
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    ),
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .clickable { onDismiss() }
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                    ) {
-                        BasicText(
-                            text = dismissLabel,
-                            style = MiuixTheme.textStyles.body2.copy(
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            ),
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .clickable { onConfirm() }
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                    ) {
-                        BasicText(
-                            text = confirmLabel,
-                            style = MiuixTheme.textStyles.body2.copy(
-                                color = MiuixTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Medium,
-                            ),
-                        )
                     }
                 }
             }
