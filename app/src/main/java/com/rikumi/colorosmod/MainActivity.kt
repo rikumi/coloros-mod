@@ -513,10 +513,7 @@ private fun HomeScreen(
             CouixLargeTitle(
                 title = "ColorOS Mod",
                 dividerProgress = couixTopBarDividerProgress(listState, overscrollOffset),
-                actions = {
-                    HotReloadButton(ctx)
-                    RestartMenu(ctx)
-                },
+                actions = { RestartMenu(ctx) },
             )
         },
     ) { padding ->
@@ -1003,31 +1000,6 @@ private class HotReloadBatch(private val context: Context) {
     }
 }
 
-@Composable
-private fun HotReloadButton(ctx: Context) {
-    var confirming by remember { mutableStateOf(false) }
-    IconButton(onClick = {
-        if (!hotReloadBusy.get()) confirming = true
-    }) {
-        Icon(
-            painter = rememberVectorPainter(MiuixIcons.Update),
-            contentDescription = "热重载",
-        )
-    }
-    if (confirming) {
-        CouixConfirmDialog(
-            title = "热重载全部作用域",
-            text = "将尝试在所有正在运行的作用域中加载新版模块。正在执行的危险操作会拒绝重载。",
-            onConfirm = {
-                confirming = false
-                requestHotReloadAll(ctx)
-            },
-            onDismiss = { confirming = false },
-            confirmLabel = "热重载",
-        )
-    }
-}
-
 private fun requestHotReloadAll(ctx: Context) {
     val appContext = ctx.applicationContext
     if (!hotReloadBusy.compareAndSet(false, true)) {
@@ -1099,6 +1071,7 @@ internal fun RestartMenu(ctx: Context) {
             )
         },
         items = listOf(
+            ActionMenuItem("热重载", { requestHotReloadAll(ctx) }),
             ActionMenuItem("重启作用域", { restartScope(ctx) }),
             ActionMenuItem("重启 Zygote", { softRebootSystem(ctx) }),
         ),
