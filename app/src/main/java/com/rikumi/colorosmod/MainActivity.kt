@@ -269,6 +269,7 @@ private val NAV: List<SettingsItem> = listOf(
 private val LOCKSCREEN: List<SettingsItem> = listOf(
     GroupTitleItem("锁屏行为"),
     SwitchItem("unlocked_shutdown_noverify_enabled", "解锁时关机无需校验密码", "仅开启关机校验密码功能时生效"),
+    SwitchItem("keyguard_fingerprint_failure_delay_enabled", "指纹失败三次内不自动弹出密码"),
     SwitchItem("keyguard_slide_input_enabled", "密码支持滑动输入"),
     SwitchItem("keyguard_bouncer_swipe_back_enabled", "密码界面支持侧滑/下滑返回", "解决误触上滑还要再上滑的奇怪交互"),
     GroupTitleItem("锁屏视觉"),

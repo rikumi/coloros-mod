@@ -27,6 +27,63 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
  * 锁屏 / 解锁界面(bouncer)交互相关的 SystemUI hook。
  */
 public final class KeyguardHooks {
+    private static final String CLS_OPLUS_BIOMETRIC_UNLOCK_CONTROLLER =
+            "com.oplus.systemui.statusbar.phone.OplusBiometricUnlockControllerExImpl";
+    private static final String CLS_BIOMETRIC_UNLOCK_CONTROLLER =
+            "com.android.systemui.statusbar.phone.BiometricUnlockController";
+    private static final java.util.concurrent.atomic.AtomicInteger sFingerprintFailureCount =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /** 普通指纹失败累计三次后才允许系统自动显示密码；系统锁定错误继续走原生即时回退。 */
+    public static void hookFingerprintFailureDelay(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                    CLS_OPLUS_BIOMETRIC_UNLOCK_CONTROLLER, lpparam.classLoader,
+                    "handleOnBiometricAuthFailed",
+                    XposedHelpers.findClass(CLS_BIOMETRIC_UNLOCK_CONTROLLER, lpparam.classLoader),
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!readBool(KEY_KEYGUARD_FINGERPRINT_FAILURE_DELAY_ENABLED, false)) {
+                                sFingerprintFailureCount.set(0);
+                                return;
+                            }
+                            if (sFingerprintFailureCount.incrementAndGet() <= 3) {
+                                // 返回 true 表示 Oplus 已处理该失败，阻止后续的通用 UDFPS 阈值弹窗。
+                                param.setResult(Boolean.TRUE);
+                            }
+                        }
+                    });
+            log("HOOK OK OplusBiometricUnlockControllerExImpl#handleOnBiometricAuthFailed"
+                    + " (keyguard_fingerprint_failure_delay)");
+        } catch (Throwable t) {
+            log("HOOK FAIL OplusBiometricUnlockControllerExImpl#handleOnBiometricAuthFailed :: "
+                    + Log.getStackTraceString(t));
+        }
+
+        try {
+            XposedHelpers.findAndHookMethod(
+                    CLS_BIOMETRIC_UNLOCK_CONTROLLER, lpparam.classLoader,
+                    "onBiometricAuthenticated", int.class,
+                    XposedHelpers.findClass("android.hardware.biometrics.BiometricSourceType",
+                            lpparam.classLoader), boolean.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            Object source = param.args[1];
+                            if (source != null && "FINGERPRINT".equals(source.toString())) {
+                                sFingerprintFailureCount.set(0);
+                            }
+                        }
+                    });
+            log("HOOK OK BiometricUnlockController#onBiometricAuthenticated"
+                    + " (keyguard_fingerprint_failure_delay)");
+        } catch (Throwable t) {
+            log("HOOK FAIL BiometricUnlockController#onBiometricAuthenticated :: "
+                    + Log.getStackTraceString(t));
+        }
+    }
+
     // 解锁时关机无需校验密码。电源菜单的凭据校验只有一个闸门: ShutdownBiometricPrompt.isEnable(Context)
     // —— 返回 true 才弹校验, false 则直接执行关机/重启。
     // 故设备已解锁时把返回值改成 false 即可跳过; 锁屏/未解锁时保持系统原生行为。

@@ -65,6 +65,8 @@ public final class SystemUiHooks {
         GestureHooks.hookGestureTouchThrough(lpparam);
         // 解锁时关机无需校验密码: 与手势无关, 始终注入, 运行时门控。
         KeyguardHooks.hookUnlockedShutdownNoVerify(lpparam);
+        // 指纹失败前三次不自动显示密码界面，系统报告锁定时保留原生切换行为。
+        KeyguardHooks.hookFingerprintFailureDelay(lpparam);
         // 取消解锁界面控件光效: 与手势无关, 始终注入, 运行时门控。
         PasswordInputHooks.hookKeyguardNoLightEffect(lpparam);
         // 自定义密码界面背景亮度: 与手势无关, 始终注入, 运行时门控。

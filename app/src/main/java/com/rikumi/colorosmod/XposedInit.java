@@ -249,6 +249,9 @@ public class XposedInit extends XposedModule {
     // 唯一闸门是 ShutdownBiometricPrompt.isEnable(Context), 设备已解锁时返回 false 跳过校验。
     public static final String KEY_UNLOCKED_SHUTDOWN_NOVERIFY_ENABLED =
             "unlocked_shutdown_noverify_enabled";
+    // 指纹失败前三次不自动显示密码界面；系统报告指纹锁定时仍由原生流程立即显示。
+    public static final String KEY_KEYGUARD_FINGERPRINT_FAILURE_DELAY_ENABLED =
+            "keyguard_fingerprint_failure_delay_enabled";
     // 取消解锁界面控件光效(com.android.systemui): COUI 给锁屏密码控件叠了三类非纯色绘制,
     // 去掉后只剩背景填充色与描边(纯色), 按下时的缩放/变色反馈不受影响。
     public static final String KEY_KEYGUARD_NO_LIGHT_EFFECT_ENABLED =
