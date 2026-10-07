@@ -9,7 +9,13 @@ final class IdleMediaGeometry {
     static final int CARD = 1, MEDIA = 3, VERTICAL_ONLY = 4;
     static final class Cell {
         final int index, page, col, row, cols, rows, kind;
+        // 补位磁贴在一个原生双宽格中的左右半格；普通卡片为 -1。
+        final int half;
         Cell(int index, int page, int col, int row, int cols, int rows, int kind) {
+            this(index, page, col, row, cols, rows, kind, -1);
+        }
+        Cell(int index, int page, int col, int row, int cols, int rows, int kind, int half) {
+            this.half = half;
             this.index = index; this.page = page; this.col = col; this.row = row;
             this.cols = cols; this.rows = rows; this.kind = kind;
         }
@@ -50,15 +56,25 @@ final class IdleMediaGeometry {
             plan.upperRows = Math.max(plan.upperRows, placed.row + placed.rows);
             if (cell.kind != VERTICAL_ONLY) cursor = position + 1;
         }
-        if (fill) for (Cell cell : lower) {
-            if (cell.cols != 1 || cell.rows != 1 || cell.kind != CARD) continue;
-            int position = find(occupied, columns, 1, 1, 0, capacityRows);
-            if (position < 0) break;
-            Cell placed = new Cell(cell.index, 0, position % columns, position / columns, 1, 1, CARD);
-            plan.upper.add(placed);
-            plan.promoted.add(cell.index);
-            occupy(occupied, placed);
-            plan.upperRows = Math.max(plan.upperRows, placed.row + 1);
+        if (fill) {
+            List<Cell> candidates = new ArrayList<>();
+            for (Cell cell : lower) if (cell.cols == 1 && cell.rows == 1 && cell.kind == CARD)
+                candidates.add(cell);
+            int next = 0;
+            // 每个空双宽格放两个无文字的 1×1 磁贴，每行一对，最多两行。
+            for (int row = 0; row < capacityRows && next + 1 < candidates.size() && next < 4; row++) {
+                for (int col = 0; col < columns; col++) {
+                    if (!fits(occupied, row, col, 1, 1)) continue;
+                    for (int half = 0; half < 2; half++) {
+                        Cell cell = candidates.get(next++);
+                        plan.upper.add(new Cell(cell.index, 0, col, row, 1, 1, CARD, half));
+                        plan.promoted.add(cell.index);
+                    }
+                    occupied[row][col] = true;
+                    plan.upperRows = Math.max(plan.upperRows, row + 1);
+                    break;
+                }
+            }
         }
         // 下方原生列表为分页磁贴，补位后按原顺序从第一页重新填充。
         int count = lower.size() * Math.max(1, lowerRows) + 1;

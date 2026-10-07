@@ -2,6 +2,7 @@ package com.rikumi.colorosmod.hooks;
 
 import static com.rikumi.colorosmod.XposedInit.*;
 
+import android.graphics.Rect;
 import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
 import android.media.session.PlaybackState;
@@ -26,6 +27,7 @@ public final class FoldIdleMediaHooks {
     private static final String MEDIA_VIEW = "com.oplus.systemui.qs.media.OplusQsBaseMediaPanelView";
     private static final String MEDIA_MODEL = "com.oplus.systemui.plugins.qs.customize.view.viewholder.MediaViewModel";
     private static final WeakHashMap<ViewGroup, Host> hosts = new WeakHashMap<>();
+    private static final WeakHashMap<Object, Boolean> compactHolders = new WeakHashMap<>();
     private static final WeakHashMap<View, Boolean> mediaPlaying = new WeakHashMap<>();
     private static final View.OnAttachStateChangeListener attachListener = new View.OnAttachStateChangeListener() {
         @Override public void onViewAttachedToWindow(View view) { refresh(); }
@@ -44,6 +46,8 @@ public final class FoldIdleMediaHooks {
         List<?> data, locs;
         List<?> displayedData, displayedLocs;
         int displayedRows = -1;
+        List<Integer> halves = new ArrayList<>();
+        Set<Object> compactData = new HashSet<>();
         Host(ViewGroup root, Object manager, Object adapter) {
             this.root = new WeakReference<>(root); this.manager = new WeakReference<>(manager);
             this.adapter = new WeakReference<>(adapter);
@@ -82,7 +86,50 @@ public final class FoldIdleMediaHooks {
                             root.getMeasuredWidth(), Math.max(0, root.getMeasuredHeight() - removed * step));
                 }
             });
+            Class<?> span = XposedHelpers.findClass("com.oplusos.systemui.common.model.SpanSize", pkg.classLoader);
+            XposedHelpers.findAndHookMethod(layout, "getItemRect", locClass, span, new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    ViewGroup root = (ViewGroup) XposedHelpers.callMethod(p.thisObject, "getRecyclerView");
+                    Host host = hosts.get(root);
+                    if (host == null || host.displayedLocs == null || !(p.getResult() instanceof Rect rect)) return;
+                    // 两个磁贴可共享原生格坐标，按坐标对象身份分别取得左右半格。
+                    for (int i = 0; i < host.displayedLocs.size() && i < host.halves.size(); i++) {
+                        if (host.displayedLocs.get(i) != p.args[0]) continue;
+                        int half = host.halves.get(i);
+                        if (half < 0) return;
+                        if (root.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL) half = 1 - half;
+                        int middle = rect.left + rect.width() / 2;
+                        p.setResult(new Rect(half == 0 ? rect.left : middle, rect.top,
+                                half == 0 ? middle : rect.right, rect.bottom));
+                        return;
+                    }
+                }
+            });
             Class<?> adapter = XposedHelpers.findClass(ADAPTER, pkg.classLoader);
+            Class<?> holder = XposedHelpers.findClass("com.oplus.systemui.plugins.qs.customize.view.viewholder.BaseEditableViewHolder", pkg.classLoader);
+            for (String method : new String[]{"setPersonalArea", "setEnableTileName"}) {
+                XposedHelpers.findAndHookMethod(holder, method, boolean.class, new XC_MethodHook() {
+                    @Override protected void beforeHookedMethod(MethodHookParam p) {
+                        if (compactHolders.containsKey(p.thisObject)) p.args[0] = false;
+                    }
+                });
+            }
+            XposedHelpers.findAndHookMethod(adapter, "onBindViewHolder", holder, int.class, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    Object itemHolder = p.args[0];
+                    compactHolders.remove(itemHolder);
+                    ViewGroup root = (ViewGroup) XposedHelpers.getObjectField(p.thisObject, "attachedRecyclerView");
+                    Host host = hosts.get(root);
+                    List<?> data = (List<?>) XposedHelpers.callMethod(p.thisObject, "getDataList");
+                    int position = (Integer) p.args[1];
+                    if (host != null && position >= 0 && position < data.size() && host.compactData.contains(data.get(position))) {
+                        compactHolders.put(itemHolder, true);
+                        XposedHelpers.callMethod(itemHolder, "setPersonalArea", false);
+                        XposedHelpers.callMethod(itemHolder, "setEnableTileName", false);
+                    }
+                }
+            });
+
             XposedHelpers.findAndHookMethod(adapter, "onAttachedToRecyclerView", recyclerView, new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     ViewGroup root = (ViewGroup) p.args[0];
@@ -252,9 +299,14 @@ public final class FoldIdleMediaHooks {
             if (plan == null) { restore(upper); restore(lower); continue; }
             List<Object> topData = new ArrayList<>(), topLocs = new ArrayList<>(), bottomData = new ArrayList<>(), bottomLocs = new ArrayList<>();
             int retained = top.size() - hidden.size();
+            upper.halves = new ArrayList<>();
+            upper.compactData.clear();
             for (int i = 0; i < plan.upper.size(); i++) {
                 IdleMediaGeometry.Cell cell = plan.upper.get(i);
-                topData.add((i < retained ? upper.data : lower.data).get(cell.index)); topLocs.add(loc(cell));
+                Object item = (i < retained ? upper.data : lower.data).get(cell.index);
+                topData.add(item); topLocs.add(loc(cell));
+                upper.halves.add(cell.half);
+                if (cell.half >= 0) upper.compactData.add(item);
             }
             for (IdleMediaGeometry.Cell cell : plan.lower) { bottomData.add(lower.data.get(cell.index)); bottomLocs.add(loc(cell)); }
             project(upper, topData, topLocs, plan.upperRows);
@@ -271,14 +323,18 @@ public final class FoldIdleMediaHooks {
         boolean previous = changing; changing = true;
         try {
             XposedHelpers.callMethod(host.adapter.get(), "setDataList", data);
-            XposedHelpers.callMethod(host.manager.get(), "setLoc", locs);
             host.displayedData = new ArrayList<>(data); host.displayedLocs = new ArrayList<>(locs); host.displayedRows = rows;
+            XposedHelpers.callMethod(host.manager.get(), "setLoc", locs);
+            host.displayedLocs = copy(XposedHelpers.callMethod(host.config(), "getSpecifyLoc"));
+            Object layoutState = XposedHelpers.getObjectField(host.manager.get(), "layoutState");
+            XposedHelpers.callMethod(XposedHelpers.callMethod(layoutState, "getItemLayoutRects"), "clear");
             XposedHelpers.callMethod(host.adapter.get(), "notifyDataSetChanged");
             ViewGroup root = host.root.get(); if (root != null) root.requestLayout();
         } finally { changing = previous; }
     }
     private static void restore(Host host) {
         if (host.displayedData == null) return;
+        host.halves.clear(); host.compactData.clear();
         project(host, host.data, host.locs, -1);
         host.displayedData = null; host.displayedLocs = null;
     }
@@ -293,6 +349,6 @@ public final class FoldIdleMediaHooks {
     public static void cleanupForHotReload() {
         handler.removeCallbacksAndMessages(null); queued = false; polling = false;
         for (ViewGroup root : new ArrayList<>(hosts.keySet())) root.removeOnAttachStateChangeListener(attachListener);
-        restoreAll(); hosts.clear(); mediaPlaying.clear();
+        restoreAll(); hosts.clear(); mediaPlaying.clear(); compactHolders.clear();
     }
 }
