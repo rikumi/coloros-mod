@@ -50,6 +50,34 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
  * system_server(android) 作用域的全部 hook：小窗贴边挂机、横屏小窗保持比例。
  */
 public final class SystemServerHooks {
+    public static void hookFloatWindowCount(XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.server.wm.FlexibleWindowManagerService", lp.classLoader,
+                    "getMaxWinNum", int.class, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            // 只改悬浮小窗场景，不改变嵌入式任务和分屏策略。
+                            // WMS 锁内不得通过 Provider 同步读取配置。
+                            if ((Integer) p.args[0] == 1
+                                    && readBoolCached(KEY_FLOAT_WINDOW_COUNT_ENABLED, false)) {
+                                p.setResult(Math.max(1, Math.min(10,
+                                        readIntCached(KEY_FLOAT_WINDOW_COUNT, 3))));
+                            }
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(
+                    "com.android.server.wm.FlexibleWindowManagerService", lp.classLoader,
+                    "getTasksNumber", new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            if (!readBoolCached(KEY_FLOAT_WINDOW_COUNT_ENABLED, false)) return;
+                            // 查询窗口后方的全屏任务/桌面时，仍需覆盖增加的小窗数量。
+                            int count = Math.max(1, Math.min(10, readIntCached(KEY_FLOAT_WINDOW_COUNT, 3)));
+                            p.setResult(Math.max((Integer) p.getResult(), count + 3));
+                        }
+                    });
+        } catch (Throwable t) { log("float window count hook failed: " + t); }
+    }
+
     /** 窗口变化合并通知: 避免 relayoutWindow 动画期间频繁触发跨进程查询。 */
     private static final long STATUSBAR_OVERLAY_EVENT_DEBOUNCE_MS = 250L;
     private static Handler sStatusBarOverlayEventHandler;

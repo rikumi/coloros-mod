@@ -28,53 +28,8 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
  */
 public final class QsHooks {
     private static final java.util.WeakHashMap<Object, Boolean> nameHosts = new java.util.WeakHashMap<>();
-    // 经典(合并)控制中心: 隐藏运营商名。OplusQuickStatusBarHeader#onFinishInflate 中
-    // R.id.qs_carrier_text(位于 qs_clock_container 内) / R.id.carrier_group 显示运营商名, 直接 GONE。
-    // 不再 hook 分离模式的 SeparateQSFakeStatusController, 以免与经典模式叠加。
     public static void hookQsHideCarrier(final XC_LoadPackage.LoadPackageParam lpparam) {
-        try {
-            // 限定本类声明: onFinishInflate 在 View 里有实现, 上溯会命中所有 View。
-            XposedHelpers.findAndHookDeclaredMethod(
-                    "com.oplus.systemui.qs.OplusQuickStatusBarHeader",
-                    lpparam.classLoader, "onFinishInflate",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            try {
-                                android.view.View header = (android.view.View) param.thisObject;
-                                android.content.res.Resources res = header.getResources();
-                                int id = res.getIdentifier("qs_carrier_text", "id", "com.android.systemui");
-                                int id2 = res.getIdentifier("carrier_group", "id", "com.android.systemui");
-                                // 运行时动态门控: 关闭则还原为显示。
-                                if (!readBool(KEY_QS_CARRIER_ENABLED, false)) {
-                                    if (id != 0) {
-                                        android.view.View c = header.findViewById(id);
-                                        if (c != null) c.setVisibility(android.view.View.VISIBLE);
-                                    }
-                                    if (id2 != 0) {
-                                        android.view.View g = header.findViewById(id2);
-                                        if (g != null) g.setVisibility(android.view.View.VISIBLE);
-                                    }
-                                    return;
-                                }
-                                if (id != 0) {
-                                    android.view.View carrier = header.findViewById(id);
-                                    if (carrier != null) carrier.setVisibility(android.view.View.GONE);
-                                }
-                                if (id2 != 0) {
-                                    android.view.View g = header.findViewById(id2);
-                                    if (g != null) g.setVisibility(android.view.View.GONE);
-                                }
-                                log("qs_carrier(classic) applied");
-                            } catch (Throwable t) {
-                                log("qs_carrier(classic) apply fail: " + t);
-                            }
-                        }
-                    });
-            log("HOOK OK com.oplus.systemui.qs.OplusQuickStatusBarHeader#onFinishInflate");
-        } catch (Throwable t) {
-            log("HOOK FAIL OplusQuickStatusBarHeader#onFinishInflate :: " + Log.getStackTraceString(t));
-        }
+        StatusBarExtrasHooks.hookCarrier(lpparam);
     }
 
     // 控制中心顶栏间距(经典/合并模式): 右侧状态图标簇 quick_qs_status_icons 在

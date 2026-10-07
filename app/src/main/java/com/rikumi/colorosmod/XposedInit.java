@@ -17,6 +17,7 @@ import com.rikumi.colorosmod.hooks.FoldIdleMediaHooks;
 import com.rikumi.colorosmod.hooks.StatusBarFontHooks;
 import com.rikumi.colorosmod.hooks.MergedCardRatioHooks;
 import com.rikumi.colorosmod.hooks.LauncherHooks;
+import com.rikumi.colorosmod.hooks.StatusBarExtrasHooks;
 import com.rikumi.colorosmod.hooks.KeyguardHooks;
 import com.rikumi.colorosmod.hooks.MediaProviderHooks;
 import com.rikumi.colorosmod.hooks.MultiWindowHooks;
@@ -78,6 +79,11 @@ public class XposedInit extends XposedModule {
     public static final String KEY_NOTIFICATION_SUBTITLE_SP = "notification_subtitle_sp";
     public static final String KEY_NOTIFICATION_PADDING_DP = "notification_padding_dp";
     public static final String KEY_INDICATOR_ENABLED = "indicator_enabled";
+    public static final String KEY_HIDE_BATTERY_PERCENT_SIGN_ENABLED = "hide_battery_percent_sign_enabled";
+    public static final String KEY_HIDE_LAUNCHER_UPDATE_DOT_ENABLED = "hide_launcher_update_dot_enabled";
+    public static final String KEY_DISABLE_LAUNCHER_SECONDARY_MENU_ENABLED = "disable_launcher_secondary_menu_enabled";
+    public static final String KEY_FLOAT_WINDOW_COUNT_ENABLED = "float_window_count_enabled";
+    public static final String KEY_FLOAT_WINDOW_COUNT = "float_window_count";
     public static final String KEY_QS_CARRIER_ENABLED = "qs_carrier_enabled";
     public static final String KEY_QS_TOPMARGIN_ENABLED = "qs_topmargin_enabled";
     public static final String KEY_NOTIFICATION_SUBTITLE_ENABLED = "notification_subtitle_enabled";
@@ -255,13 +261,37 @@ public class XposedInit extends XposedModule {
     // 主/附属用该包全部 launcher 入口判定, 不硬编码任何应用(见 LauncherHooks#isMainTask)。
     public static final String KEY_RECENTS_SWIPE_UP_KILL_SUBSIDIARY_ENABLED =
             "recents_swipe_up_kill_subsidiary_enabled";
-    // 从桌面隐藏指定的单个 LAUNCHER 活动: 系统"隐藏应用"按包隐藏会误伤多入口应用(如电话本+拨号),
-    // 故只过滤目标组件。配置表见 HIDDEN_LAUNCHER_TARGETS: { 门控偏好键, 包名, 活动类名 }。
-    public static final String KEY_HIDE_CONTACTS_ENABLED = "hide_contacts_enabled";
-    public static final String KEY_HIDE_GBOARD_ENABLED = "hide_gboard_enabled";
-    public static final String KEY_HIDE_LSPOSED_MODULES_ENABLED = "hide_lsposed_modules_enabled";
-    // Feature 15 — 隐藏 GhostLock 图标(com.ghostlock.app): 已有 root 时无需再 root。
-    public static final String KEY_HIDE_GHOSTLOCK_ENABLED = "hide_ghostlock_enabled";
+    public static final String KEY_HIDDEN_LAUNCHER_APPS_ENABLED = HiddenLauncherApps.ENABLED;
+    private static volatile Object[] sHiddenLauncherSnapshot =
+            new Object[]{null, java.util.Collections.emptySet()};
+
+    @SuppressWarnings("unchecked")
+    public static java.util.Set<android.content.ComponentName> hiddenLauncherComponents(
+            java.util.Map<String, Integer> settings) {
+        Object[] cached = sHiddenLauncherSnapshot;
+        if (cached[0] == settings) return (java.util.Set<android.content.ComponentName>) cached[1];
+        java.util.Set<android.content.ComponentName> components = new java.util.HashSet<>();
+        if (Integer.valueOf(1).equals(settings.get(KEY_HIDDEN_LAUNCHER_APPS_ENABLED))) for (String key : settings.keySet()) {
+            if (!key.startsWith(HiddenLauncherApps.PREFIX) || !Integer.valueOf(1).equals(settings.get(key))) continue;
+            android.content.ComponentName component = android.content.ComponentName.unflattenFromString(
+                    key.substring(HiddenLauncherApps.PREFIX.length()));
+            if (component != null) components.add(component);
+        }
+        java.util.Set<android.content.ComponentName> result = java.util.Collections.unmodifiableSet(components);
+        sHiddenLauncherSnapshot = new Object[]{settings, result};
+        return result;
+    }
+
+    public static java.util.Set<android.content.ComponentName> getHiddenLauncherComponents() {
+        // 首次模型加载仍等待完整快照，避免把未过滤的列表缓存到 Launcher 模型。
+        ensureFirstLoad();
+        java.util.Map<String, Integer> settings = sSnapshot;
+        if (!sSettingsLoaded) {
+            java.util.Map<String, Integer> fetched = fetchAllSettings();
+            if (fetched != null) settings = fetched;
+        }
+        return hiddenLauncherComponents(settings);
+    }
     // 解锁时关机无需校验密码(com.android.systemui): 系统"关机校验密码"(Settings.Secure
     // oplus_shutdown_need_verification_password) 开启后, 电源菜单里关机/重启都会先弹凭据校验;
     // 唯一闸门是 ShutdownBiometricPrompt.isEnable(Context), 设备已解锁时返回 false 跳过校验。
@@ -530,6 +560,7 @@ public class XposedInit extends XposedModule {
             StatusBarFontHooks.refresh();
             MergedCardRatioHooks.refresh();
             ActiveTileOutlineHooks.refresh();
+            StatusBarExtrasHooks.refresh();
         }
         if (first) {
             synchronized (sLoadLock) {
@@ -753,6 +784,8 @@ public class XposedInit extends XposedModule {
             catch (Throwable t) { log("fold media hot reload cleanup failed: " + t); }
             try { MergedCardRatioHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("merged card ratio cleanup failed: " + t); }
+            try { StatusBarExtrasHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("status extras hot reload cleanup failed: " + t); }
             try { StatusBarFontHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("status font hot reload cleanup failed: " + t); }
             try { KeyguardHooks.cleanupForHotReload(); }
@@ -856,7 +889,7 @@ public class XposedInit extends XposedModule {
             return false;
         }
         try {
-            Object[] state = new Object[15];
+            Object[] state = new Object[16];
             state[0] = StatusBarLyricHooks.captureHotReloadHost();
             state[1] = NotificationHooks.captureHotReloadHost();
             state[2] = SystemServerHooks.captureHotReloadHost();
@@ -872,6 +905,7 @@ public class XposedInit extends XposedModule {
             state[12] = StatusBarFontHooks.captureHotReloadHosts();
             state[13] = MergedCardRatioHooks.captureHotReloadHosts();
             state[14] = QsHooks.captureHotReloadNames();
+            state[15] = StatusBarExtrasHooks.captureHotReloadHosts();
             param.setSavedInstanceState(state);
         } catch (Throwable t) {
             cancelProcessPreflight();
@@ -954,6 +988,7 @@ public class XposedInit extends XposedModule {
             SystemServerHooks.hookFloatWindowEdgeHangMute(systemServerLpparam());
             SystemServerHooks.hookFloatWindowLandscapeKeepRatio(systemServerLpparam());
             SystemServerHooks.hookFloatWindowSizeLimits(systemServerLpparam());
+            SystemServerHooks.hookFloatWindowCount(systemServerLpparam());
             SystemServerHooks.hookRecentsSwipeUpKillSystemServer(systemServerLpparam());
             SystemServerHooks.hookStatusBarThirdPartyOverlayEvents(systemServerLpparam());
             SystemServerHooks.hookCompactCanvasCaptionInsets(systemServerLpparam());
@@ -1037,6 +1072,7 @@ public class XposedInit extends XposedModule {
                             if (state.length > 13) MergedCardRatioHooks.restoreHotReloadHosts(state[13]);
                             if (state.length > 12) StatusBarFontHooks.restoreHotReloadHosts(state[12]);
                             if (state.length > 14) QsHooks.restoreHotReloadNames(state[14]);
+                            if (state.length > 15) StatusBarExtrasHooks.restoreHotReloadHosts(state[15]);
                             if (state.length > 13) QsHooks.restoreNamesInRoots(state[13]);
                         } catch (Throwable t) {
                             log("onHotReloaded: restore status font hosts failed: " + t);
@@ -1178,6 +1214,7 @@ public class XposedInit extends XposedModule {
             SystemServerHooks.hookFloatWindowLandscapeKeepRatio(lpparam);
             // system_server: 小窗缩到最小贴边不留边距 + 最大可调宽度 = 屏幕宽度
             SystemServerHooks.hookFloatWindowSizeLimits(lpparam);
+            SystemServerHooks.hookFloatWindowCount(lpparam);
             // system_server: 多任务上划彻底结束进程, 配合 LauncherHooks 的 removeTask 补调
             SystemServerHooks.hookRecentsSwipeUpKillSystemServer(lpparam);
             // system_server: 第三方悬浮窗变化事件, 供状态栏歌词避让功能按事件刷新窗口信息。

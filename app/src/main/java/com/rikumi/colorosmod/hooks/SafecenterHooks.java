@@ -20,7 +20,7 @@ import com.rikumi.colorosmod.xposed.XposedHelpers;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
 /**
- * 手机管家(com.coloros.safecenter) 作用域的全部 hook：移除风险检测、去除认证开关、隐藏联系人入口。
+ * 手机管家(com.coloros.safecenter) 作用域的全部 hook：移除风险检测、去除认证开关。
  */
 public final class SafecenterHooks {
     // 隐藏应用免验证打开: AppHideLauncherActivity 的 onCreate 调私有方法 d0()(checkPrivacyPwd),
@@ -32,7 +32,6 @@ public final class SafecenterHooks {
         try {
             hookSafecenterNoverify(lpparam);
             hookSafecenterTitleFolder(lpparam);
-            hookSafecenterHideContacts(lpparam);
         } catch (Throwable t) {
             log("hookSafecenter failed: " + t);
         }
@@ -119,51 +118,4 @@ public final class SafecenterHooks {
         }
     }
 
-// 安全中心特殊处理: 修改"隐藏应用"对电话本的处理。
-// 1) PMSHideAppListUtil#t 对 com.android.contacts 返回 true -> 只写隐藏列表并清除整包 PMS 禁用。
-// 2) OplusPmsHiddeManager#isApplicationOplusHiddenAsUser 返回 true, 使安全中心 UI 回读为已隐藏。
-    public static void hookSafecenterHideContacts(final XC_LoadPackage.LoadPackageParam lpparam) {
-        try {
-            Class<?> utilClass = XposedHelpers.findClass(
-                    "com.oplus.safecenter.privacy.utils.PMSHideAppListUtil", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(utilClass, "t",
-                    android.content.Context.class, String.class, new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            try {
-                                String pkg = (String) param.args[1];
-                                if ("com.android.contacts".equals(pkg)) {
-                                    param.setResult(true);
-                                }
-                            } catch (Throwable t) {
-                                log("hide contacts safecenter t error: " + t);
-                            }
-                        }
-                    });
-            log("HOOK OK safecenter PMSHideAppListUtil#t (hide contacts system)");
-        } catch (Throwable t) {
-            log("HOOK FAIL safecenter PMSHideAppListUtil#t: " + t);
-        }
-        try {
-            Class<?> pmhClass = XposedHelpers.findClass(
-                    "com.oplus.safecenter.privacy.sdk.OplusPmsHiddeManager", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(pmhClass, "isApplicationOplusHiddenAsUser",
-                    android.content.Context.class, String.class, int.class, new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            try {
-                                String pkg = (String) param.args[1];
-                                if ("com.android.contacts".equals(pkg)) {
-                                    param.setResult(true);
-                                }
-                            } catch (Throwable t) {
-                                log("hide contacts safecenter isAppHidden error: " + t);
-                            }
-                        }
-                    });
-            log("HOOK OK safecenter OplusPmsHiddeManager#isApplicationOplusHiddenAsUser (hide contacts system)");
-        } catch (Throwable t) {
-            log("HOOK FAIL safecenter OplusPmsHiddeManager#isApplicationOplusHiddenAsUser: " + t);
-        }
-    }
 }

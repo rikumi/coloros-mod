@@ -5,6 +5,13 @@
     <!-- 开关点击时的短触摸反馈 -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:directBootAware="true"
         android:allowBackup="true"

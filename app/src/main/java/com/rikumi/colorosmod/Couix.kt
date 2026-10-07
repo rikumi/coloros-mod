@@ -665,7 +665,7 @@ internal fun CouixCardRow(
 // 配置了 subtitle 时不占第二行, 而是显示在前进箭头左侧、右对齐。
 @Composable
 internal fun CouixCategoryRow(
-    icon: ImageVector,
+    icon: ImageVector?,
     title: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -680,18 +680,20 @@ internal fun CouixCategoryRow(
             .padding(horizontal = COUIX_ROW_HPADDING, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = onSurface,
-            modifier = Modifier.size(COUIX_CATEGORY_ICON),
-        )
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = onSurface,
+                modifier = Modifier.size(COUIX_CATEGORY_ICON),
+            )
+        }
         BasicText(
             text = title,
             style = MiuixTheme.textStyles.body1.copy(color = onSurface),
             modifier = Modifier
                 .weight(1f)
-                .padding(start = COUIX_CATEGORY_ICON_GAP),
+                .padding(start = if (icon != null) COUIX_CATEGORY_ICON_GAP else 0.dp),
         )
         if (subtitle != null) {
             BasicText(
@@ -1104,6 +1106,7 @@ internal fun CouixGroup(
     overrideValue: Boolean? = null,
     onItemChanged: () -> Unit = {},
     modifier: Modifier = Modifier,
+    footerContent: (@Composable () -> Unit)? = null,
 ) {
     CouixCard(modifier = modifier) {
         items.forEachIndexed { index, item ->
@@ -1116,6 +1119,10 @@ internal fun CouixGroup(
                     is GroupTitleItem -> Unit
                 }
             }
+        }
+        if (footerContent != null) {
+            if (items.isNotEmpty()) CouixItemDivider()
+            footerContent()
         }
     }
 }
@@ -1379,7 +1386,6 @@ fun CouixMasterToggle(
     CouixCard(modifier = modifier) {
         if (aboveContent != null) {
             aboveContent()
-            CouixItemDivider()
         }
         Row(
             modifier = Modifier
@@ -1490,6 +1496,58 @@ data class ActionMenuItem(
     val label: String,
     val onClick: () -> Unit,
 )
+
+/** 设置列表行的动作菜单，复用 Couix 的形状、颜色、分割线和进出动画。 */
+@Composable
+internal fun CouixRowActionMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    anchorHeight: Int,
+    items: List<ActionMenuItem>,
+) {
+    var popupVisible by remember { mutableStateOf(false) }
+    var revealed by remember { mutableStateOf(false) }
+    LaunchedEffect(expanded) {
+        if (expanded) {
+            popupVisible = true
+            delay(16)
+            revealed = true
+        } else {
+            revealed = false
+            delay(220)
+            popupVisible = false
+        }
+    }
+    val shape = miuixShape(COUIX_CARD_CORNER)
+    if (popupVisible) Popup(
+        alignment = Alignment.TopEnd,
+        offset = IntOffset(0, anchorHeight),
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = true),
+    ) {
+        Box(Modifier.width(COUIX_DROPDOWN_WIDTH)) {
+            AnimatedVisibility(
+                visible = revealed,
+                enter = scaleIn(initialScale = 0.8f, transformOrigin = COUIX_DROPDOWN_TRANSFORM_ORIGIN) + fadeIn(),
+                exit = scaleOut(targetScale = 0.8f, transformOrigin = COUIX_DROPDOWN_TRANSFORM_ORIGIN) + fadeOut(),
+            ) {
+                Column(Modifier.width(COUIX_DROPDOWN_WIDTH)
+                    .shadow(COUIX_DROPDOWN_ELEVATION, shape)
+                    .background(MiuixTheme.colorScheme.surfaceContainer, shape).clip(shape)) {
+                    items.forEachIndexed { index, item ->
+                        if (index > 0) CouixDropdownDivider()
+                        CouixDropdownItem(item.label, selected = false) {
+                            if (expanded) {
+                                onDismiss()
+                                item.onClick()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 fun CouixActionMenu(
@@ -1611,14 +1669,21 @@ private fun CouixSwitchRow(
     onItemChanged: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    // overrideValue 非空时优先显示覆盖值(主开关动画期间), 否则读 prefs;
-    // version/overrideValue 变化时重新计算, 其余时刻用本地状态即时切换。
-    var checked by remember(item.key, version, overrideValue) {
+    // 系统设置不保存在 prefs，不能因其它条目的 prefs 刷新而重置状态。
+    // 普通设置仍随 version 重读；系统设置仅在首次进入或主开关覆盖变化时读取。
+    val rowVersion = if (item.rootBacked) 0 else version
+    val rowOverride = if (item.rootBacked) null else overrideValue
+    var checked by remember(item.key, rowVersion, rowOverride) {
         mutableStateOf(overrideValue ?: if (item.rootBacked) false else prefs.getBoolean(item.key, false))
     }
-    var rootValue by remember(item.key, version) { mutableStateOf<Int?>(null) }
-    LaunchedEffect(item.key) {
+    var rootValue by remember(item.key) { mutableStateOf<Int?>(null) }
+    LaunchedEffect(item.key, overrideValue) {
         if (item.rootBacked) {
+            if (overrideValue != null) {
+                checked = overrideValue
+                rootValue = item.sliderDefault
+                return@LaunchedEffect
+            }
             val result = withContext(Dispatchers.IO) { readSystemSetting(item.key) }
             if (result != null) {
                 checked = result.first
@@ -1702,7 +1767,7 @@ private fun CouixSwitchRow(
     }
     // 带滑条的设置项: 数值显示在标题行右侧, 滑条默认折叠; 单独开启功能时自动展开。
     var expanded by remember(item.key) { mutableStateOf(false) }
-    var intVal by remember(item.sliderKey, item.sliderMin, item.sliderMax, version, overrideValue) {
+    var intVal by remember(item.sliderKey, item.sliderMin, item.sliderMax, rowVersion, rowOverride) {
         mutableStateOf((rootValue ?: prefs.getInt(item.sliderKey, item.sliderDefault)).coerceIn(item.sliderMin, item.sliderMax))
     }
     LaunchedEffect(rootValue) {
@@ -1782,7 +1847,11 @@ private fun CouixSwitchRow(
                         }
                     },
                     onValueChangeFinished = if (item.rootBacked) {
-                        { scope.launch(Dispatchers.IO) { applySystemSetting(item.key, true, intVal) } }
+                        {
+                            val value = intVal
+                            rootValue = value
+                            scope.launch(Dispatchers.IO) { applySystemSetting(item.key, true, value) }
+                        }
                     } else {
                         {}
                     },

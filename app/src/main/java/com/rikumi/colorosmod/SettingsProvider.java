@@ -44,7 +44,9 @@ public class SettingsProvider extends ContentProvider {
         Context ctx = getContext();
         if (ctx == null) return null;
         Context de = ctx.createDeviceProtectedStorageContext();
-        return (de != null ? de : ctx).getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        SharedPreferences preferences = (de != null ? de : ctx).getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        HiddenLauncherApps.migrate(ctx, preferences);
+        return preferences;
     }
 
     @Override
@@ -83,6 +85,14 @@ public class SettingsProvider extends ContentProvider {
                 for (java.util.Map.Entry<String, ?> e : all.entrySet()) {
                     Integer v = intValue(e.getValue());
                     if (v != null) all2.addRow(new Object[]{e.getKey(), v});
+                }
+                Object components = all.get(HiddenLauncherApps.COMPONENTS);
+                if (components instanceof java.util.Set<?>) {
+                    for (Object component : (java.util.Set<?>) components) {
+                        if (component instanceof String) {
+                            all2.addRow(new Object[]{HiddenLauncherApps.PREFIX + component, 1});
+                        }
+                    }
                 }
                 return all2;
             }

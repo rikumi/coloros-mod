@@ -35,150 +35,24 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
  */
 public final class LauncherHooks {
     // 修改安全中心"隐藏应用"对电话本的处理: 系统原生是整包禁用(会连拨号一起失效), 这里让
-    // com.android.contacts 走"只加入隐藏应用列表、不整包 PMS 禁用"的 path, 联系人进入隐藏应用
-    // 但拨号保持可用; 桌面侧在 OplusAppFilter#shouldShowApp 做组件级特例(拨号始终显示)。
-    static final android.content.ComponentName CONTACTS_DIALER =
-            new android.content.ComponentName("com.android.contacts",
-                    "com.android.contacts.DialtactsActivityAlias");
-
-    static final String[][] HIDDEN_LAUNCHER_TARGETS = {
-            // 电话本(保留同包拨号 DialtactsActivityAlias)
-            {KEY_HIDE_CONTACTS_ENABLED, "com.android.contacts",
-                    "com.android.contacts.PeopleActivityAlias"},
-            // Gboard 启动入口
-            {KEY_HIDE_GBOARD_ENABLED, "com.google.android.inputmethod.latin",
-                    "com.google.android.libraries.inputmethod.launcher.LauncherActivity"},
-            // GhostLock 启动入口(已有 root 时无需再 root)
-            {KEY_HIDE_GHOSTLOCK_ENABLED, "com.ghostlock.app",
-                    "com.ghostlock.app.MainActivity"},
-    };
-
-    // 运行时根据门控偏好键, 计算当前需要隐藏的组件集合。
-    static java.util.Set<android.content.ComponentName> getHiddenLauncherComponents() {
-        java.util.Set<android.content.ComponentName> set = new java.util.HashSet<>();
-        for (String[] t : HIDDEN_LAUNCHER_TARGETS) {
-            // Launcher loads this list on its model worker. Read through the normal settings path
-            // so a cold start cannot cache an unfiltered list before the first snapshot arrives.
-            if (readBool(t[0], false)) {
-                set.add(new android.content.ComponentName(t[1], t[2]));
-            }
-        }
-        return set;
-    }
-
     private static final Object sHiddenSettingsLock = new Object();
     private static boolean sHiddenSettingsInitialized;
-    private static int sLastContactsHidden;
-    private static int sLastGboardHidden;
-    private static int sLastGhostLockHidden;
-    private static int sLastLsposedModulesHidden;
-    private static final java.util.concurrent.ConcurrentHashMap<String, ModuleMarker>
-            sModuleMarkers = new java.util.concurrent.ConcurrentHashMap<>();
+    private static boolean sNeedsInitialModelReload;
+    private static java.util.Set<android.content.ComponentName> sLastHiddenComponents = java.util.Collections.emptySet();
 
-    private static final class ModuleMarker {
-        final String sourceDir;
-        final long modified;
-        final long length;
-        final boolean isModule;
-
-        ModuleMarker(String sourceDir, long modified, long length, boolean isModule) {
-            this.sourceDir = sourceDir;
-            this.modified = modified;
-            this.length = length;
-            this.isModule = isModule;
-        }
-    }
-
-    private static boolean isLsposedModule(android.content.pm.ApplicationInfo appInfo) {
-        if (appInfo == null || appInfo.packageName == null) return false;
-        android.os.Bundle metadata = appInfo.metaData;
-        if (metadata != null) {
-            Object marker = metadata.get("xposedmodule");
-            if (Boolean.TRUE.equals(marker)
-                    || (marker instanceof Number && ((Number) marker).intValue() == 1)
-                    || (marker != null && "true".equalsIgnoreCase(String.valueOf(marker)))) {
-                return true;
-            }
-        }
-
-        String sourceDir = appInfo.sourceDir;
-        if (sourceDir == null) return false;
-        java.io.File apk = new java.io.File(sourceDir);
-        long modified = apk.lastModified();
-        long length = apk.length();
-        ModuleMarker cached = sModuleMarkers.get(appInfo.packageName);
-        if (cached != null && sourceDir.equals(cached.sourceDir)
-                && modified == cached.modified && length == cached.length) {
-            return cached.isModule;
-        }
-
-        boolean isModule = false;
-        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(apk)) {
-            isModule = zip.getEntry("META-INF/xposed/module.prop") != null;
-        } catch (Throwable ignored) {
-        }
-        sModuleMarkers.put(appInfo.packageName,
-                new ModuleMarker(sourceDir, modified, length, isModule));
-        return isModule;
-    }
-
-    private static boolean shouldHideLsposedModulePackage(String packageName) {
-        if (packageName == null) return false;
-        try {
-            android.content.Context context = sAppContext;
-            if (context == null) context = currentApplication();
-            if (context == null) return false;
-            android.content.pm.ApplicationInfo appInfo = context.getPackageManager()
-                    .getApplicationInfo(packageName,
-                            android.content.pm.PackageManager.GET_META_DATA);
-            return shouldHideLsposedModule(appInfo);
-        } catch (Throwable ignored) {
-            return false;
-        }
-    }
-
-    private static boolean shouldHideLsposedModule(android.content.pm.ApplicationInfo appInfo) {
-        if (!isLsposedModule(appInfo)) return false;
-        // 本模块自己的桌面图标由首页“隐藏模块桌面图标”控制；不要让全局模块过滤覆盖该设置。
-        if ("com.rikumi.colorosmod".equals(appInfo.packageName)) {
-            try {
-                android.content.Context context = sAppContext;
-                if (context == null) context = currentApplication();
-                if (context == null) return false;
-                int state = context.getPackageManager().getComponentEnabledSetting(
-                        new android.content.ComponentName("com.rikumi.colorosmod",
-                                "com.rikumi.colorosmod.MainActivityLauncher"));
-                return state == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-                        || state == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER;
-            } catch (Throwable ignored) {
-                // 无法读取显式状态时保留模块图标，避免破坏首页开关的“显示”状态。
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /** Refresh Launcher after the first settings snapshot or a relevant change. */
+    /** 只在隐藏组件集合改变时刷新 Launcher 模型。 */
     public static void onSettingsSnapshotPublished(java.util.Map<String, Integer> settings) {
         refreshPowerSaveTaskLocks(settingValue(settings, KEY_POWER_SAVE_KEEP_LOCKED_TASKS_ENABLED) == 1);
         if (!sModelReloadActive) return;
-        int contacts = settingValue(settings, KEY_HIDE_CONTACTS_ENABLED);
-        int gboard = settingValue(settings, KEY_HIDE_GBOARD_ENABLED);
-        int ghostLock = settingValue(settings, KEY_HIDE_GHOSTLOCK_ENABLED);
-        int lsposedModules = settingValue(settings, KEY_HIDE_LSPOSED_MODULES_ENABLED);
+        java.util.Set<android.content.ComponentName> components = hiddenLauncherComponents(settings);
         synchronized (sHiddenSettingsLock) {
-            if (sHiddenSettingsInitialized
-                    && contacts == sLastContactsHidden
-                    && gboard == sLastGboardHidden
-                    && ghostLock == sLastGhostLockHidden
-                    && lsposedModules == sLastLsposedModulesHidden) {
-                return;
-            }
+            boolean initialized = sHiddenSettingsInitialized;
+            if (initialized && components.equals(sLastHiddenComponents)) return;
             sHiddenSettingsInitialized = true;
-            sLastContactsHidden = contacts;
-            sLastGboardHidden = gboard;
-            sLastGhostLockHidden = ghostLock;
-            sLastLsposedModulesHidden = lsposedModules;
+            sLastHiddenComponents = components;
+            // 冷启动直接由第一次模型加载过滤；只有设置变化或跨版本热重载才重载模型。
+            if (!initialized && !sNeedsInitialModelReload) return;
+            sNeedsInitialModelReload = false;
             // 与设置值在同一把锁内计数, 使 captureHotReloadSettings 看到一致的"值 + 是否待刷新"。
             sPendingModelReloads++;
         }
@@ -255,22 +129,28 @@ public final class LauncherHooks {
     public static Object captureHotReloadSettings() {
         synchronized (sHiddenSettingsLock) {
             if (!sHiddenSettingsInitialized || sPendingModelReloads > 0) return null;
-            return new int[] { sLastContactsHidden, sLastGboardHidden,
-                    sLastGhostLockHidden, sLastLsposedModulesHidden };
+            java.util.ArrayList<String> components = new java.util.ArrayList<>();
+            for (android.content.ComponentName component : sLastHiddenComponents)
+                components.add(component.flattenToString());
+            return components.toArray(new String[0]);
         }
     }
 
     /** 必须在新 generation 启动设置加载之前调用, 否则首个 snapshot 可能先于种子值发布。 */
     public static void restoreHotReloadSettings(Object saved) {
-        if (!(saved instanceof int[]) || ((int[]) saved).length < 4) return;
-        int[] values = (int[]) saved;
         synchronized (sHiddenSettingsLock) {
+            if (!(saved instanceof String[])) {
+                sNeedsInitialModelReload = true;
+                return;
+            }
             if (sHiddenSettingsInitialized) return;
+            java.util.Set<android.content.ComponentName> components = new java.util.HashSet<>();
+            for (String value : (String[]) saved) {
+                android.content.ComponentName component = android.content.ComponentName.unflattenFromString(value);
+                if (component != null) components.add(component);
+            }
             sHiddenSettingsInitialized = true;
-            sLastContactsHidden = values[0];
-            sLastGboardHidden = values[1];
-            sLastGhostLockHidden = values[2];
-            sLastLsposedModulesHidden = values[3];
+            sLastHiddenComponents = components;
         }
     }
 
@@ -987,9 +867,56 @@ public final class LauncherHooks {
         }, sPowerSaveTaskLockToken, android.os.SystemClock.uptimeMillis());
     }
 
+    private static void hookUpdateDotAndSecondaryMenu(XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            XposedHelpers.findAndHookMethod("com.android.launcher3.BubbleTextView", lp.classLoader,
+                    "isShouldShowGreenDot", boolean.class, boolean.class, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            if (readBoolCached(KEY_HIDE_LAUNCHER_UPDATE_DOT_ENABLED, false))
+                                p.setResult(Boolean.FALSE);
+                        }
+                    });
+        } catch (Throwable t) { log("launcher update dot hook failed: " + t); }
+        try {
+            Class<?> more = XposedHelpers.findClass(
+                    "com.android.launcher3.popup.OplusBaseSystemShortcut$MordFunctions", lp.classLoader);
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher3.popup.OplusPopupContainerWithArrow", lp.classLoader,
+                    "populateAndShow", View.class, java.util.List.class, int.class,
+                    java.util.List.class, java.util.List.class, java.util.List.class,
+                    new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            if (!readBoolCached(KEY_DISABLE_LAUNCHER_SECONDARY_MENU_ENABLED, false)) return;
+                            java.util.List<?> source = (java.util.List<?>) p.args[4];
+                            java.util.ArrayList<Object> flattened = new java.util.ArrayList<>();
+                            java.util.HashSet<Class<?>> enabled = new java.util.HashSet<>();
+                            for (Object item : source) {
+                                if (!more.isInstance(item)
+                                        && Boolean.TRUE.equals(XposedHelpers.callMethod(item, "isEnabled")))
+                                    enabled.add(item.getClass());
+                            }
+                            for (Object item : source) {
+                                if (!more.isInstance(item)) {
+                                    flattened.add(item);
+                                    continue;
+                                }
+                                java.util.List<?> children = (java.util.List<?>) XposedHelpers.getObjectField(
+                                        item, "mMoreSystemShortcutList");
+                                for (Object child : children) {
+                                    // 保留系统已校验的权限及 mMoreShortcut 标志；不改原始列表。
+                                    if (enabled.add(child.getClass())) flattened.add(child);
+                                }
+                            }
+                            p.args[4] = flattened;
+                        }
+                    });
+        } catch (Throwable t) { log("launcher secondary menu hook failed: " + t); }
+    }
+
     public static void hookLauncher(final XC_LoadPackage.LoadPackageParam lpparam) {
         log(">>> matched launcher, classLoader=" + lpparam.classLoader);
         sLauncherClassLoader = lpparam.classLoader;
+        hookUpdateDotAndSecondaryMenu(lpparam);
         hookPowerSaveTaskLocks(lpparam);
         float density = readDensity();
 
@@ -1061,7 +988,7 @@ public final class LauncherHooks {
             log("HOOK FAIL launcher createVirtualFolder: " + t);
         }
 
-        // Feature 11 — 从桌面隐藏指定的单个 LAUNCHER 活动(见 HIDDEN_LAUNCHER_TARGETS 配置表):
+        // Feature 11 — 从桌面隐藏指定的单个 LAUNCHER 活动(按设置中的组件列表):
         // hook LauncherApps.getActivityList, 在结果中剔除已开启门控的目标组件。
         try {
             Class<?> launcherAppsClass = XposedHelpers.findClass(
@@ -1074,9 +1001,7 @@ public final class LauncherHooks {
                             try {
                                 java.util.Set<android.content.ComponentName> targets =
                                         getHiddenLauncherComponents();
-                                boolean hideModules = readBool(
-                                        KEY_HIDE_LSPOSED_MODULES_ENABLED, false);
-                                if (targets.isEmpty() && !hideModules) return;
+                                if (targets.isEmpty()) return;
                                 Object result = param.getResult();
                                 if (!(result instanceof java.util.List)) return;
                                 java.util.List<Object> list = (java.util.List<Object>) result;
@@ -1087,11 +1012,7 @@ public final class LauncherHooks {
                                     if (!(info instanceof android.content.pm.LauncherActivityInfo)) continue;
                                     android.content.ComponentName cn =
                                             ((android.content.pm.LauncherActivityInfo) info).getComponentName();
-                                    android.content.pm.ApplicationInfo appInfo =
-                                            ((android.content.pm.LauncherActivityInfo) info)
-                                                    .getApplicationInfo();
-                                    if (targets.contains(cn)
-                                            || (hideModules && shouldHideLsposedModule(appInfo))) {
+                                    if (targets.contains(cn)) {
                                         it.remove();
                                         removed++;
                                     }
@@ -1107,62 +1028,7 @@ public final class LauncherHooks {
             log("HOOK FAIL launcher getActivityList: " + t);
         }
 
-        // Feature 11(互补) — 若 launcher 直接走 PackageManager.queryIntentActivities 取 LAUNCHER 列表,
-        // 同样过滤目标组件。仅对标准 MAIN+LAUNCHER 查询生效, 不影响分享/解析等其它查询; 幂等。
-        try {
-            Class<?> pmClass = XposedHelpers.findClass(
-                    "android.content.pm.PackageManager", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(pmClass, "queryIntentActivities",
-                    android.content.Intent.class, int.class, new XC_MethodHook() {
-                        @Override
-                        @SuppressWarnings("unchecked")
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            try {
-                                java.util.Set<android.content.ComponentName> targets =
-                                        getHiddenLauncherComponents();
-                                boolean hideModules = readBool(
-                                        KEY_HIDE_LSPOSED_MODULES_ENABLED, false);
-                                if (targets.isEmpty() && !hideModules) return;
-                                android.content.Intent intent = (android.content.Intent) param.args[0];
-                                if (intent == null) return;
-                                // 仅处理标准 LAUNCHER 查询(MAIN + LAUNCHER)。
-                                if (!android.content.Intent.ACTION_MAIN.equals(intent.getAction())) return;
-                                if (!intent.hasCategory(android.content.Intent.CATEGORY_LAUNCHER)) return;
-                                Object result = param.getResult();
-                                if (!(result instanceof java.util.List)) return;
-                                java.util.List<Object> list = (java.util.List<Object>) result;
-                                java.util.Iterator<Object> it = list.iterator();
-                                int removed = 0;
-                                while (it.hasNext()) {
-                                    Object ri = it.next();
-                                    if (ri == null) continue;
-                                    Object ai = XposedHelpers.getObjectField(ri, "activityInfo");
-                                    if (ai == null) continue;
-                                    String pkg = (String) XposedHelpers.getObjectField(ai, "packageName");
-                                    String cls = (String) XposedHelpers.getObjectField(ai, "name");
-                                    if (pkg == null || cls == null) continue;
-                                    Object appInfo = XposedHelpers.getObjectField(ai, "applicationInfo");
-                                    boolean module = hideModules && appInfo instanceof android.content.pm.ApplicationInfo
-                                            && shouldHideLsposedModule((android.content.pm.ApplicationInfo) appInfo);
-                                    if (targets.contains(new android.content.ComponentName(pkg, cls)) || module) {
-                                        it.remove();
-                                        removed++;
-                                    }
-                                }
-                                if (removed > 0) dbg("[DBG] hide launcher activities via PM removed=" + removed);
-                            } catch (Throwable t) {
-                                log("hide launcher activities PM hook error: " + t);
-                            }
-                        }
-                    });
-            log("HOOK OK launcher PackageManager#queryIntentActivities (hide launcher activities)");
-        } catch (Throwable t) {
-            log("HOOK FAIL launcher queryIntentActivities: " + t);
-        }
-
-    // Feature 11b — 修改系统隐藏行为在桌面的呈现: 安全中心侧已改为只把 contacts 加入隐藏列表、不整包禁用
-    // (见 hookSafecenterHideContacts), 拨号保持可用。此处仅做组件级特例: 拨号(DialtactsActivityAlias)始终显示,
-    // 电话本(PeopleActivityAlias)随包隐藏状态由系统判定, 即"只藏电话本图标、露拨号"。
+        // OplusAppFilter 覆盖应用抽屉和持久化桌面模型的组件判断。
         try {
             Class<?> filterClass = XposedHelpers.findClass(
                     "com.android.launcher3.OplusAppFilter", lpparam.classLoader);
@@ -1175,24 +1041,15 @@ public final class LauncherHooks {
                                 Object cnObj = param.args[0];
                                 if (!(cnObj instanceof android.content.ComponentName)) return;
                                 android.content.ComponentName cn = (android.content.ComponentName) cnObj;
-                                // 电话拨号入口始终保留；其余 LSPosed 模块按包标记过滤。
-                                if (CONTACTS_DIALER.equals(cn)) {
-                                    param.setResult(true);
-                                    return;
-                                }
-                                // Launcher 的应用抽屉还会经 OplusAppFilter 独立判断入口；
-                                // 仅过滤 LauncherApps 返回值不足以覆盖该路径。
-                                if (getHiddenLauncherComponents().contains(cn)
-                                        || (readBool(KEY_HIDE_LSPOSED_MODULES_ENABLED, false)
-                                        && shouldHideLsposedModulePackage(cn.getPackageName()))) {
+                                if (getHiddenLauncherComponents().contains(cn)) {
                                     param.setResult(false);
                                 }
                             } catch (Throwable t) {
-                                log("hide contacts shouldShowApp error: " + t);
+                                log("hide launcher components shouldShowApp error: " + t);
                             }
                         }
                     });
-            log("HOOK OK launcher OplusAppFilter#shouldShowApp (hide contacts system)");
+            log("HOOK OK launcher OplusAppFilter#shouldShowApp (hide launcher components)");
         } catch (Throwable t) {
             log("HOOK FAIL launcher OplusAppFilter#shouldShowApp: " + t);
         }

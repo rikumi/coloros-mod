@@ -15,6 +15,8 @@ import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.style.ReplacementSpan;
 import android.view.View;
+import android.view.ViewGroup;
+import android.os.Build;
 import android.widget.TextView;
 import android.widget.ProgressBar;
 
@@ -112,6 +114,27 @@ public final class StatusBarFontHooks {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     TextView view = (TextView) p.thisObject;
                     if (isTarget(view)) applyStatusBarFont(view);
+                    if (family() > 0 && panelDateClass.isInstance(view)
+                            && view.getParent() instanceof ViewGroup parent) {
+                        for (int i = 0; i < parent.getChildCount(); i++) {
+                            View sibling = parent.getChildAt(i);
+                            if (!(sibling instanceof TextView clock) || !panelClockClass.isInstance(clock)
+                                    || clock.getVisibility() != View.VISIBLE || clock.getBaseline() < 0
+                                    || view.getBaseline() < 0 || view.getScaleY() == 0f) continue;
+                            // 在绘制阶段对齐实际基线，保留系统展开/切页动画的位移和缩放。
+                            float offset = (renderedBaseline(clock) - renderedBaseline(view)) / view.getScaleY();
+                            if (Math.abs(offset) > 0.01f) {
+                                Canvas canvas = (Canvas) p.args[0];
+                                p.setObjectExtra("dateBaselineSave", canvas.save());
+                                canvas.translate(0f, offset);
+                            }
+                            break;
+                        }
+                    }
+                }
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (p.getObjectExtra("dateBaselineSave") instanceof Integer save)
+                        ((Canvas) p.args[0]).restoreToCount(save);
                 }
             });
             hookBatteryFont(pkg);
@@ -179,6 +202,21 @@ public final class StatusBarFontHooks {
         return original;
     }
 
+    private static float renderedBaseline(TextView view) {
+        return view.getTop() + view.getTranslationY() + view.getPivotY()
+                + (view.getBaseline() - view.getPivotY()) * view.getScaleY();
+    }
+
+    private static void applyPanelMetrics(TextView view, Original original, boolean customFont) {
+        if (!panelClockClass.isInstance(view) && !panelDateClass.isInstance(view)) return;
+        boolean padding = !customFont && original.includeFontPadding;
+        if (view.getIncludeFontPadding() != padding) view.setIncludeFontPadding(padding);
+        if (Build.VERSION.SDK_INT >= 28) {
+            boolean fallback = !customFont && original.fallbackLineSpacing;
+            if (view.isFallbackLineSpacing() != fallback) view.setFallbackLineSpacing(fallback);
+        }
+    }
+
     public static void applyStatusBarFont(TextView view) {
         if (Boolean.TRUE.equals(applying.get())) return;
         Original original = remember(view);
@@ -187,6 +225,7 @@ public final class StatusBarFontHooks {
         applying.set(true);
         try {
             if (view.getTypeface() != target) view.setTypeface(target);
+            applyPanelMetrics(view, original, selected != null);
             if (selected == null && !Objects.equals(view.getFontVariationSettings(), original.variation))
                 view.setFontVariationSettings(original.variation);
             if (isClock(view)) {
@@ -261,6 +300,7 @@ public final class StatusBarFontHooks {
             for (TextView view : new ArrayList<>(originals.keySet())) {
                 Original original = originals.get(view);
                 view.setTypeface(original.font);
+                applyPanelMetrics(view, original, false);
                 view.setFontVariationSettings(original.variation);
                 if (isClock(view)) {
                     CharSequence text = view.getText(), restored = alignColons(text, false);
@@ -341,9 +381,13 @@ public final class StatusBarFontHooks {
     private static final class Original {
         Typeface font;
         String variation;
+        boolean includeFontPadding;
+        boolean fallbackLineSpacing;
         Original(TextView view) {
             font = view.getTypeface();
             variation = view.getFontVariationSettings();
+            includeFontPadding = view.getIncludeFontPadding();
+            fallbackLineSpacing = Build.VERSION.SDK_INT >= 28 && view.isFallbackLineSpacing();
         }
     }
 }

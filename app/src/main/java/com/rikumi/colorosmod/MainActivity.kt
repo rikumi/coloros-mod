@@ -191,7 +191,9 @@ private val DESKTOP: List<SettingsItem> = listOf(
     SwitchItem("indicator_enabled", "减小页面与 Dock 间距", sliderKey = "indicator_dp", sliderMax = 32, sliderDefault = 16, sliderUnit = "dp"),
     SwitchItem("edit_mode_bg_transparent_enabled", "取消编辑模式背景遮罩"),
     SwitchItem("weaken_desktop_customization_bg_enabled", "弱化桌面个性化页面背景"),
+    SwitchItem("hide_launcher_update_dot_enabled", "隐藏桌面图标更新圆点"),
     GroupTitleItem("长按菜单"),
+    SwitchItem("disable_launcher_secondary_menu_enabled", "禁用桌面长按二级菜单"),
     SwitchItem("shrink_popup_menu", "缩小图标长按菜单", sliderKey = "popup_scale_percent", sliderMax = 20, sliderDefault = 10, sliderUnit = "%"),
     SwitchItem("popup_dynamic_blur_enabled", "长按菜单背景动态模糊"),
     SwitchItem("desktop_popup_bg_brightness_enabled", "自定义长按菜单背景亮度", sliderKey = "desktop_popup_bg_brightness", sliderMax = 10, sliderDefault = 0, sliderUnit = ""),
@@ -205,7 +207,7 @@ private val QS: List<SettingsItem> = listOf(
     SwitchItem("qs_scrim_translucent_enabled", "自定义背景亮度", sliderKey = "qs_scrim_brightness", sliderMax = 20, sliderDefault = 0, sliderUnit = "%"),
     SwitchItem("qs_blur_radius_enabled", "自定义背景模糊半径", sliderKey = "qs_blur_radius", sliderMax = 80, sliderDefault = 40, sliderUnit = ""),
     SwitchItem("qs_blur_scale_enabled", "自定义背景缩小幅度", sliderKey = "qs_blur_scale", sliderMax = 100, sliderDefault = 50, sliderUnit = "%"),
-    SwitchItem("qs_carrier_enabled", "去除运营商显示"),
+    SwitchItem("qs_carrier_enabled", "控制中心隐藏运营商"),
     SwitchItem("qs_topmargin_enabled", "隐藏顶部状态图标簇"),
     SwitchItem("qs_panel_switch_no_cut_enabled", "分离版左右平移切换"),
     GroupTitleItem("控制中心设置"),
@@ -230,6 +232,7 @@ private val NOTIF: List<SettingsItem> = listOf(
     SwitchItem("notification_padding_enabled", "增加通知上下内边距", sliderKey = "notification_padding_dp", sliderMax = 8, sliderDefault = 4),
     GroupTitleItem("状态栏设置"),
     SwitchItem("merge_dual_sim_signal", "合并双卡信号"),
+    SwitchItem("hide_battery_percent_sign_enabled", "隐藏状态栏电量百分号"),
     SwitchItem("hide_roaming_icon", "隐藏状态栏漫游图标"),
     SelectItem("signal_network_type_mode", "信号制式文字", listOf("默认显示", "独立显示", "隐藏")),
     SelectItem("status_bar_clock_font", "状态栏字体", listOf("系统默认", "Inter", "Manrope", "Rubik", "Lato")),
@@ -244,16 +247,14 @@ private val HIDDEN: List<SettingsItem> = listOf(
     SwitchItem("hide_apps_noverify_enabled", "打开隐藏应用文件夹免验证"),
     SwitchItem("pinch_out_open_hide_apps_enabled", "桌面双指张开打开隐藏应用"),
     SwitchItem("hide_apps_title_folder_enabled", "应用隐藏标题显示文件夹名"),
-    GroupTitleItem("特殊应用隐藏"),
-    SwitchItem("hide_contacts_enabled", "彻底隐藏电话本图标"),
-    SwitchItem("hide_gboard_enabled", "彻底隐藏 Gboard 图标"),
-    SwitchItem("hide_ghostlock_enabled", "彻底隐藏 GhostLock 图标", subtitle = "显然已经有 root 的时候不需要再 root"),
-    SwitchItem("hide_lsposed_modules_enabled", "彻底隐藏所有 LSPosed 模块图标"),
+    GroupTitleItem("彻底隐藏应用"),
+    SwitchItem("hidden_launcher_apps_enabled", "彻底隐藏所选应用图标"),
 )
 
 // 小窗相关设置: 改动需重启 system_server(框架) 才生效(本模块该作用域为 android/system_server)。
 private val FLOATWINDOW: List<SettingsItem> = listOf(
     GroupTitleItem("小窗行为"),
+    SwitchItem("float_window_count_enabled", "修改小窗数量上限", sliderKey = "float_window_count", sliderMin = 1, sliderMax = 10, sliderDefault = 3, sliderUnit = ""),
     SwitchItem("recents_hide_freeform_enabled", "多任务隐藏小窗应用"),
     SwitchItem("float_window_edge_hang_enabled", "悬浮小窗贴边挂机"),
     SwitchItem("float_window_edge_hang_mute_enabled", "小窗贴边挂机静音"),
@@ -321,7 +322,7 @@ private data class Category(
 // 首页分组: 每组一张卡片。锁屏紧随通知中心, 其余三个另开一组。
 private val CATEGORY_GROUPS: List<List<Category>> = listOf(
     listOf(
-        Category("desktop", "桌面设置", MiuixIcons.GridView, DESKTOP),
+        Category("desktop", "桌面", MiuixIcons.GridView, DESKTOP),
         Category("quick_settings", "控制中心", MiuixIcons.Tune, QS),
         Category("notification", "通知中心与状态栏", MiuixIcons.Community, NOTIF),
         Category("lockscreen", "锁屏", MiuixIcons.Lock, LOCKSCREEN),
@@ -340,6 +341,7 @@ private val CATEGORIES = CATEGORY_GROUPS.flatten()
 
 // "停用应用"分类 id: 该分类没有开关项, 子页面在路由里特判渲染为只读列表。
 private const val DISABLED_APPS_ID = "disabled_apps"
+private const val HIDDEN_LAUNCHER_APPS_ID = "hidden_launcher_apps"
 
 // 主开关切换后、落盘前的临时视觉覆盖。
 // scope = null 表示首页的全局主开关(覆盖所有分类), 否则只覆盖该 categoryId 的分类。
@@ -424,7 +426,9 @@ fun SettingsScreen() {
 
     // 当前打开的分类 id; null 表示停在首页。
     var openCategoryId by remember { mutableStateOf<String?>(null) }
-    BackHandler(enabled = openCategoryId != null) { openCategoryId = null }
+    BackHandler(enabled = openCategoryId != null) {
+        openCategoryId = if (openCategoryId == HIDDEN_LAUNCHER_APPS_ID) "hidden_apps" else null
+    }
 
     // 主开关: scope = null 作用于全部功能(首页), 否则只作用于该分类的设置项。
     val onMasterChange: (String?, Boolean) -> Unit = { targetScope, target ->
@@ -467,8 +471,13 @@ fun SettingsScreen() {
     AnimatedContent(
         targetState = openCategoryId,
         transitionSpec = {
-            // 进入子页面时新页自右滑入, 返回首页时新页自左滑入; 一律走 ease 曲线。
-            val enter = if (targetState != null) 1 else -1
+            // 按层级判断 push/pop，二级列表返回所属分类也使用 pop。
+            fun depth(id: String?) = when (id) {
+                null -> 0
+                HIDDEN_LAUNCHER_APPS_ID -> 2
+                else -> 1
+            }
+            val enter = if (depth(targetState) < depth(initialState)) -1 else 1
             val spec = tween<IntOffset>(durationMillis = PAGE_TRANSITION_MS, easing = PAGE_TRANSITION_EASING)
             (fadeIn(animationSpec = tween(durationMillis = PAGE_TRANSITION_MS, easing = PAGE_TRANSITION_EASING)) +
                 slideInHorizontally(animationSpec = spec) { enter * it / 5 })
@@ -480,7 +489,9 @@ fun SettingsScreen() {
         label = "settings_pages",
     ) { targetId ->
         val category = CATEGORIES.firstOrNull { it.id == targetId }
-        if (targetId == DISABLED_APPS_ID) {
+        if (targetId == HIDDEN_LAUNCHER_APPS_ID) {
+            HiddenAppsScreen(context = ctx, onBack = { openCategoryId = "hidden_apps" })
+        } else if (targetId == DISABLED_APPS_ID) {
             // 只读列表页, 不走开关列表的 CategoryScreen。
             DisabledAppsScreen(ctx = ctx, onBack = { openCategoryId = null })
         } else if (category == null) {
@@ -505,6 +516,7 @@ fun SettingsScreen() {
                 onMasterChange = { onMasterChange(category.id, it) },
                 onItemChanged = { version++ },
                 onBack = { openCategoryId = null },
+                onOpenHiddenApps = { openCategoryId = HIDDEN_LAUNCHER_APPS_ID },
             )
         }
     }
@@ -612,6 +624,7 @@ private fun CategoryScreen(
     onMasterChange: (Boolean) -> Unit,
     onItemChanged: () -> Unit,
     onBack: () -> Unit,
+    onOpenHiddenApps: () -> Unit,
 ) {
     val listState = rememberLazyListState()
     // 按 GroupTitleItem 切分: 每段一张卡片, 段与段之间自然留出 group 间距。
@@ -673,6 +686,9 @@ private fun CategoryScreen(
                         version = version,
                         overrideValue = overrideValue,
                         onItemChanged = onItemChanged,
+                        footerContent = if (group.items.any { it is SwitchItem && it.key == "hidden_launcher_apps_enabled" }) {
+                            { CouixCategoryRow(null, "彻底隐藏应用列表", onOpenHiddenApps) }
+                        } else null,
                     )
                 }
             }
@@ -1151,6 +1167,7 @@ internal fun Context.settingsPrefs(): SharedPreferences {
             SettingsProvider.notifySettingsChanged(this)
         }
     }
+    if (HiddenLauncherApps.migrate(this, de)) SettingsProvider.notifySettingsChanged(this)
     return de
 }
 
