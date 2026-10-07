@@ -28,18 +28,24 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      # 计算下一个版本号：无 tag 则从 1.0.0 开始，否则对最新 tag 做 patch +1
+      # 以项目声明版本作为发布下限，后续发布对最新正式版本做 patch +1。
       - name: Compute next version
         id: version
         run: |
-          LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          BASE_VERSION=$(sed -nE "s/^[[:space:]]*versionName '([0-9]+\.[0-9]+\.[0-9]+)'/\1/p" app/build.gradle)
+          if [ -z "$BASE_VERSION" ]; then
+            echo "Missing semantic versionName in app/build.gradle" >&2
+            exit 1
+          fi
+          LATEST=$(git tag --list 'v*' | sed -nE '/^v[0-9]+\.[0-9]+\.[0-9]+$/p' | sort -V | tail -n 1)
           if [ -z "$LATEST" ]; then
-            VERSION="1.0.0"
+            VERSION="$BASE_VERSION"
           else
             IFS='.' read -r MAJOR MINOR PATCH <<< "${LATEST#v}"
             PATCH=$((PATCH + 1))
             VERSION="${MAJOR}.${MINOR}.${PATCH}"
           fi
+          VERSION=$(printf '%s\n' "$VERSION" "$BASE_VERSION" | sort -V | tail -n 1)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "previous_tag=$LATEST" >> "$GITHUB_OUTPUT"
           echo "Next version: $VERSION (from $LATEST)"
