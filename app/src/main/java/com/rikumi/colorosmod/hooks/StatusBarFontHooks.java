@@ -11,6 +11,9 @@ import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
+import android.text.style.ReplacementSpan;
 import android.view.View;
 import android.widget.TextView;
 import android.widget.ProgressBar;
@@ -25,14 +28,14 @@ import java.util.List;
 import java.util.Objects;
 import java.util.WeakHashMap;
 
-/** 状态栏时钟、电量百分比及独立网络制式的字体。 */
+/** 状态栏及通知、控制中心顶部信息的字体。 */
 public final class StatusBarFontHooks {
     private static final String[] FAMILIES = {"系统默认", "Inter", "Manrope", "Rubik", "Lato"};
     private static final WeakHashMap<TextView, Original> originals = new WeakHashMap<>();
     private static final WeakHashMap<Drawable, Boolean> batteryDrawables = new WeakHashMap<>();
     private static final HashMap<Integer, Typeface> fonts = new HashMap<>();
     private static final ThreadLocal<Boolean> applying = new ThreadLocal<>();
-    private static Class<?> clockClass, keyguardClockClass;
+    private static Class<?> clockClass, keyguardClockClass, panelClockClass, panelDateClass, panelCarrierClass;
     private static Context moduleContext;
     private static boolean fontErrorLogged;
     private static final Handler handler = new Handler(Looper.getMainLooper());
@@ -41,6 +44,16 @@ public final class StatusBarFontHooks {
         try {
             clockClass = XposedHelpers.findClass("com.oplus.systemui.statusbar.widget.StatClock", pkg.classLoader);
             keyguardClockClass = XposedHelpers.findClass("com.oplus.systemui.statusbar.widget.OplusKeyguardStatusBarClock", pkg.classLoader);
+            panelClockClass = XposedHelpers.findClass("com.oplus.systemui.qs.widget.OplusQSClock", pkg.classLoader);
+            panelDateClass = XposedHelpers.findClass("com.oplus.systemui.qs.widget.OplusQSDateView", pkg.classLoader);
+            panelCarrierClass = XposedHelpers.findClass("com.oplus.systemui.qs.widget.OplusQSCarrierText", pkg.classLoader);
+            XposedHelpers.findAndHookMethod(TextView.class, "setText", CharSequence.class, TextView.BufferType.class,
+                    new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            if (!Boolean.TRUE.equals(applying.get()) && isClock((TextView) p.thisObject))
+                                p.args[0] = alignColons((CharSequence) p.args[0], family() > 0);
+                        }
+                    });
             XposedHelpers.findAndHookMethod(TextView.class, "onAttachedToWindow", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     TextView view = (TextView) p.thisObject;
@@ -92,6 +105,9 @@ public final class StatusBarFontHooks {
             XposedHelpers.findAndHookMethod(clockClass, "onMeasure", int.class, int.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) { applyStatusBarFont((TextView) p.thisObject); }
             });
+            XposedHelpers.findAndHookMethod(panelClockClass, "onMeasure", int.class, int.class, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) { applyStatusBarFont((TextView) p.thisObject); }
+            });
             XposedHelpers.findAndHookMethod(TextView.class, "onDraw", Canvas.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     TextView view = (TextView) p.thisObject;
@@ -104,14 +120,57 @@ public final class StatusBarFontHooks {
     }
 
     private static boolean isTarget(TextView view) {
-        if (originals.containsKey(view) || (clockClass != null && clockClass.isInstance(view))
-                || (keyguardClockClass != null && keyguardClockClass.isInstance(view))) return true;
+        if (originals.containsKey(view) || isClock(view)
+                || (panelDateClass != null && panelDateClass.isInstance(view))
+                || (panelCarrierClass != null && panelCarrierClass.isInstance(view))) return true;
         if (view.getId() == View.NO_ID) return false;
         try {
             String id = view.getResources().getResourceEntryName(view.getId());
             return "battery_percentage_view".equals(id) || "battery_text".equals(id);
         }
         catch (RuntimeException ignored) { return false; }
+    }
+
+    private static boolean isClock(TextView view) {
+        return (clockClass != null && clockClass.isInstance(view))
+                || (keyguardClockClass != null && keyguardClockClass.isInstance(view))
+                || (panelClockClass != null && panelClockClass.isInstance(view));
+    }
+
+    private static CharSequence alignColons(CharSequence text, boolean enabled) {
+        if (text == null) return null;
+        CenteredColonSpan[] existing = text instanceof Spanned spanned
+                ? spanned.getSpans(0, text.length(), CenteredColonSpan.class) : new CenteredColonSpan[0];
+        if (enabled && existing.length > 0) return text;
+        if (!enabled && existing.length == 0) return text;
+        SpannableStringBuilder result = new SpannableStringBuilder(text);
+        for (CenteredColonSpan span : existing) result.removeSpan(span);
+        if (enabled) for (int i = 0; i < result.length(); i++) {
+            char c = result.charAt(i);
+            if (c == ':' || c == '\uFF1A') result.setSpan(new CenteredColonSpan(), i, i + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        return enabled && result.getSpans(0, result.length(), CenteredColonSpan.class).length == 0 ? text : result;
+    }
+
+    /** 仅调整冒号的绘制基线，按当前字重和字号对齐数字的可见中心。 */
+    private static final class CenteredColonSpan extends ReplacementSpan {
+        @Override public int getSize(Paint paint, CharSequence text, int start, int end, Paint.FontMetricsInt fm) {
+            if (fm != null) paint.getFontMetricsInt(fm);
+            return Math.round(paint.measureText(text, start, end));
+        }
+        @Override public void draw(Canvas canvas, CharSequence text, int start, int end, float x,
+                                   int top, int y, int bottom, Paint paint) {
+            Rect digit = new Rect(), colon = new Rect();
+            String glyph = text.subSequence(start, end).toString();
+            String reference = "0";
+            for (int i = start - 1; i >= 0; i--) if (Character.isDigit(text.charAt(i))) {
+                reference = text.subSequence(i, i + 1).toString(); break;
+            }
+            paint.getTextBounds(reference, 0, reference.length(), digit);
+            paint.getTextBounds(glyph, 0, glyph.length(), colon);
+            float offset = (digit.top + digit.bottom - colon.top - colon.bottom) / 2f;
+            canvas.drawText(glyph, x, y + offset, paint);
+        }
     }
 
     private static Original remember(TextView view) {
@@ -130,6 +189,10 @@ public final class StatusBarFontHooks {
             if (view.getTypeface() != target) view.setTypeface(target);
             if (selected == null && !Objects.equals(view.getFontVariationSettings(), original.variation))
                 view.setFontVariationSettings(original.variation);
+            if (isClock(view)) {
+                CharSequence text = view.getText(), aligned = alignColons(text, selected != null);
+                if (aligned != text) view.setText(aligned);
+            }
         } finally { applying.remove(); }
     }
 
@@ -199,6 +262,10 @@ public final class StatusBarFontHooks {
                 Original original = originals.get(view);
                 view.setTypeface(original.font);
                 view.setFontVariationSettings(original.variation);
+                if (isClock(view)) {
+                    CharSequence text = view.getText(), restored = alignColons(text, false);
+                    if (restored != text) view.setText(restored);
+                }
             }
         } finally { applying.remove(); }
         originals.clear(); batteryDrawables.clear(); fonts.clear(); moduleContext = null;
