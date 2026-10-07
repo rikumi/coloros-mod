@@ -324,9 +324,12 @@ final class MergedTileGridHooks {
         Original original = hosts.get(root);
         if (original == null || headerClass.isInstance(root))
             return root.getPaddingStart() + col * (integer(root, "mCellWidth") + integer(root, "mCellMarginHorizontal"));
-        // 展开态各行均两端对齐，圆形磁贴仍使用收起态直径。
+        // 左右边界各外扩半个栏间距，再按栏位均分并居中；直径保持收起态尺寸。
         int count = columns(root);
-        return root.getPaddingStart() + Math.round(col * (float) (original.contentWidth - integer(root, "mCellWidth")) / Math.max(1, count - 1));
+        float gap = integer(root, "mCellMarginHorizontal");
+        float pitch = (original.contentWidth + gap) / count;
+        return root.getPaddingStart() + Math.round(-gap / 2f + (col + .5f) * pitch
+                - integer(root, "mCellWidth") / 2f);
     }
     private static void widenLabel(ViewGroup root, View tile, int diameter) {
         Object value = XposedHelpers.callMethod(tile, "getLabel");
@@ -344,7 +347,7 @@ final class MergedTileGridHooks {
                 + text.getPaddingLeft() + text.getPaddingRight();
         int count = columns(root);
         Original original = hosts.get(root);
-        int pitch = count > 1 ? (original.contentWidth - diameter) / (count - 1) : original.contentWidth;
+        int pitch = Math.round((original.contentWidth + integer(root, "mCellMarginHorizontal")) / (float) count);
         int width = Math.min(Math.max(diameter + Math.round(4f * density), required),
                 Math.max(diameter, pitch - Math.round(2f * density * scale)));
         ViewGroup.LayoutParams lp = container.getLayoutParams();
