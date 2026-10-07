@@ -224,7 +224,6 @@ private val QS: List<SettingsItem> = listOf(
 )
 private val NOTIF: List<SettingsItem> = listOf(
     GroupTitleItem("通知中心设置"),
-    SwitchItem("notification_outline_enabled", "通知支持轮廓光效"),
     SwitchItem("notification_swipe_to_dismiss_enabled", "通知左滑直接清除"),
     SwitchItem("notification_pull_expand_enabled", "通知下滑展开"),
     SwitchItem("notification_subtitle_enabled", "缩小通知静默区域副标题", sliderKey = "notification_subtitle_sp", sliderMax = 16, sliderDefault = 8, sliderUnit = "sp"),

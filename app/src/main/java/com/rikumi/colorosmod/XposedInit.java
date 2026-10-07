@@ -9,7 +9,6 @@ import com.rikumi.colorosmod.hooks.QsHooks;
 import com.rikumi.colorosmod.hooks.GestureHooks;
 import com.rikumi.colorosmod.hooks.AncTileHooks;
 import com.rikumi.colorosmod.hooks.NotificationHooks;
-import com.rikumi.colorosmod.hooks.NotificationOutlineHooks;
 import com.rikumi.colorosmod.hooks.ActiveTileOutlineHooks;
 import com.rikumi.colorosmod.hooks.PasswordInputHooks;
 import com.rikumi.colorosmod.hooks.StatusBarLyricHooks;
@@ -173,7 +172,6 @@ public class XposedInit extends XposedModule {
     public static final String KEY_QS_ACTIVE_OUTLINE_ENABLED = "qs_active_outline_enabled";
     public static final String KEY_QS_ACTIVE_COLOR_ENABLED = "qs_active_color_enabled";
     public static final String KEY_QS_ACTIVE_COLOR = "qs_active_color";
-    public static final String KEY_NOTIFICATION_OUTLINE_ENABLED = "notification_outline_enabled";
     public static final String KEY_QS_NORMAL_CORNER_RADIUS_ENABLED = "qs_normal_corner_radius_enabled";
     // 分离版控制中心左右切换取消切入效果: 通知中心/控制中心之间左右滑动时直接平移而非切变。
     public static final String KEY_QS_PANEL_SWITCH_NO_CUT_ENABLED = "qs_panel_switch_no_cut_enabled";
@@ -537,7 +535,6 @@ public class XposedInit extends XposedModule {
             StatusBarFontHooks.refresh();
             MergedCardRatioHooks.refresh();
             ActiveTileOutlineHooks.refresh();
-            NotificationOutlineHooks.refresh();
         }
         if (first) {
             synchronized (sLoadLock) {
@@ -751,8 +748,6 @@ public class XposedInit extends XposedModule {
             catch (Throwable t) { log("lyric hot reload cleanup failed: " + t); }
             try { NotificationHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("notification hot reload cleanup failed: " + t); }
-            try { NotificationOutlineHooks.cleanupForHotReload(); }
-            catch (Throwable t) { log("notification outline hot reload cleanup failed: " + t); }
             try { GestureHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("gesture hot reload cleanup failed: " + t); }
             try { PasswordInputHooks.cleanupForHotReload(); }
