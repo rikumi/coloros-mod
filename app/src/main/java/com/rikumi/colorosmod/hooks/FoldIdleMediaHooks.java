@@ -82,8 +82,11 @@ public final class FoldIdleMediaHooks {
                     Object config = host.config();
                     int removed = number(config, "getRowCount") - host.displayedRows;
                     int step = number(config, "getCellHeight") + number(config, "getVerticalSpace");
+                    // 下方区域约束在上方区域底部，补位时收紧末行后的空白。
+                    int fillSpacing = host.compactData.isEmpty() ? 0
+                            : Math.round(6f * root.getResources().getDisplayMetrics().density);
                     XposedHelpers.callMethod(p.thisObject, "setMeasuredDimension", new Class<?>[]{int.class, int.class},
-                            root.getMeasuredWidth(), Math.max(0, root.getMeasuredHeight() - removed * step));
+                            root.getMeasuredWidth(), Math.max(0, root.getMeasuredHeight() - removed * step - fillSpacing));
                 }
             });
             Class<?> span = XposedHelpers.findClass("com.oplusos.systemui.common.model.SpanSize", pkg.classLoader);
