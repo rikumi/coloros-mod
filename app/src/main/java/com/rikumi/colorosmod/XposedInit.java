@@ -65,16 +65,11 @@ public class XposedInit extends XposedModule {
 
     public static final String KEY_ICON_GAP_ENABLED = "icon_gap_enabled";
     public static final String KEY_ICON_GAP_DP = "icon_gap_dp";
-    // 调整抽屉每行图标数量: 只改 AllAppsParam(应用抽屉)的列数与图标尺寸,
-    // 不碰 IconParam / 桌面网格。系统原生 getNumAllAppsColumns 在手机上会读
-    // drawer_layout_columns(默认 4), 开启后按滑条 4-6 列强制, 并把抽屉图标按 4/列数缩放,
-    // 使每个格子里图标占比与原来 4 列时一致。同时减小左侧 padding, 抵消右侧字母索引条
-    // 造成的"左边空白看起来更大"。
-    public static final String KEY_DRAWER_COLUMNS_ENABLED = "drawer_columns_enabled";
-    public static final String KEY_DRAWER_COLUMNS = "drawer_columns";
-    public static final int DRAWER_COLUMNS_MIN = 4;
-    public static final int DRAWER_COLUMNS_MAX = 6;
-    public static final int DRAWER_COLUMNS_DEFAULT = 5;
+    // 仅在右侧字母滚动条可见时调整抽屉图标、文字和格子尺寸及间距，列数由系统决定。
+    // 开关沿用旧键以保留开启状态；不再读取旧 drawer_columns 滑条值。
+    public static final String KEY_DRAWER_LAYOUT_ENABLED = "drawer_columns_enabled";
+    // 沿用原默认档的尺寸缩放比例(4/5)，仅作用于抽屉。
+    public static final float DRAWER_ICON_SCALE = 0.8f;
     // 抽屉右侧字母索引: 系统点字母会切到 ClusterAppsContainer, 弹出该字母的图标分组。
     // 开启后改为滚动列表到对应分区, 不再弹出分组。
     public static final String KEY_DRAWER_LETTER_SCROLL_ENABLED = "drawer_letter_scroll_enabled";

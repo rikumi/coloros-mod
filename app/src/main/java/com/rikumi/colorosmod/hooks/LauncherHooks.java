@@ -307,24 +307,38 @@ public final class LauncherHooks {
     private static volatile Object sRecentsSavedDepthController;
 
     private static final class DrawerIconState {
-        final int paddingLeft;
-        final int paddingTop;
-        final int paddingRight;
-        final int paddingBottom;
+        int paddingLeft;
+        int paddingTop;
+        int paddingRight;
+        int paddingBottom;
         int iconSize = -1;
         int layoutHeight = Integer.MIN_VALUE;
+        float textSize;
 
         DrawerIconState(android.view.View view) {
             paddingLeft = view.getPaddingLeft();
             paddingTop = view.getPaddingTop();
             paddingRight = view.getPaddingRight();
             paddingBottom = view.getPaddingBottom();
+            if (view instanceof android.widget.TextView) {
+                textSize = ((android.widget.TextView) view).getTextSize();
+            }
+            android.view.ViewGroup.LayoutParams lp = view.getLayoutParams();
+            if (lp != null) layoutHeight = lp.height;
         }
     }
+
+    private static Class<?> sDrawerBubbleTextViewClass;
+    private static Class<?> sDrawerPagedViewClass;
+    private static Class<?> sDrawerContainerClass;
 
     private static final java.util.Map<Object, DrawerIconState> sDrawerIconStates =
             java.util.Collections.synchronizedMap(
                     new java.util.WeakHashMap<Object, DrawerIconState>());
+
+    private static final java.util.Map<android.view.View, int[]> sDrawerPaddingStates =
+            java.util.Collections.synchronizedMap(
+                    new java.util.WeakHashMap<android.view.View, int[]>());
 
     // 缩小桌面图标长按菜单。该菜单尺寸由布局与主题属性决定, 不在运行时经 Resources.getDimension* 解析
     // (实测长按时无相关 dimen 被读取), 故资源钩子无效; 改为监听菜单根容器 deep_shortcuts_container 的
@@ -566,11 +580,17 @@ public final class LauncherHooks {
                         return true;
                     }
                 };
+        XposedHelpers.setAdditionalInstanceField(content,
+                "colorosmod_launcher_predraw_wrapper", wrapperRef);
+        trackLauncherPreDraw(content, listener);
+    }
+
+    // 抽屉和菜单共用跟踪/卸载机制，避免 detach 或热重载后保留旧回调。
+    static void trackLauncherPreDraw(android.view.View content,
+                                    android.view.ViewTreeObserver.OnPreDrawListener listener) {
         content.getViewTreeObserver().addOnPreDrawListener(listener);
         XposedHelpers.setAdditionalInstanceField(content,
                 "colorosmod_launcher_predraw", listener);
-        XposedHelpers.setAdditionalInstanceField(content,
-                "colorosmod_launcher_predraw_wrapper", wrapperRef);
         android.view.View.OnAttachStateChangeListener detachListener =
                 new android.view.View.OnAttachStateChangeListener() {
                     @Override public void onViewAttachedToWindow(android.view.View view) { }
@@ -585,6 +605,8 @@ public final class LauncherHooks {
                                     view, "colorosmod_launcher_predraw");
                             XposedHelpers.removeAdditionalInstanceField(
                                     view, "colorosmod_launcher_predraw_wrapper");
+                            XposedHelpers.removeAdditionalInstanceField(
+                                    view, "colorosmod_drawer_layout_active");
                         }
                         if (XposedHelpers.getAdditionalInstanceField(
                                 view, "colorosmod_launcher_predraw_detach") == this) {
@@ -619,7 +641,18 @@ public final class LauncherHooks {
                         Integer.valueOf(view.getPaddingLeft()), Integer.valueOf(view.getPaddingTop()),
                         Integer.valueOf(view.getPaddingRight()), Integer.valueOf(view.getPaddingBottom()),
                         Integer.valueOf(iconSize), Integer.valueOf(height),
-                        Integer.valueOf(baseline.iconSize), Integer.valueOf(baseline.layoutHeight) });
+                        Integer.valueOf(baseline.iconSize), Integer.valueOf(baseline.layoutHeight),
+                        Float.valueOf(baseline.textSize), Integer.valueOf(baseline.paddingLeft),
+                        Integer.valueOf(baseline.paddingTop), Integer.valueOf(baseline.paddingRight),
+                        Integer.valueOf(baseline.paddingBottom),
+                        Float.valueOf(((android.widget.TextView) view).getTextSize()) });
+            }
+        }
+        synchronized (sDrawerPaddingStates) {
+            for (java.util.Map.Entry<android.view.View, int[]> entry : sDrawerPaddingStates.entrySet()) {
+                saved.add(new Object[] { "drawerPadding", entry.getKey(),
+                        Integer.valueOf(entry.getValue()[0]),
+                        Integer.valueOf(entry.getKey().getPaddingLeft()) });
             }
         }
         if (sRecentsSavedBlend != null && sRecentsSavedDepthController != null) {
@@ -708,6 +741,15 @@ public final class LauncherHooks {
                 }
                 continue;
             }
+            if (state.length >= 4 && "drawerPadding".equals(state[0])
+                    && state[1] instanceof android.view.View) {
+                android.view.View view = (android.view.View) state[1];
+                int left = (Integer) state[3];
+                sDrawerPaddingStates.put(view, new int[] { (Integer) state[2], left });
+                view.setPadding(left, view.getPaddingTop(), view.getPaddingRight(), view.getPaddingBottom());
+                ensureDrawerPaddingPreDraw(view);
+                continue;
+            }
             if (state.length < 9 || !(state[0] instanceof android.view.View)) continue;
             try {
                 Object owner = state[0];
@@ -715,6 +757,15 @@ public final class LauncherHooks {
                 DrawerIconState baseline = new DrawerIconState(view);
                 baseline.iconSize = (Integer) state[7];
                 baseline.layoutHeight = (Integer) state[8];
+                if (state.length >= 15) {
+                    baseline.textSize = (Float) state[9];
+                    baseline.paddingLeft = (Integer) state[10];
+                    baseline.paddingTop = (Integer) state[11];
+                    baseline.paddingRight = (Integer) state[12];
+                    baseline.paddingBottom = (Integer) state[13];
+                    ((android.widget.TextView) view).setTextSize(
+                            android.util.TypedValue.COMPLEX_UNIT_PX, (Float) state[14]);
+                }
                 sDrawerIconStates.put(owner, baseline);
                 view.setPadding((Integer) state[1], (Integer) state[2],
                         (Integer) state[3], (Integer) state[4]);
@@ -733,17 +784,6 @@ public final class LauncherHooks {
                     view.setLayoutParams(lp);
                 } else {
                     view.requestLayout();
-                }
-                XposedHelpers.setAdditionalInstanceField(owner,
-                        "colorosmod_drawer_gap", Boolean.TRUE);
-                if (baseline.iconSize >= 0) {
-                    XposedHelpers.setAdditionalInstanceField(owner,
-                            "colorosmod_drawer_icon_base", Integer.valueOf(baseline.iconSize));
-                }
-                if (baseline.layoutHeight != Integer.MIN_VALUE && height != Integer.MIN_VALUE) {
-                    XposedHelpers.setAdditionalInstanceField(owner,
-                            "colorosmod_drawer_h_comp",
-                            Integer.valueOf(height - baseline.layoutHeight));
                 }
             } catch (Throwable t) {
                 log("launcher drawer icon restore failed: " + t);
@@ -791,6 +831,8 @@ public final class LauncherHooks {
                     DrawerIconState state = entry.getValue();
                     view.setPadding(state.paddingLeft, state.paddingTop,
                             state.paddingRight, state.paddingBottom);
+                    ((android.widget.TextView) view).setTextSize(
+                            android.util.TypedValue.COMPLEX_UNIT_PX, state.textSize);
                     if (state.iconSize >= 0) {
                         XposedHelpers.setIntField(owner, "mIconSize", state.iconSize);
                         Object drawable = XposedHelpers.callMethod(owner, "getIcon");
@@ -811,6 +853,14 @@ public final class LauncherHooks {
             }
             sDrawerIconStates.clear();
         }
+        synchronized (sDrawerPaddingStates) {
+            for (java.util.Map.Entry<android.view.View, int[]> entry : sDrawerPaddingStates.entrySet()) {
+                android.view.View view = entry.getKey();
+                view.setPadding(entry.getValue()[0], view.getPaddingTop(),
+                        view.getPaddingRight(), view.getPaddingBottom());
+            }
+            sDrawerPaddingStates.clear();
+        }
         XposedHelpers.cancelTrackedCallbacksAndAnimators();
         XposedHelpers.forEachTrackedOwner("colorosmod_launcher_predraw_detach",
                 new XposedHelpers.TrackedOwnerConsumer() {
@@ -826,6 +876,8 @@ public final class LauncherHooks {
                                 owner, "colorosmod_launcher_predraw_detach");
                         XposedHelpers.removeAdditionalInstanceField(
                                 owner, "colorosmod_launcher_predraw_wrapper");
+                        XposedHelpers.removeAdditionalInstanceField(
+                                owner, "colorosmod_drawer_layout_active");
                     }
                 });
         if (!XposedHelpers.commitTrackedPreDrawListenerPreflight(
@@ -956,9 +1008,9 @@ public final class LauncherHooks {
         hookPxRuntime(lpparam, "com.android.launcher.layoutparam.AllAppsParam",
                 "getAllAppsIconDrawablePaddingPx", density, KEY_ICON_GAP_ENABLED, KEY_ICON_GAP_DP, ICON_GAP_DP, 8, 1);
 
-        // 调整抽屉每行图标数量: 始终注入, 运行时按 KEY_DRAWER_COLUMNS_ENABLED 门控。
-        // 只改 AllAppsParam / 抽屉列数偏好与左侧 padding, 不碰 IconParam(桌面图标)。
-        hookDrawerColumns(lpparam);
+        // 调整抽屉图标大小与间距: 始终注入, 运行时按 KEY_DRAWER_LAYOUT_ENABLED 门控。
+        // 只改抽屉尺寸和间距，列数保持系统设置。
+        hookDrawerLayout(lpparam);
 
         // 字母索引滚动定位: 始终注入, 运行时按 KEY_DRAWER_LETTER_SCROLL_ENABLED 门控。
         hookDrawerLetterScroll(lpparam);
@@ -2362,12 +2414,8 @@ public final class LauncherHooks {
         }
     }
 
-    // 读取抽屉列数; 开关关闭或越界时返回 -1(不生效)。
-    static int drawerColumns() {
-        if (!readBool(KEY_DRAWER_COLUMNS_ENABLED, false)) return -1;
-        int cols = readInt(KEY_DRAWER_COLUMNS, DRAWER_COLUMNS_DEFAULT);
-        if (cols < DRAWER_COLUMNS_MIN || cols > DRAWER_COLUMNS_MAX) return -1;
-        return cols;
+    static boolean drawerLayoutEnabled() {
+        return readBool(KEY_DRAWER_LAYOUT_ENABLED, false);
     }
 
     static boolean drawerLetterScroll() {
@@ -2378,8 +2426,8 @@ public final class LauncherHooks {
     static final float DRAWER_ICON_GAP_KEEP = 0.875f;
     static final int DISPLAY_ALL_APPS = 1;
 
-    // 只在当前页面实际显示右侧字母条时调整左侧 padding。分类页没有字母条，必须保留
-    // 系统原本对称的左右 padding。
+    // 只在当前页面实际显示右侧字母条时应用抽屉布局调整。
+    // 分类页没有字母条，保留系统原来的尺寸与边距。
     static boolean drawerHasVisibleLetterScroller(android.view.View anchor) {
         int id = anchor.getResources().getIdentifier(
                 "coui_fast_scroller", "id", "com.android.launcher");
@@ -2397,106 +2445,82 @@ public final class LauncherHooks {
         return Math.max(minLeft, systemPx - letterBar);
     }
 
-    // 调整抽屉每行图标数量: 列数走 AllAppsParam / 系统 drawer_layout_columns 偏好;
-    // 图标尺寸按 4/列数缩放(只动抽屉 getter, 不动桌面 IconParam); 在显示字母索引条的
-    // 列表页把左侧 padding 减去字母条宽度，让视觉左右留白对称。
-    public static void hookDrawerColumns(final XC_LoadPackage.LoadPackageParam lpparam) {
-        XC_MethodHook forceColumns = new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                int cols = drawerColumns();
-                if (cols < 0) return;
-                param.setResult(cols);
-            }
-        };
-        try {
-            final Class<?> allAppsParam = XposedHelpers.findClass(
-                    "com.android.launcher.layoutparam.AllAppsParam", lpparam.classLoader);
-            final Class<?> activityContext = XposedHelpers.findClass(
-                    "com.android.launcher3.views.ActivityContext", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(allAppsParam, "getNumAllAppsColumns",
-                    activityContext, forceColumns);
-            XposedHelpers.findAndHookMethod(allAppsParam, "getNumShownAllAppsColumns",
-                    forceColumns);
-
-            XC_MethodHook scaleSize = new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    int cols = drawerColumns();
-                    if (cols < 0 || cols == DRAWER_COLUMNS_MIN) return;
-                    // 相对系统 4 列缩放，保持格子中的图标占比不变。
-                    float scale = DRAWER_COLUMNS_MIN / (float) cols;
-                    Object ret = param.getResult();
-                    if (ret instanceof Integer) {
-                        param.setResult(Math.max(1, Math.round(((Integer) ret) * scale)));
-                    } else if (ret instanceof Float) {
-                        param.setResult(((Float) ret) * scale);
+    // onLayout 时抽屉及字母条的父容器可能仍不可见，不能在这里固化边距。
+    // 绘制前再按最终可见状态调整；边距改变时取消这一帧，等图标重新布局后再显示。
+    static void ensureDrawerPaddingPreDraw(android.view.View recyclerView) {
+        if (XposedHelpers.getAdditionalInstanceField(
+                recyclerView, "colorosmod_launcher_predraw") != null) return;
+        final java.lang.ref.WeakReference<android.view.View> viewRef =
+                new java.lang.ref.WeakReference<>(recyclerView);
+        trackLauncherPreDraw(recyclerView, new android.view.ViewTreeObserver.OnPreDrawListener() {
+            @Override public boolean onPreDraw() {
+                android.view.View view = viewRef.get();
+                if (view == null) return true;
+                try {
+                    // 隐藏页只允许首次预备布局，已有状态继续保持到它真正显示。
+                    if (!view.isShown() && XposedHelpers.getAdditionalInstanceField(
+                            view, "colorosmod_drawer_layout_active") != null) return true;
+                    Boolean pageActive = drawerLayoutForPage(view);
+                    if (pageActive == null) return true;
+                    boolean active = pageActive;
+                    Object previous = XposedHelpers.getAdditionalInstanceField(
+                            view, "colorosmod_drawer_layout_active");
+                    XposedHelpers.setAdditionalInstanceField(
+                            view, "colorosmod_drawer_layout_active", Boolean.valueOf(active));
+                    boolean changed = syncDrawerLeftPadding(view, active);
+                    changed |= syncDrawerIcons(view, active);
+                    if ((previous == null && active)
+                            || (previous instanceof Boolean && ((Boolean) previous) != active)) {
+                        XposedHelpers.callMethod(view, "invalidateItemDecorations");
+                        changed = true;
                     }
+                    return !changed;
+                } catch (Throwable t) {
+                    log("drawer pre-draw left adjust error: " + t);
+                    return true;
                 }
-            };
-            String[] scaledGetters = {"getAllAppsIconSizePx", "getAllAppsIconTextSizePx",
-                    "getAllAppsCellWidthPx", "getAllAppsCellHeightPx"};
-            for (String getter : scaledGetters) {
-                XposedHelpers.findAndHookMethod(allAppsParam, getter, scaleSize);
             }
-            XposedHelpers.findAndHookMethod(allAppsParam, "getAllAppsCellHeight",
-                    activityContext, scaleSize);
-            log("HOOK OK AllAppsParam drawer columns");
-        } catch (Throwable t) {
-            log("HOOK FAIL AllAppsParam drawer columns: " + t);
-        }
+        });
+    }
 
+    // 用未修改的右边距反推系统左边距，重复绘制不会累积扣减。
+    static boolean syncDrawerLeftPadding(android.view.View view, boolean active) {
+        int right = view.getPaddingRight();
+        if (right <= 0) return false;
+        float density = view.getResources().getDisplayMetrics().density;
+        int extra = 0;
         try {
-            XposedHelpers.findAndHookMethod(
-                    "com.android.launcher.settings.LauncherSettingsUtils",
-                    lpparam.classLoader, "getDrawerColumnsFromPrefs",
-                    android.content.Context.class, forceColumns);
-            log("HOOK OK LauncherSettingsUtils#getDrawerColumnsFromPrefs (drawer columns)");
-        } catch (Throwable t) {
-            log("HOOK FAIL LauncherSettingsUtils#getDrawerColumnsFromPrefs: " + t);
+            int id = view.getResources().getIdentifier(
+                    "all_apps_recycle_view_padding_left", "dimen", "com.android.launcher");
+            if (id != 0) extra = view.getResources().getDimensionPixelSize(id);
+        } catch (Throwable ignored) {
         }
-
-        try {
-            // 每次真正 setPadding 前, 用右侧系统值重算左侧。不能只 hook applyAdapterPaddings:
-            // 开机第一次调用时设置快照可能还没到, 之后 updatePaddingsIfNeeded 见 paddingEnd
-            // 没变就直接 return, 左边距就再也改不上。
-            XposedHelpers.findAndHookMethod(
-                    "com.android.launcher3.allapps.BaseAllAppsContainerView$AdapterHolder",
-                    lpparam.classLoader, "applyPadding",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
-                            if (drawerColumns() < 0) return;
-                            try {
-                                Object paddingObj = XposedHelpers.getObjectField(
-                                        param.thisObject, "mPadding");
-                                if (!(paddingObj instanceof android.graphics.Rect)) return;
-                                android.graphics.Rect rect = (android.graphics.Rect) paddingObj;
-                                int system = rect.right > 0 ? rect.right : rect.left;
-                                if (system <= 0) return;
-                                Object rv = XposedHelpers.getObjectField(
-                                        param.thisObject, "mRecyclerView");
-                                if (!(rv instanceof android.view.View)) return;
-                                android.view.View recyclerView = (android.view.View) rv;
-                                if (!drawerHasVisibleLetterScroller(recyclerView)) {
-                                    rect.left = system;
-                                    return;
-                                }
-                                float density = recyclerView.getResources()
-                                        .getDisplayMetrics().density;
-                                rect.left = drawerAdjustedLeftPadding(system, density);
-                            } catch (Throwable t) {
-                                log("drawer applyPadding left adjust error: " + t);
-                            }
-                        }
-                    });
-            log("HOOK OK AdapterHolder#applyPadding (drawer left padding)");
-        } catch (Throwable t) {
-            log("HOOK FAIL AdapterHolder#applyPadding: " + t);
+        int[] state = sDrawerPaddingStates.get(view);
+        if (!active && state == null) return false;
+        if (active) {
+            if (state == null) state = new int[] { view.getPaddingLeft(), view.getPaddingLeft() };
+            // 系统重新下发 padding 时，保存新的原生值，避免恢复过期边距。
+            else if (view.getPaddingLeft() != state[1]) state[0] = view.getPaddingLeft();
+            sDrawerPaddingStates.put(view, state);
         }
+        int system = Math.max(0, right - extra);
+        int want = active ? extra + drawerAdjustedLeftPadding(system, density)
+                : (view.getPaddingLeft() == state[1] ? state[0] : view.getPaddingLeft());
+        if (active) state[1] = want;
+        else sDrawerPaddingStates.remove(view);
+        if (view.getPaddingLeft() == want) return false;
+        view.setPadding(want, view.getPaddingTop(), right, view.getPaddingBottom());
+        return true;
+    }
 
+    // 不修改共用 AllAppsParam，所有调整按当前页面的字母条可见状态执行。
+    public static void hookDrawerLayout(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            // 抽屉打开/layout 时再兜一层: 设置晚到或 insets 路径跳过 applyPadding 时仍能改上。
+            // 首次 layout 就注册，开关快照或字母条晚到也会在后续绘制前补调。
+            sDrawerPagedViewClass = XposedHelpers.findClass(
+                    "com.android.launcher3.PagedView", lpparam.classLoader);
+            sDrawerContainerClass = XposedHelpers.findClass(
+                    "com.android.launcher3.allapps.OplusLauncherAllAppsContainerView", lpparam.classLoader);
             final Class<?> oplusRv = XposedHelpers.findClass(
                     "com.android.launcher3.allapps.OplusAllAppsRecyclerView", lpparam.classLoader);
             XposedHelpers.findAndHookDeclaredMethod(oplusRv, "onLayout",
@@ -2504,28 +2528,10 @@ public final class LauncherHooks {
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
-                            if (drawerColumns() < 0) return;
-                            android.view.View v = (android.view.View) param.thisObject;
-                            int right = v.getPaddingRight();
-                            if (right <= 0) return;
-                            float density = v.getResources().getDisplayMetrics().density;
-                            int extra = 0;
-                            try {
-                                int id = v.getResources().getIdentifier(
-                                        "all_apps_recycle_view_padding_left", "dimen",
-                                        "com.android.launcher");
-                                if (id != 0) extra = v.getResources().getDimensionPixelSize(id);
-                            } catch (Throwable ignored) {
-                            }
-                            int system = Math.max(0, right - extra);
-                            int want = drawerHasVisibleLetterScroller(v)
-                                    ? extra + drawerAdjustedLeftPadding(system, density)
-                                    : right;
-                            if (v.getPaddingLeft() == want) return;
-                            v.setPadding(want, v.getPaddingTop(), right, v.getPaddingBottom());
+                            ensureDrawerPaddingPreDraw((android.view.View) param.thisObject);
                         }
                     });
-            log("HOOK OK OplusAllAppsRecyclerView#onLayout (drawer left padding)");
+            log("HOOK OK OplusAllAppsRecyclerView#onLayout (drawer pre-draw padding)");
         } catch (Throwable t) {
             log("HOOK FAIL OplusAllAppsRecyclerView#onLayout: " + t);
         }
@@ -2534,15 +2540,19 @@ public final class LauncherHooks {
             final Class<?> spacingClass = XposedHelpers.findClass(
                     "com.android.launcher3.allapps.GridSpacingItemDecoration",
                     lpparam.classLoader);
-            XposedHelpers.findAndHookConstructor(spacingClass,
-                    "com.android.launcher3.allapps.AllAppsRecyclerView", int.class,
+            // 在系统算完 item 偏移后缩小间距，不修改 decoration 的共用状态。
+            XposedBridge.hookAllMethods(spacingClass, "getItemOffsets",
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
-                            if (drawerColumns() < 0) return;
-                            int spacing = XposedHelpers.getIntField(param.thisObject, "mSpacing");
-                            XposedHelpers.setIntField(param.thisObject, "mSpacing",
-                                    Math.max(0, Math.round(spacing * DRAWER_ICON_GAP_KEEP)));
+                            if (param.args.length != 4
+                                    || !(param.args[0] instanceof android.graphics.Rect)
+                                    || !(param.args[2] instanceof android.view.View)
+                                    || !Boolean.TRUE.equals(drawerLayoutForMeasure(
+                                            (android.view.View) param.args[2]))) return;
+                            android.graphics.Rect rect = (android.graphics.Rect) param.args[0];
+                            rect.left = Math.round(rect.left * DRAWER_ICON_GAP_KEEP);
+                            rect.right = Math.round(rect.right * DRAWER_ICON_GAP_KEEP);
                         }
                     });
             log("HOOK OK GridSpacingItemDecoration (drawer icon gap)");
@@ -2553,93 +2563,172 @@ public final class LauncherHooks {
         try {
             final Class<?> btv = XposedHelpers.findClass(
                     "com.android.launcher3.BubbleTextView", lpparam.classLoader);
-            XposedBridge.hookAllConstructors(btv, new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    shrinkDrawerIconPadding(param.thisObject);
-                }
-            });
-            // 5 列时 GridSpacingItemDecoration 直接跳过, 图标又在格子里水平居中,
-            // 改 padding / ItemDecoration 都不会让相邻图标靠近。按测量到的格子宽度
-            // 把图标加大 (空隙的 1/8), 左右间隔才会真正变小。
+            sDrawerBubbleTextViewClass = btv;
+            // 测量可能发生在页签暂时隐藏时，沿用该 RecyclerView 最后确认的状态。
+            // 状态只在绘制前更新；未知状态留给首次 pre-draw，避免隐藏/显示时反复恢复尺寸。
             XposedHelpers.findAndHookDeclaredMethod(btv, "onMeasure",
                     int.class, int.class, new XC_MethodHook() {
                         @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            growDrawerIconForHorizontalGap(param.thisObject);
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            android.view.View view = (android.view.View) param.thisObject;
+                            Boolean active = drawerLayoutForMeasure(view);
+                            if (active != null) syncDrawerIconLayout(view, active);
                         }
                     });
-            log("HOOK OK BubbleTextView (drawer icon gap)");
+            log("HOOK OK BubbleTextView (drawer icon sizes and gap)");
         } catch (Throwable t) {
             log("HOOK FAIL BubbleTextView (drawer icon gap): " + t);
         }
     }
 
-    static boolean isDrawerAppIcon(Object btv) {
-        return drawerColumns() >= 0
-                && XposedHelpers.getIntField(btv, "mDisplay") == DISPLAY_ALL_APPS;
+    static boolean drawerLayoutActive(android.view.View view) {
+        return drawerLayoutEnabled() && view.isShown() && drawerHasVisibleLetterScroller(view);
     }
 
-    static void shrinkDrawerIconPadding(Object btv) {
-        if (!isDrawerAppIcon(btv)) return;
-        // 链式构造会进多次, 只缩一次。
-        if (XposedHelpers.getAdditionalInstanceField(btv, "colorosmod_drawer_gap") != null) {
-            return;
+    // isShown() 不区分 pager 中的屏幕外页面；共享字母条在滚动中也会临时 GONE。
+    // 已确认状态只允许在 pager 停稳后由当前页更新，不能用目标页的字母条改动其它页。
+    static Boolean drawerLayoutForPage(android.view.View recyclerView) {
+        if (!drawerLayoutEnabled()) return Boolean.FALSE;
+        android.view.ViewParent parent = recyclerView.getParent();
+        while (parent instanceof android.view.View) {
+            android.view.View view = (android.view.View) parent;
+            if (sDrawerPagedViewClass != null && sDrawerPagedViewClass.isInstance(view)) {
+                Object cached = XposedHelpers.getAdditionalInstanceField(
+                        recyclerView, "colorosmod_drawer_layout_active");
+                boolean moving = Boolean.TRUE.equals(XposedHelpers.callMethod(view, "isPageInTransition"));
+                int page = (Integer) XposedHelpers.callMethod(view, "getCurrentPage");
+                Object currentPage = XposedHelpers.callMethod(view, "getPageAt", page);
+                if (moving || currentPage != recyclerView) {
+                    if (cached instanceof Boolean) return (Boolean) cached;
+                    return drawerInitialWorkLayout(recyclerView, view);
+                }
+                break;
+            }
+            parent = view.getParent();
         }
-        android.view.View v = (android.view.View) btv;
-        sDrawerIconStates.put(btv, new DrawerIconState(v));
-        v.setPadding(Math.round(v.getPaddingLeft() * DRAWER_ICON_GAP_KEEP), v.getPaddingTop(),
-                Math.round(v.getPaddingRight() * DRAWER_ICON_GAP_KEEP), v.getPaddingBottom());
-        XposedHelpers.setAdditionalInstanceField(btv, "colorosmod_drawer_gap", Boolean.TRUE);
+        return recyclerView.isShown() ? drawerLayoutActive(recyclerView) : null;
     }
 
-    static void growDrawerIconForHorizontalGap(Object btv) {
+    // 首次打开抽屉时预备 work，防止它滑入后才缩小。仅在当前字母条已显示、
+    // 系统确认这是启用中的 work RecyclerView 时执行；分类页不会使用这条路径。
+    static Boolean drawerInitialWorkLayout(android.view.View recyclerView, android.view.View pager) {
+        if (!drawerHasVisibleLetterScroller(recyclerView)) return null;
+        android.view.ViewParent parent = pager.getParent();
+        while (parent instanceof android.view.View) {
+            android.view.View container = (android.view.View) parent;
+            if (sDrawerContainerClass != null && sDrawerContainerClass.isInstance(container)) {
+                try {
+                    if (XposedHelpers.callMethod(container, "getWorkRecyclerView") != recyclerView
+                            || !Boolean.TRUE.equals(XposedHelpers.callMethod(container, "showTabs"))) {
+                        return null;
+                    }
+                    Object manager = XposedHelpers.callMethod(container, "getWorkManager");
+                    if (manager == null) return null;
+                    Object workSwitch = XposedHelpers.callMethod(manager, "getWorkModeSwitch");
+                    return workSwitch != null
+                            && Boolean.TRUE.equals(XposedHelpers.callMethod(workSwitch, "isWorkEnable"))
+                            ? Boolean.TRUE : null;
+                } catch (Throwable ignored) {
+                    // 系统接口不可用时继续走当前页绘制前调整，不猜测另一页的类型。
+                    return null;
+                }
+            }
+            parent = container.getParent();
+        }
+        return null;
+    }
+
+    // 每页独立保存已确认状态；未挂载或隐藏中的测量不会改变页面状态。
+    static Boolean drawerLayoutForMeasure(android.view.View view) {
+        if (!drawerLayoutEnabled()) return Boolean.FALSE;
+        android.view.View current = view;
+        while (current != null) {
+            Object active = XposedHelpers.getAdditionalInstanceField(
+                    current, "colorosmod_drawer_layout_active");
+            if (active instanceof Boolean) return (Boolean) active;
+            android.view.ViewParent parent = current.getParent();
+            current = parent instanceof android.view.View ? (android.view.View) parent : null;
+        }
+        return null;
+    }
+
+    static boolean syncDrawerIcons(android.view.View view, boolean active) {
+        boolean changed = false;
+        if (sDrawerBubbleTextViewClass != null && sDrawerBubbleTextViewClass.isInstance(view)) {
+            changed = syncDrawerIconLayout(view, active);
+        }
+        if (view instanceof android.view.ViewGroup) {
+            android.view.ViewGroup group = (android.view.ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                changed |= syncDrawerIcons(group.getChildAt(i), active);
+            }
+        }
+        return changed;
+    }
+
+    // 保存原生尺寸，按当前页面重新计算目标值；字母条消失或关闭开关时恢复原样。
+    static boolean syncDrawerIconLayout(android.view.View view, boolean active) {
         try {
-            if (!isDrawerAppIcon(btv)) return;
-            android.view.View v = (android.view.View) btv;
-            int w = v.getMeasuredWidth();
-            if (w <= 0) return;
-            Object size = XposedHelpers.callMethod(btv, "getIconSize");
-            if (!(size instanceof Integer)) return;
-            int cur = (Integer) size;
-            if (cur <= 0) return;
-            DrawerIconState state = sDrawerIconStates.get(btv);
+            if (XposedHelpers.getIntField(view, "mDisplay") != DISPLAY_ALL_APPS) return false;
+            android.widget.TextView text = (android.widget.TextView) view;
+            DrawerIconState state = sDrawerIconStates.get(view);
             if (state == null) {
-                state = new DrawerIconState(v);
-                sDrawerIconStates.put(btv, state);
+                if (!active) return false;
+                state = new DrawerIconState(view);
+                state.iconSize = (Integer) XposedHelpers.callMethod(view, "getIconSize");
+                if (state.iconSize <= 0) return false;
+                sDrawerIconStates.put(view, state);
             }
-            Object baseObj = XposedHelpers.getAdditionalInstanceField(btv, "colorosmod_drawer_icon_base");
-            int base;
-            if (baseObj instanceof Integer) {
-                base = (Integer) baseObj;
-            } else {
-                base = cur;
-                XposedHelpers.setAdditionalInstanceField(btv, "colorosmod_drawer_icon_base", base);
+            int left = active ? Math.round(state.paddingLeft * DRAWER_ICON_GAP_KEEP)
+                    : state.paddingLeft;
+            int right = active ? Math.round(state.paddingRight * DRAWER_ICON_GAP_KEEP)
+                    : state.paddingRight;
+            int scaledIcon = active ? Math.max(1, Math.round(state.iconSize * DRAWER_ICON_SCALE))
+                    : state.iconSize;
+            int iconSize = scaledIcon;
+            int width = view.getMeasuredWidth();
+            // 5 列时原生 decoration 不提供横向间距，以放大图标吃掉空隙的 1/8。
+            if (active && width > scaledIcon) {
+                int inner = width - left - right;
+                iconSize += Math.round((width - scaledIcon) * (1f - DRAWER_ICON_GAP_KEEP));
+                if (inner > 0) iconSize = Math.min(iconSize, inner);
+                iconSize = Math.max(scaledIcon, iconSize);
             }
-            if (state.iconSize < 0) state.iconSize = base;
-            int gap = w - base;
-            if (gap <= 0) return;
-            int newIcon = base + Math.round(gap * (1f - DRAWER_ICON_GAP_KEEP));
-            int inner = w - v.getPaddingLeft() - v.getPaddingRight();
-            if (inner > 0) newIcon = Math.min(newIcon, inner);
-            newIcon = Math.max(base, newIcon);
-            if (newIcon == cur) return;
-            XposedHelpers.setIntField(btv, "mIconSize", newIcon);
-            // 图标是方的, 加大后会吃掉上下空隙; 把格子高度补回同样增量, 上下间距保持原样。
-            android.view.ViewGroup.LayoutParams lp = v.getLayoutParams();
-            if (lp != null && lp.height > 0) {
-                if (state.layoutHeight == Integer.MIN_VALUE) state.layoutHeight = lp.height;
-                Object prev = XposedHelpers.getAdditionalInstanceField(btv, "colorosmod_drawer_h_comp");
-                int prevGrow = prev instanceof Integer ? (Integer) prev : 0;
-                int grow = newIcon - base;
-                lp.height = lp.height - prevGrow + grow;
-                XposedHelpers.setAdditionalInstanceField(btv, "colorosmod_drawer_h_comp", grow);
+            boolean changed = false;
+            if (view.getPaddingLeft() != left || view.getPaddingRight() != right) {
+                // 上下 padding 由 BubbleTextView.onMeasure 按实际行高居中计算。
+                view.setPadding(left, view.getPaddingTop(), right, view.getPaddingBottom());
+                changed = true;
             }
-            Object drawable = XposedHelpers.callMethod(btv, "getIcon");
-            if (drawable instanceof android.graphics.drawable.Drawable) {
-                XposedHelpers.callMethod(btv, "applyCompoundDrawables", drawable);
+            float textSize = active ? state.textSize * DRAWER_ICON_SCALE : state.textSize;
+            if (Math.abs(text.getTextSize() - textSize) > 0.01f) {
+                text.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, textSize);
+                changed = true;
             }
-        } catch (Throwable ignored) {
+            if (XposedHelpers.getIntField(view, "mIconSize") != iconSize) {
+                XposedHelpers.setIntField(view, "mIconSize", iconSize);
+                Object drawable = XposedHelpers.callMethod(view, "getIcon");
+                if (drawable instanceof android.graphics.drawable.Drawable) {
+                    XposedHelpers.callMethod(view, "applyCompoundDrawables", drawable);
+                }
+                view.requestLayout();
+                changed = true;
+            }
+            android.view.ViewGroup.LayoutParams lp = view.getLayoutParams();
+            if (lp != null && state.layoutHeight > 0) {
+                // 保留原来的格子高度缩放，并补偿横向放大图标吃掉的上下空间。
+                int height = active ? Math.max(1, Math.round(state.layoutHeight * DRAWER_ICON_SCALE))
+                        + iconSize - scaledIcon : state.layoutHeight;
+                if (lp.height != height) {
+                    lp.height = height;
+                    view.setLayoutParams(lp);
+                    changed = true;
+                }
+            }
+            return changed;
+        } catch (Throwable t) {
+            log("drawer icon layout sync failed: " + t);
+            return false;
         }
     }
 
