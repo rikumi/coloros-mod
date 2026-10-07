@@ -10,6 +10,9 @@ import com.rikumi.colorosmod.hooks.AncTileHooks;
 import com.rikumi.colorosmod.hooks.NotificationHooks;
 import com.rikumi.colorosmod.hooks.PasswordInputHooks;
 import com.rikumi.colorosmod.hooks.StatusBarLyricHooks;
+import com.rikumi.colorosmod.hooks.SignalHooks;
+import com.rikumi.colorosmod.hooks.FoldIdleMediaHooks;
+import com.rikumi.colorosmod.hooks.StatusBarFontHooks;
 import com.rikumi.colorosmod.hooks.LauncherHooks;
 import com.rikumi.colorosmod.hooks.KeyguardHooks;
 import com.rikumi.colorosmod.hooks.MediaProviderHooks;
@@ -181,6 +184,14 @@ public class XposedInit extends XposedModule {
     // 系统在流体云胶囊出现时会令 PercentOutIcon.isVisible=false, 隐藏电量百分比数字。
     // hook BatteryViewBinder.bind$updatePercentOutView, 强制 isVisible=true。
     public static final String KEY_FLUID_CLOUD_KEEP_PERCENT_ENABLED = "fluid_cloud_keep_percent_enabled";
+    public static final String KEY_MERGE_DUAL_SIGNAL = "merge_dual_sim_signal";
+    public static final String KEY_FOLD_IDLE_MEDIA = "fold_idle_media";
+    public static final String KEY_QS_FILL_EMPTY = "qs_fill_empty";
+    public static final String KEY_SEPARATE_NETWORK_TYPE = "separate_network_type";
+    public static final String KEY_HIDE_ROAMING_ICON = "hide_roaming_icon";
+    public static final String KEY_SIGNAL_NETWORK_TYPE_MODE = "signal_network_type_mode";
+    public static final String KEY_STATUS_BAR_FONT = "status_bar_clock_font";
+    public static final String KEY_STATUS_BAR_FONT_WEIGHT = "status_bar_clock_weight";
     // 悬浮小窗贴边挂机: 拖到边缘松手时系统把窗口缩成边缘竖条并把任务切后台, 这里在 to-float 结束后
     // moveToFront 拉回前台; 不能在提交中途拦截 —— 会触发 "Input dispatching timed out" ANR。
     // 需把模块作用域加入 "android"(system_server), 旧版 SystemUI 内 hook 路径已废弃。
@@ -232,6 +243,8 @@ public class XposedInit extends XposedModule {
     //  即任务是否还有存活的 Activity), 见 LauncherHooks#hookRecentsHideNotRunning。
     public static final String KEY_RECENTS_HIDE_NOT_RUNNING_ENABLED =
             "recents_hide_not_running_enabled";
+    public static final String KEY_POWER_SAVE_KEEP_LOCKED_TASKS_ENABLED =
+            "power_save_keep_locked_tasks_enabled";
     // 划掉主任务时一并清空附属任务: 附属任务(如微信小程序)是同包下的另一个独立任务
     // (独立进程), 划掉主任务不会带走它们; 开启后连同任务一起移除并强杀。
     // 主/附属用该包全部 launcher 入口判定, 不硬编码任何应用(见 LauncherHooks#isMainTask)。
@@ -506,6 +519,11 @@ public class XposedInit extends XposedModule {
         if ("com.android.launcher".equals(sProcessName)) {
             LauncherHooks.onSettingsSnapshotPublished(all);
         }
+        if ("com.android.systemui".equals(sHookedPackageName)) {
+            SignalHooks.onSettingsSnapshotPublished();
+            FoldIdleMediaHooks.refresh();
+            StatusBarFontHooks.refresh();
+        }
         if (first) {
             synchronized (sLoadLock) {
                 sSettingsLoaded = true;
@@ -722,6 +740,12 @@ public class XposedInit extends XposedModule {
             catch (Throwable t) { log("gesture hot reload cleanup failed: " + t); }
             try { PasswordInputHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("password hot reload cleanup failed: " + t); }
+            try { SignalHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("signal hot reload cleanup failed: " + t); }
+            try { FoldIdleMediaHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("fold media hot reload cleanup failed: " + t); }
+            try { StatusBarFontHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("status font hot reload cleanup failed: " + t); }
             try { KeyguardHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("keyguard hot reload cleanup failed: " + t); }
         } else if ("com.android.launcher".equals(sHookedPackageName)) {
@@ -823,7 +847,7 @@ public class XposedInit extends XposedModule {
             return false;
         }
         try {
-            Object[] state = new Object[10];
+            Object[] state = new Object[13];
             state[0] = StatusBarLyricHooks.captureHotReloadHost();
             state[1] = NotificationHooks.captureHotReloadHost();
             state[2] = SystemServerHooks.captureHotReloadHost();
@@ -834,6 +858,9 @@ public class XposedInit extends XposedModule {
             state[7] = AncTileHooks.captureHotReloadHosts();
             state[8] = sSystemServerClassLoader;
             state[9] = LauncherHooks.captureHotReloadSettings();
+            state[10] = SignalHooks.captureHotReloadHosts();
+            state[11] = FoldIdleMediaHooks.captureHotReloadHosts();
+            state[12] = StatusBarFontHooks.captureHotReloadHosts();
             param.setSavedInstanceState(state);
         } catch (Throwable t) {
             cancelProcessPreflight();
@@ -984,6 +1011,21 @@ public class XposedInit extends XposedModule {
                             if (state.length > 7) AncTileHooks.restoreHotReloadHosts(state[7]);
                         } catch (Throwable t) {
                             log("onHotReloaded: restore ANC hosts failed: " + t);
+                        }
+                        try {
+                            if (state.length > 10) SignalHooks.restoreHotReloadHosts(state[10]);
+                        } catch (Throwable t) {
+                            log("onHotReloaded: restore signal hosts failed: " + t);
+                        }
+                        try {
+                            if (state.length > 11) FoldIdleMediaHooks.restoreHotReloadHosts(state[11]);
+                        } catch (Throwable t) {
+                            log("onHotReloaded: restore fold media hosts failed: " + t);
+                        }
+                        try {
+                            if (state.length > 12) StatusBarFontHooks.restoreHotReloadHosts(state[12]);
+                        } catch (Throwable t) {
+                            log("onHotReloaded: restore status font hosts failed: " + t);
                         }
                     }
                 };
@@ -1191,6 +1233,14 @@ public class XposedInit extends XposedModule {
     public static int readInt(String key, int def) {
         Object v = settingsValue(key);
         if (v instanceof Number) return ((Number) v).intValue();
+        return def;
+    }
+
+    public static int readIntCached(String key, int def) {
+        Integer snapshot = sSnapshot.get(key);
+        if (snapshot != null) return snapshot;
+        Object[] cached = sCache.get(key);
+        if (cached != null && cached[1] instanceof Number) return ((Number) cached[1]).intValue();
         return def;
     }
 

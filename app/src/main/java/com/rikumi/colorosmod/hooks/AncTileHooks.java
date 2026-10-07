@@ -204,229 +204,6 @@ public final class AncTileHooks {
         final ClassLoader cl = lpparam.classLoader;
         log("anc: hooking in " + lpparam.packageName);
         try {
-            // 1. 形态: 蓝牙磁贴在三段式可用时改用 TileUiType.THREE_STAGE。
-            final Class<?> mapper = XposedHelpers.findClass(CLS_MAPPER, cl);
-            final Class<?> tileVm = XposedHelpers.findClass(CLS_TILE_VIEW_MODEL, cl);
-            XposedHelpers.findAndHookMethod(mapper, "convertTileConfigToViewModel",
-                    XposedHelpers.findClass(
-                            "com.oplus.systemui.plugins.qs.customize.viewmodel.model.QSTileAndConfig", cl),
-                    java.util.List.class, new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                            try {
-                                Object vm = param.getResult();
-                                if (vm == null || !tileVm.isInstance(vm)) return;
-                                if (!BT_SPEC.equals(XposedHelpers.getObjectField(vm, "spec"))) return;
-                                // mapper 只在磁贴列表数据流发射时跑, 而耳机状态是后台异步拉的;
-                                // 这里缓存还没建立时当场同步查一次, 避免首次展开时错过形态切换。
-                                if (sState == null) syncQueryOnce();
-                                boolean on = isAvailable();
-                                log("anc: mapper bt, available=" + on + " state=" + describe(sState));
-                                if (!on) return;
-                                Object threeStage = XposedHelpers.getStaticObjectField(
-                                        XposedHelpers.findClass(CLS_TILE_UI_TYPE, cl), "THREE_STAGE");
-                                if (threeStage == null) return;
-                                if (threeStage.equals(XposedHelpers.getObjectField(vm, "uiType"))) return;
-                                // TileViewModel 的字段均为 final, 只能整体重建一个 uiType 不同的实例。
-                                param.setResult(XposedHelpers.newInstance(tileVm,
-                                        XposedHelpers.getObjectField(vm, "qsTile"),
-                                        XposedHelpers.getObjectField(vm, "isSystem"),
-                                        XposedHelpers.getObjectField(vm, "sepTileType"),
-                                        XposedHelpers.getObjectField(vm, "spec"),
-                                        threeStage));
-                                log("anc: bt -> THREE_STAGE");
-                            } catch (Throwable t) {
-                                log("anc: mapper hook fail: " + t);
-                            }
-                        }
-                    });
-            log("HOOK OK TileDataViewModelMapper$Companion#convertTileConfigToViewModel (anc)");
-        } catch (Throwable t) {
-            log("HOOK FAIL TileDataViewModelMapper$Companion#convertTileConfigToViewModel (anc) :: "
-                    + Log.getStackTraceString(t));
-        }
-
-        try {
-            final Class<?> tile = XposedHelpers.findClass(CLS_BT_TILE, cl);
-            // 2. 状态: 把当前降噪模式写成 threeStageMode 交给三段式布局。
-            XposedHelpers.findAndHookMethod(tile, "handleUpdateState",
-                    XposedHelpers.findClass("com.android.systemui.plugins.qs.QSTile$BooleanState", cl),
-                    Object.class, new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                            try {
-                                sTileRef = new WeakReference<Object>(param.thisObject);
-                                State st = sState;
-                                if (st == null || !readBool(KEY_ANC_TILE_ENABLED, false)) return;
-                                // 用乐观值: 切换过程中 sState 会出现中间态, 直接用它会让
-                                // 三段式选中段跟着跳, 表现为磁贴闪烁。
-                                int shown = displayType();
-                                XposedHelpers.setIntField(param.args[0], "threeStageMode",
-                                        stageOfType(shown));
-                                log("anc: bt state threeStageMode=" + stageOfType(shown)
-                                        + " shown=" + shown + " real=" + st.type);
-                            } catch (Throwable t) {
-                                log("anc: update state fail: " + t);
-                            }
-                        }
-                    });
-            // 3. 单击: 三段式生效时整段吞掉, 不再落到"开关蓝牙"的原逻辑。
-            //    真正的切模式由下面 selectSegmentAt 的 hook 负责 —— 那里能直接拿到段索引,
-            //    不依赖 qs_three_stage_tag(之前依赖它, tag 取不到时就退回原生点击把蓝牙关了)。
-            XposedHelpers.findAndHookMethod(tile, "handleClick",
-                    XposedHelpers.findClass("com.android.systemui.animation.Expandable", cl),
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            try {
-                                if (!isAvailable()) return;
-                                param.setResult(null);
-                                log("anc: bt click swallowed");
-                            } catch (Throwable t) {
-                                log("anc: click fail: " + t);
-                            }
-                        }
-                    });
-            log("HOOK OK OplusBluetoothTile#handleUpdateState/handleClick (anc)");
-        } catch (Throwable t) {
-            log("HOOK FAIL OplusBluetoothTile (anc) :: " + Log.getStackTraceString(t));
-        }
-
-        try {
-            // 3b. 段选中: 用户点/拖到某一段的唯一收敛点(OplusQSThreeStageLayout 的
-            //     onTouchEvent 与每个 frame 的 OnClickListener 最终都调 selectSegmentAt)。
-            //     只在段值与当前降噪模式不一致时下发, 避免回显(refreshState -> setSelectedIndex)
-            //     反向触发写操作形成死循环。
-            XposedHelpers.findAndHookMethod(
-                    XposedHelpers.findClass(CLS_THREE_STAGE_LAYOUT, cl), "selectSegmentAt",
-                    int.class, new XC_MethodHook() {
-                        // selectSegmentAt 一定是先于磁贴 onClick 执行的(handleTouchEnd 与 frame
-                        // 的 OnClickListener 都是先 selectSegmentAt 再 viewClick/onClick),
-                        // 所以在这里开一个短窗口, 让紧随其后的 setBluetoothEnabled 被吞掉。
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            try {
-                                if (!Boolean.TRUE.equals(sAncLayouts.get(param.thisObject))) return;
-                                if (!isAvailable()) return;
-                                sSuppressBtToggleUntil =
-                                        SystemClock.elapsedRealtime() + BT_TOGGLE_SUPPRESS_MS;
-                            } catch (Throwable t) {
-                                log("anc: segment pre fail: " + t);
-                            }
-                        }
-
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                            try {
-                                if (!Boolean.TRUE.equals(sAncLayouts.get(param.thisObject))) return;
-                                if (!isAvailable()) return;
-                                if (XposedHelpers.getBooleanField(param.thisObject, "isEditMode")) {
-                                    return;
-                                }
-                                State st = sState;
-                                if (st == null) return;
-                                // selectSegmentAt 的参数是**段索引**(0/1/2 = 左/中/右),
-                                // 而 stageOfType 返回的是**段值**(左=2 中=1 右=0), 两者必须经
-                                // STAGE_TO_SLOT 换算后再比较 —— 直接拿索引跟段值比会导致
-                                // "回显选中段"被误判成"用户点了另一段", 从而反复互相下发。
-                                int index = XposedHelpers.getIntField(param.thisObject, "selectedIndex");
-                                if (index < 0 || index > 2) return;
-                                int stage = STAGE_TO_SLOT[index];
-                                if (stage == stageOfType(st.type)) return;
-                                log("anc: segment index=" + index + " stage=" + stage + " -> apply");
-                                applySegment(index);
-                            } catch (Throwable t) {
-                                log("anc: segment fail: " + t);
-                            }
-                        }
-                    });
-            log("HOOK OK OplusQSThreeStageLayout#selectSegmentAt (anc)");
-        } catch (Throwable t) {
-            log("HOOK FAIL OplusQSThreeStageLayout#selectSegmentAt (anc) :: "
-                    + Log.getStackTraceString(t));
-        }
-
-        try {
-            // 3c. 兜底: 蓝牙开关的落点(OplusBluetoothTile#handleClick 正是调它)。
-            //     只要处于抑制窗口内就吞掉, 这样即便 handleClick 那层的拦截因签名/时机问题没生效,
-            //     触摸也不会把蓝牙关掉。
-            XposedHelpers.findAndHookMethod(
-                    XposedHelpers.findClass(CLS_BT_CONTROLLER_IMPL, cl), "setBluetoothEnabled",
-                    boolean.class, new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            try {
-                                if (SystemClock.elapsedRealtime() >= sSuppressBtToggleUntil) return;
-                                sSuppressBtToggleUntil = 0L;
-                                param.setResult(null);
-                                log("anc: bluetooth toggle suppressed");
-                            } catch (Throwable t) {
-                                log("anc: suppress fail: " + t);
-                            }
-                        }
-                    });
-            log("HOOK OK BluetoothControllerImpl#setBluetoothEnabled (anc)");
-        } catch (Throwable t) {
-            log("HOOK FAIL BluetoothControllerImpl#setBluetoothEnabled (anc) :: "
-                    + Log.getStackTraceString(t));
-        }
-
-        try {
-            // 3d. 提示文案: OplusSeparateClickTileManager#onThreeStageChange 按 threeStageMode
-            //     硬编码取"已切换到响铃/振动/静音模式"。对蓝牙磁贴换成降噪模式名。
-            //     这里只记下目标文案, 由下面 show 的 hook 真正替换 —— 因为文案是在方法体内
-            //     从 resources 取的, 中途无法插手。
-            XposedHelpers.findAndHookMethod(
-                    XposedHelpers.findClass(CLS_SEP_CLICK_MANAGER, cl), "onThreeStageChange",
-                    Context.class,
-                    XposedHelpers.findClass("com.android.systemui.plugins.qs.QSTile$State", cl),
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            sPendingToast = null;
-                            try {
-                                Object state = param.args[1];
-                                if (state == null
-                                        || !BT_SPEC.equals(XposedHelpers.getObjectField(state, "spec"))) {
-                                    return;
-                                }
-                                if (!isAvailable()) return;
-                                sPendingToast = ancToastText(
-                                        XposedHelpers.getIntField(state, "threeStageMode"));
-                            } catch (Throwable t) {
-                                log("anc: three stage change fail: " + t);
-                            }
-                        }
-                    });
-            log("HOOK OK OplusSeparateClickTileManager#onThreeStageChange (anc)");
-        } catch (Throwable t) {
-            log("HOOK FAIL OplusSeparateClickTileManager#onThreeStageChange (anc) :: "
-                    + Log.getStackTraceString(t));
-        }
-
-        try {
-            // 3e. 真正替换提示文案。onThreeStageChange 里 show 是最后一步, 中间没有别的 show,
-            //     故上面的 sPendingToast 只会被这一次调用消费掉。
-            XposedHelpers.findAndHookMethod(
-                    XposedHelpers.findClass(CLS_TEMP_INFO_MANAGER, cl), "show",
-                    String.class, String.class, String.class,
-                    XposedHelpers.findClass(CLS_INFO_SHOW_STYLE, cl),
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            String text = sPendingToast;
-                            if (text == null) return;
-                            sPendingToast = null;
-                            param.args[0] = text;
-                            log("anc: toast -> " + text);
-                        }
-                    });
-            log("HOOK OK TemporarilyInfoManager#show (anc)");
-        } catch (Throwable t) {
-            log("HOOK FAIL TemporarilyInfoManager#show (anc) :: " + Log.getStackTraceString(t));
-        }
-
-        try {
             // 4. 音量条图标: 蓝牙路由下音量条底部图标原本是
             //    status_bar_qs_icon_volume_media_bt(_mute) —— 一只耳机, 只反映静音与否。
             //    有可控降噪耳机时换成降噪/通透图标, 反映真实降噪状态。
@@ -479,95 +256,6 @@ public final class AncTileHooks {
             log("HOOK OK volumeIconClickListener#onClick (anc)");
         } catch (Throwable t) {
             log("HOOK FAIL volumeIconClickListener#onClick (anc) :: "
-                    + Log.getStackTraceString(t));
-        }
-
-        try {
-            // 3i. 图标位移减半: 系统三段式切换时给图标加 ±10% 段宽的位移
-            //     (getIconTargetTranslationX: 左段激活时 LTR 返回 +width, 即整体右移)。
-            //     蓝牙磁贴保留这个动效但收敛幅度, 取原值的一半。
-            //     indicator 的位置是 calculateIndicatorTargetX(f), 其内部也叠加了同一个 f,
-            //     故这里改小后滑块会同步收敛, 图标与滑块仍然对齐。
-            XposedHelpers.findAndHookMethod(
-                    XposedHelpers.findClass(CLS_THREE_STAGE_LAYOUT, cl),
-                    "getIconTargetTranslationX", int.class, int.class, new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                            try {
-                                if (!Boolean.TRUE.equals(sAncLayouts.get(param.thisObject))) return;
-                                Object result = param.getResult();
-                                if (!(result instanceof Float)) return;
-                                param.setResult(Float.valueOf(
-                                        ((Float) result).floatValue() * ICON_OFFSET_SCALE));
-                            } catch (Throwable t) {
-                                log("anc: icon translation fail: " + t);
-                            }
-                        }
-                    });
-            log("HOOK OK OplusQSThreeStageLayout#getIconTargetTranslationX (anc)");
-        } catch (Throwable t) {
-            log("HOOK FAIL OplusQSThreeStageLayout#getIconTargetTranslationX (anc) :: "
-                    + Log.getStackTraceString(t));
-        }
-
-        try {
-            // 4. 图标: 三段式布局的图标是响铃/振动/静音, 对蓝牙磁贴换成降噪/关闭/通透。
-            XposedHelpers.findAndHookMethod(
-                    XposedHelpers.findClass(CLS_THREE_STAGE_ICON_VIEW, cl), "setIcon",
-                    XposedHelpers.findClass("com.android.systemui.plugins.qs.QSTile$State", cl),
-                    boolean.class, new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                            try {
-                                Object state = param.args[0];
-                                if (state == null
-                                        || !BT_SPEC.equals(XposedHelpers.getObjectField(state, "spec"))) {
-                                    return;
-                                }
-                                applyAncIcons(param.thisObject);
-                            } catch (Throwable t) {
-                                log("anc: set icon fail: " + t);
-                            }
-                        }
-                    });
-            log("HOOK OK OplusQSThreeStageIconView#setIcon (anc)");
-        } catch (Throwable t) {
-            log("HOOK FAIL OplusQSThreeStageIconView#setIcon (anc) :: "
-                    + Log.getStackTraceString(t));
-        }
-
-        try {
-            // 5. 动画: 三段式切段时会播 ringermode/*.json, 对蓝牙磁贴跳过, 改为直接换图标配色。
-            XposedHelpers.findAndHookMethod(
-                    XposedHelpers.findClass(CLS_THREE_STAGE_LOTTIE, cl), "playLottieAnimation",
-                    ImageView.class, String.class,
-                    XposedHelpers.findClass("com.oplus.systemui.plugins.qs.customize.view.animation.threestage.ThreeStageIconAlphaSpringAnimator", cl),
-                    int.class, int.class, new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            try {
-                                if (!Boolean.TRUE.equals(sAncLottieViews.get(param.thisObject))) return;
-                                View view = (View) param.thisObject;
-                                if (view.getParent() == null) return;
-                                View layout = findThreeStageLayout(view);
-                                if (layout == null) return;
-                                int selected = XposedHelpers.getIntField(layout, "selectedIndex");
-                                int previous = XposedHelpers.getIntField(layout, "preSelectedIndex");
-                                if (previous >= 0 && previous != selected) {
-                                    XposedHelpers.callMethod(layout, "tintIconColor", previous, false);
-                                }
-                                if (selected >= 0) {
-                                    XposedHelpers.callMethod(layout, "tintIconColor", selected, true);
-                                }
-                                param.setResult(Boolean.TRUE);
-                            } catch (Throwable t) {
-                                log("anc: lottie hook fail: " + t);
-                            }
-                        }
-                    });
-            log("HOOK OK OplusQSThreeStageLottieView#playLottieAnimation (anc)");
-        } catch (Throwable t) {
-            log("HOOK FAIL OplusQSThreeStageLottieView#playLottieAnimation (anc) :: "
                     + Log.getStackTraceString(t));
         }
 
@@ -808,8 +496,8 @@ public final class AncTileHooks {
                 current.supports.toArray(new Integer[0])
         };
         return new Object[] {
-                sTileRef.get(), sVolumeIconRef.get(), Boolean.valueOf(sVolumeAboveThreshold),
-                sAncLayouts.keySet().toArray(), sAncLottieViews.keySet().toArray(), state,
+                null, sVolumeIconRef.get(), Boolean.valueOf(sVolumeAboveThreshold),
+                new Object[0], new Object[0], state,
                 sTargetType
         };
     }
@@ -818,19 +506,9 @@ public final class AncTileHooks {
         if (!(saved instanceof Object[])) return;
         Object[] state = (Object[]) saved;
         if (state.length < 5) return;
-        sTileRef = new WeakReference<Object>(state[0]);
+        sTileRef = new WeakReference<Object>(null);
         sVolumeIconRef = new WeakReference<Object>(state[1]);
         if (state[2] instanceof Boolean) sVolumeAboveThreshold = (Boolean) state[2];
-        if (state[3] instanceof Object[]) {
-            for (Object layout : (Object[]) state[3]) {
-                if (layout != null) sAncLayouts.put(layout, Boolean.TRUE);
-            }
-        }
-        if (state[4] instanceof Object[]) {
-            for (Object lottie : (Object[]) state[4]) {
-                if (lottie != null) sAncLottieViews.put(lottie, Boolean.TRUE);
-            }
-        }
         if (state.length > 5 && state[5] instanceof Object[]) {
             Object[] savedState = (Object[]) state[5];
             if (savedState.length >= 4 && savedState[2] instanceof Integer
@@ -900,12 +578,12 @@ public final class AncTileHooks {
         if (sActive && w != null && !w.isShutdown()) w.execute(r);
     }
 
-    /** 拉一次状态, 变化时才通知蓝牙磁贴刷新。 */
+    /** 拉取耳机状态，变化时刷新音量条。 */
     private static void refresh() {
         if (!readBool(KEY_ANC_TILE_ENABLED, false)) {
             if (sState != null) {
                 sState = null;
-                notifyTile();
+                notifyVolumeIcon();
             }
             return;
         }
@@ -919,7 +597,6 @@ public final class AncTileHooks {
             sTargetType = null;
         }
         log("anc: state -> " + describe(st) + " target=" + sTargetType);
-        notifyTile();
         notifyVolumeIcon();
     }
 
@@ -953,21 +630,6 @@ public final class AncTileHooks {
 
     private static String describe(State st) {
         return st == null ? "null" : (st.name + "/" + st.type + "/" + st.supports);
-    }
-
-    private static void notifyTile() {
-        final Object tile = sTileRef.get();
-        if (tile == null) return;
-        sMain.post(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    XposedHelpers.callMethod(tile, "refreshState", (Object) null);
-                } catch (Throwable t) {
-                    log("anc: refresh tile fail: " + t);
-                }
-            }
-        });
     }
 
     /**
@@ -1134,21 +796,14 @@ public final class AncTileHooks {
         refresh();
     }
 
-    /** 主线程刷新受本功能影响的 UI: 音量条图标 + 蓝牙磁贴。 */
+    /** 主线程刷新音量条降噪图标。 */
     private static void postUiRefresh() {
         sMain.post(new Runnable() {
             @Override
             public void run() {
                 Object view = sVolumeIconRef.get();
                 if (view != null) applyVolumeIcon(view);
-                Object tile = sTileRef.get();
-                if (tile != null) {
-                    try {
-                        XposedHelpers.callMethod(tile, "refreshState", (Object) null);
-                    } catch (Throwable t) {
-                        log("anc: refresh tile fail: " + t);
-                    }
-                }
+
             }
         });
     }

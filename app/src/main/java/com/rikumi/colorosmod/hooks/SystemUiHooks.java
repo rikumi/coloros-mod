@@ -53,8 +53,11 @@ public final class SystemUiHooks {
         QsHooks.hookQsPanelSwitchNoCut(lpparam);
         // 合并控制中心时间日期取消展开动画: 始终注入, 运行时按 KEY_QS_CLOCK_NO_EXPAND_ANIM_ENABLED 门控。
         QsHooks.hookQsClockNoExpandAnim(lpparam);
+        FoldIdleMediaHooks.hookFoldIdleMedia(lpparam);
         // Feature 17 — 流体云出现时不隐藏电量百分比: 始终注入, 运行时按 KEY_FLUID_CLOUD_KEEP_PERCENT_ENABLED 门控。
         StatusBarHooks.hookFluidCloudKeepPercent(lpparam);
+        SignalHooks.hookDualSignal(lpparam);
+        StatusBarFontHooks.hookStatusBarFont(lpparam);
         // Feature 18 — 悬浮小窗贴边挂机: 真正的提交逻辑在 system_server(android 作用域), 见 hookFloatWindowEdgeHangSystemServer。
         GestureHooks.hookGestureBarHeight(lpparam);
         GestureHooks.hookGestureBarLongPressDisable(lpparam);
@@ -81,8 +84,7 @@ public final class SystemUiHooks {
         PasswordInputHooks.hookKeyguardSlideInput(lpparam);
         // 支持魅族状态栏歌词: 运行时按 KEY_STATUSBAR_LYRIC_ENABLED 门控。
         StatusBarLyricHooks.hookStatusBarLyric(lpparam);
-        // 控制中心蓝牙磁贴显示降噪控制: 运行时按 KEY_ANC_TILE_ENABLED 门控, 另需当前耳机支持
-        // 降噪/关闭/通透三档; 不满足时蓝牙磁贴保持系统原样。
+        // 音量条显示降噪模式图标，仅修改音量条。
         AncTileHooks.hookAncTile(lpparam);
     }
 }

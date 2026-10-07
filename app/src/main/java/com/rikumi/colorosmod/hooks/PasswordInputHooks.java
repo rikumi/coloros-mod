@@ -219,6 +219,14 @@ public final class PasswordInputHooks {
                                 float x = (Float) param.args[0];
                                 float y = (Float) param.args[1];
                                 int pid = (Integer) param.args[2];
+                                // 移出当前数字键时才开始缩小，包括移向侧键后交还原生处理的情况。
+                                if (action == 1) {
+                                    Object pressed = findPressedCell(kb, pid);
+                                    if (pressed != null && isSlideNumberCell(pressed)
+                                            && findSlideHitCell(kb, x, y) != pressed) {
+                                        slideStartShrink(kb);
+                                    }
+                                }
                                 // 删除(9) / 确定(11) 等侧键保持系统原生点击语义:
                                 // 只要手指正落在侧键上、或当前按下的是侧键, 就完全交还原生处理
                                 // (不 setResult), 否则原生输入路径会被跳过导致点击失效。
@@ -261,6 +269,7 @@ public final class PasswordInputHooks {
     private static final class SlideState {
         float progress;   // 0 = 原尺寸, 1 = 缩到命中区尺寸。
         long pointers;
+        boolean shrinkTriggered;
         ValueAnimator animator;
     }
 
@@ -355,19 +364,29 @@ public final class PasswordInputHooks {
     private static void slidePointerDown(Object kb, int pid) {
         SlideState st = slideState(kb);
         if (pid >= 0 && pid < 64) st.pointers |= (1L << pid);
+    }
+
+    private static void slideStartShrink(Object kb) {
+        SlideState st = slideState(kb);
+        if (st.shrinkTriggered) return;
+        st.shrinkTriggered = true;
         animateSlideShrink(kb, st, 1f);
     }
 
     private static void slidePointerUp(Object kb, int pid) {
         SlideState st = slideState(kb);
         if (pid >= 0 && pid < 64) st.pointers &= ~(1L << pid);
-        if (st.pointers == 0L) animateSlideShrink(kb, st, 0f);
+        if (st.pointers == 0L) {
+            st.shrinkTriggered = false;
+            animateSlideShrink(kb, st, 0f);
+        }
     }
 
     /** 所有手指都失效: 立即取消动画并复位(无需动画, 状态本身已丢弃)。 */
     private static void slideResetPointers(Object kb) {
         SlideState st = slideState(kb);
         st.pointers = 0L;
+        st.shrinkTriggered = false;
         if (st.animator != null) {
             st.animator.cancel();
             st.animator = null;
@@ -455,6 +474,7 @@ public final class PasswordInputHooks {
                             st.animator = null;
                         }
                         st.pointers = 0L;
+                        st.shrinkTriggered = false;
                         st.progress = 0f;
                     } catch (Throwable t) {
                         log("slide_input getEnterAnim error: " + t);

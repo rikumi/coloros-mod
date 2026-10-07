@@ -207,6 +207,8 @@ private val QS: List<SettingsItem> = listOf(
     SwitchItem("qs_panel_switch_no_cut_enabled", "分离版左右平移切换"),
     GroupTitleItem("控制中心设置"),
     SwitchItem("qs_tile_name_ellipsis_enabled", "Wi-Fi / 蓝牙名称单行省略"),
+    SwitchItem("fold_idle_media", "无媒体播放时隐藏播放控件"),
+    SwitchItem("qs_fill_empty", "分离控制中心空缺位置用磁贴补位"),
     SwitchItem("qs_normal_corner_radius_enabled", "OxygenOS 恢复正常圆角"),
     SwitchItem("qs_clock_no_expand_anim_enabled", "合并版时间日期固定单行"),
     SwitchItem("anc_tile_enabled", "音量条显示切换降噪模式图标"),
@@ -218,6 +220,11 @@ private val NOTIF: List<SettingsItem> = listOf(
     SwitchItem("notification_subtitle_enabled", "缩小通知静默区域副标题", sliderKey = "notification_subtitle_sp", sliderMax = 16, sliderDefault = 8, sliderUnit = "sp"),
     SwitchItem("notification_padding_enabled", "增加通知上下内边距", sliderKey = "notification_padding_dp", sliderMax = 8, sliderDefault = 4),
     GroupTitleItem("状态栏设置"),
+    SwitchItem("merge_dual_sim_signal", "合并双卡信号"),
+    SwitchItem("hide_roaming_icon", "隐藏状态栏漫游图标"),
+    SelectItem("signal_network_type_mode", "信号制式文字", listOf("默认显示", "独立显示", "隐藏")),
+    SelectItem("status_bar_clock_font", "状态栏字体", listOf("系统默认", "Inter", "Manrope", "Rubik", "Lato")),
+    SelectItem("status_bar_clock_weight", "状态栏字体字重", listOf("跟随系统", "极细（100）", "纤细（200）", "细体（300）", "常规（400）", "中等（500）", "半粗（600）", "粗体（700）", "特粗（800）", "黑体（900）")),
     SwitchItem("statusbar_lyric_enabled", "状态栏显示歌词", "需播放器支持 MediaSession metadata.lyricInfo ColorOS 歌词能力，暂不支持魅族歌词能力"),
     SwitchItem("statusbar_lyric_avoid_third_party_enabled", "避让第三方状态栏歌词", "开启后状态栏区域存在悬浮窗时隐藏时钟"),
     SwitchItem("fluid_cloud_keep_percent_enabled", "流体云出现时不隐藏电量百分比"),
@@ -260,6 +267,7 @@ private val NAV: List<SettingsItem> = listOf(
     SwitchItem("gesture_bar_width_enabled", "调整手势滑动条宽度", sliderKey = "gesture_bar_width_dp", sliderMax = 120, sliderDefault = 100, sliderUnit = "dp", sliderMin = 80),
     SwitchItem("gesture_bar_long_press_disable_enabled", "禁止手势条动画效果", "理论可解决 OxygenOS 关不掉助手动画的问题"),
     GroupTitleItem("多任务切换"),
+    SwitchItem("power_save_keep_locked_tasks_enabled", "移除省电模式锁定任务限制"),
     SwitchItem("recents_bg_transparent_enabled", "去除多任务界面背景遮罩"),
     SwitchItem("recents_hide_not_running_enabled", "多任务隐藏未在运行的应用"),
     SwitchItem("recents_swipe_up_kill_enabled", "多任务上划彻底结束进程", "修改该设置需重启 Zygote 生效"),
@@ -1127,6 +1135,12 @@ internal fun Context.settingsPrefs(): SharedPreferences {
     // 否则 initial fetch 成功(snapshot={})后迁移会被跳过, 设置永远不生效。
     if (de.all.isEmpty() && migrateLegacyPrefs(this, de)) {
         SettingsProvider.notifySettingsChanged(this)
+    }
+    if (!de.contains("signal_network_type_mode") && de.contains("separate_network_type")) {
+        if (de.edit().putInt("signal_network_type_mode",
+                if (de.getBoolean("separate_network_type", false)) 1 else 0).commit()) {
+            SettingsProvider.notifySettingsChanged(this)
+        }
     }
     return de
 }

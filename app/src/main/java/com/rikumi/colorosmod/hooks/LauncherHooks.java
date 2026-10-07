@@ -160,6 +160,7 @@ public final class LauncherHooks {
 
     /** Refresh Launcher after the first settings snapshot or a relevant change. */
     public static void onSettingsSnapshotPublished(java.util.Map<String, Integer> settings) {
+        refreshPowerSaveTaskLocks(settingValue(settings, KEY_POWER_SAVE_KEEP_LOCKED_TASKS_ENABLED) == 1);
         if (!sModelReloadActive) return;
         int contacts = settingValue(settings, KEY_HIDE_CONTACTS_ENABLED);
         int gboard = settingValue(settings, KEY_HIDE_GBOARD_ENABLED);
@@ -762,6 +763,8 @@ public final class LauncherHooks {
     }
 
     public static void cleanupForHotReload() {
+        sLastPowerSaveTaskLockEnabled = null;
+        new android.os.Handler(android.os.Looper.getMainLooper()).removeCallbacksAndMessages(sPowerSaveTaskLockToken);
         // 在主线程执行: 置 false 后再移除队列, 保证旧 generation 不会再调用 forceReload。
         sModelReloadActive = false;
         new android.os.Handler(android.os.Looper.getMainLooper())
@@ -869,9 +872,73 @@ public final class LauncherHooks {
         }
     }
 
+    private static final Object sPowerSaveTaskLockToken = new Object();
+    private static volatile Boolean sLastPowerSaveTaskLockEnabled;
+
+    private static void hookPowerSaveTaskLocks(XC_LoadPackage.LoadPackageParam pkg) {
+        try {
+            Class<?> manager = XposedHelpers.findClass("com.oplus.quickstep.applock.OplusLockManager", pkg.classLoader);
+            Class<?> modelType = XposedHelpers.findClass("com.oplus.quickstep.applock.AppLockModel", pkg.classLoader);
+            XposedHelpers.findAndHookMethod(modelType, "setIsVirtualizeLockData", boolean.class, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    // 此处已进入 SynchronizeInvocationHandler 的串行写入路径，不访问 Provider。
+                    if (!readBoolCached(KEY_POWER_SAVE_KEEP_LOCKED_TASKS_ENABLED, false)) return;
+                    p.args[0] = false;
+                    if (!XposedHelpers.getBooleanField(p.thisObject, "isVirtual")) {
+                        java.util.Map<?, ?> locks = (java.util.Map<?, ?>) XposedHelpers.callMethod(p.thisObject, "getAppLockInfoMap");
+                        for (Object info : locks.values()) {
+                            if (Boolean.TRUE.equals(XposedHelpers.callMethod(info, "isVirtualLock"))) {
+                                // 使原生 setter 一并恢复冷启动时载入的虚拟锁定缓存。
+                                XposedHelpers.setBooleanField(p.thisObject, "isVirtual", true);
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+            XposedHelpers.findAndHookMethod(manager, "updateLowPowerMode", new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (!readBool(KEY_POWER_SAVE_KEEP_LOCKED_TASKS_ENABLED, false)) return;
+                    // 仅屏蔽任务锁定模块的省电限制，继续向 AMS 发布真实锁定列表。
+                    Object model = XposedHelpers.callMethod(p.thisObject, "getAppLockModel");
+                    if (model != null) XposedHelpers.callMethod(model, "setIsVirtualizeLockData", false);
+                    XposedHelpers.setBooleanField(p.thisObject, "isLowPowerModCurrently", false);
+                    p.setResult(null);
+                }
+            });
+            XposedHelpers.findAndHookMethod(manager, "canLockApp", String.class, String.class,
+                    android.content.Intent.class, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            if (readBool(KEY_POWER_SAVE_KEEP_LOCKED_TASKS_ENABLED, false))
+                                XposedHelpers.setBooleanField(p.thisObject, "isLowPowerModCurrently", false);
+                        }
+                    });
+            refreshPowerSaveTaskLocks(readBoolCached(KEY_POWER_SAVE_KEEP_LOCKED_TASKS_ENABLED, false));
+        } catch (Throwable t) { log("launcher power-save task lock hook failed: " + t); }
+    }
+
+    private static void refreshPowerSaveTaskLocks(boolean enabled) {
+        ClassLoader loader = sLauncherClassLoader;
+        if (loader == null || Boolean.valueOf(enabled).equals(sLastPowerSaveTaskLockEnabled)) return;
+        sLastPowerSaveTaskLockEnabled = enabled;
+        android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+        main.removeCallbacksAndMessages(sPowerSaveTaskLockToken);
+        main.postAtTime(() -> {
+            if (sLauncherClassLoader != loader) return;
+            try {
+                Class<?> type = XposedHelpers.findClass("com.oplus.quickstep.applock.OplusLockManager", loader);
+                Object manager = XposedHelpers.callStaticMethod(type, "getInstance");
+                XposedHelpers.callMethod(manager, "updateLowPowerMode");
+                Object companion = XposedHelpers.getStaticObjectField(type, "INSTANCE");
+                XposedHelpers.callMethod(companion, "notifyLockViewUiUpdate");
+            } catch (Throwable t) { log("launcher power-save task lock refresh failed: " + t); }
+        }, sPowerSaveTaskLockToken, android.os.SystemClock.uptimeMillis());
+    }
+
     public static void hookLauncher(final XC_LoadPackage.LoadPackageParam lpparam) {
         log(">>> matched launcher, classLoader=" + lpparam.classLoader);
         sLauncherClassLoader = lpparam.classLoader;
+        hookPowerSaveTaskLocks(lpparam);
         float density = readDensity();
 
         // Feature 12 — 缩小长按菜单: 在 launcher 进程内拦截 Resources.getDimension*, 对菜单 dimen 缩放。
