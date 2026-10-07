@@ -27,6 +27,7 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
  * 控制中心(Quick Settings)相关的 SystemUI hook。
  */
 public final class QsHooks {
+    private static final java.util.WeakHashMap<Object, Boolean> nameHosts = new java.util.WeakHashMap<>();
     // 经典(合并)控制中心: 隐藏运营商名。OplusQuickStatusBarHeader#onFinishInflate 中
     // R.id.qs_carrier_text(位于 qs_clock_container 内) / R.id.carrier_group 显示运营商名, 直接 GONE。
     // 不再 hook 分离模式的 SeparateQSFakeStatusController, 以免与经典模式叠加。
@@ -553,6 +554,7 @@ public final class QsHooks {
                             @Override
                             protected void afterHookedMethod(MethodHookParam param) {
                                 try {
+                                    nameHosts.put(param.thisObject, true);
                                     if (!readBool(KEY_QS_TILE_NAME_ELLIPSIS_ENABLED, false)) return;
                                     for (String f : labelFields) {
                                         Object v = XposedHelpers.getObjectField(param.thisObject, f);
@@ -582,6 +584,7 @@ public final class QsHooks {
                                 Object state = param.args[0];
                                 String spec = (String) XposedHelpers.getObjectField(state, "spec");
                                 if (!"wifi".equals(spec) && !"bt".equals(spec)) return;
+                                nameHosts.put(param.thisObject, true);
                                 Object label = XposedHelpers.getObjectField(param.thisObject, "mLabel");
                                 forceSingleLineEllipsis(label);
                             } catch (Throwable ignored) {
@@ -592,6 +595,85 @@ public final class QsHooks {
         } catch (Throwable t) {
             log("HOOK FAIL " + stdCls + "#handleStateChanged :: " + Log.getStackTraceString(t));
         }
+        // 合并版下方普通磁贴走另一条渲染链路，测量时还会重新决定名称的行数。
+        final String normalCls = "com.oplus.systemui.qs.tileimpl.OplusQSTileViewImpl";
+        java.util.function.Consumer<Object> applyNormalLabel = tile -> {
+            if (!readBool(KEY_QS_TILE_NAME_ELLIPSIS_ENABLED, false)) return;
+            Object state = XposedHelpers.getObjectField(tile, "mTempState");
+            if (state == null) return;
+            String spec = (String) XposedHelpers.getObjectField(state, "spec");
+            if (!"wifi".equals(spec) && !"bt".equals(spec)) return;
+            nameHosts.put(tile, true);
+            forceSingleLineEllipsis(XposedHelpers.getObjectField(tile, "mLabel"));
+            forceSingleLineEllipsis(XposedHelpers.getObjectField(tile, "mSecondLine"));
+        };
+        try {
+            XposedHelpers.findAndHookMethod(normalCls, lpparam.classLoader, "handleStateChanged",
+                    "com.android.systemui.plugins.qs.QSTile$State", new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam param) {
+                            applyNormalLabel.accept(param.thisObject);
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(normalCls, lpparam.classLoader, "updateLabelTextLine", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam param) { applyNormalLabel.accept(param.thisObject); }
+            });
+        } catch (Throwable t) {
+            log("HOOK FAIL " + normalCls + " tile name ellipsis :: " + Log.getStackTraceString(t));
+        }
+        // 热重载不会重建原生磁贴或重新发送状态；每轮测量从磁贴保留的系统状态恢复。
+        for (String tileClass : new String[]{normalCls, cls}) {
+            try {
+                XposedHelpers.findAndHookDeclaredMethod(tileClass, lpparam.classLoader, "onMeasure", int.class, int.class, new XC_MethodHook() {
+                    @Override protected void beforeHookedMethod(MethodHookParam p) { applyExistingNameTile(p.thisObject); }
+                    @Override protected void afterHookedMethod(MethodHookParam p) { applyExistingNameTile(p.thisObject); }
+                });
+            } catch (Throwable t) { log("tile ellipsis measure hook failed: " + tileClass + " " + t); }
+        }
+
+    }
+
+    public static Object captureHotReloadNames() { return new java.util.ArrayList<>(nameHosts.keySet()); }
+    public static void restoreHotReloadNames(Object state) {
+        if (state instanceof Iterable<?> tiles) for (Object tile : tiles) if (tile != null) {
+            nameHosts.put(tile, true);
+            applyExistingNameTile(tile);
+            if (tile instanceof View view) view.requestLayout();
+        }
+    }
+
+    public static void restoreNamesInRoots(Object state) {
+        if (state instanceof Iterable<?> roots) for (Object root : roots) if (root instanceof View view) restoreNamesInView(view);
+    }
+    private static void restoreNamesInView(View view) {
+        String name = view.getClass().getName();
+        if (name.contains("OplusQSTileViewImpl") || name.contains("OplusQSHighlightTileView") || name.contains("OplusQSResizeableTileViewTwoXOne"))
+            applyExistingNameTile(view);
+        if (view instanceof android.view.ViewGroup group)
+            for (int i = 0; i < group.getChildCount(); i++) restoreNamesInView(group.getChildAt(i));
+    }
+
+    private static void applyExistingNameTile(Object tile) {
+        if (!readBool(KEY_QS_TILE_NAME_ELLIPSIS_ENABLED, false)) return;
+        try {
+            if (tile.getClass().getName().contains("Resizeable")) {
+                Object state = XposedHelpers.callMethod(tile, "getTileState");
+                if (!wifiOrBluetooth(state)) return;
+                nameHosts.put(tile, true);
+                forceSingleLineEllipsis(XposedHelpers.getObjectField(tile, "labelTitle"));
+                forceSingleLineEllipsis(XposedHelpers.getObjectField(tile, "labelDesc"));
+            } else {
+                if (!wifiOrBluetooth(XposedHelpers.getObjectField(tile, "mTempState"))) return;
+                nameHosts.put(tile, true);
+                forceSingleLineEllipsis(XposedHelpers.getObjectField(tile, "mLabel"));
+                if (tile.getClass().getName().contains("OplusQSTileViewImpl"))
+                    forceSingleLineEllipsis(XposedHelpers.getObjectField(tile, "mSecondLine"));
+            }
+        } catch (Throwable ignored) { }
+    }
+    private static boolean wifiOrBluetooth(Object state) {
+        if (state == null) return false;
+        Object spec = XposedHelpers.getObjectField(state, "spec");
+        return "wifi".equals(spec) || "bt".equals(spec);
     }
 
     // 控制中心 Wi-Fi / 蓝牙 / 音量 / 亮度 的圆角。
@@ -611,10 +693,12 @@ public final class QsHooks {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
-                                if (!readBool(KEY_QS_NORMAL_CORNER_RADIUS_ENABLED, false)) return;
-                                Float px = resolveQsCornerRadiusPx(param.thisObject);
-                                if (px == null) return;
-                                param.args[0] = px;
+                                if (readBool(KEY_QS_NORMAL_CORNER_RADIUS_ENABLED, false)) {
+                                    Float px = resolveQsCornerRadiusPx(param.thisObject);
+                                    if (px != null) param.args[0] = px;
+                                }
+                                if (param.thisObject instanceof View view)
+                                    param.args[0] = MergedCardRatioHooks.scaleRadius(view, (Float) param.args[0]);
                             } catch (Throwable t) {
                                 log("qs_radius slider fail: " + t);
                             }
@@ -777,9 +861,8 @@ public final class QsHooks {
     }
 
     static void applyEllipsis(TextView tv) {
-        tv.setSingleLine(true);
-        tv.setMaxLines(1);
-        tv.setEllipsize(TextUtils.TruncateAt.END);
+        if (tv.getMaxLines() != 1) { tv.setSingleLine(true); tv.setMaxLines(1); }
+        if (tv.getEllipsize() != TextUtils.TruncateAt.END) tv.setEllipsize(TextUtils.TruncateAt.END);
         tv.setHorizontallyScrolling(false); // 关闭横向滚动/跑马灯, 仅静态行尾省略
     }
 

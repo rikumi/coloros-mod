@@ -5,14 +5,18 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.util.Log;
 
+import com.rikumi.colorosmod.hooks.QsHooks;
 import com.rikumi.colorosmod.hooks.GestureHooks;
 import com.rikumi.colorosmod.hooks.AncTileHooks;
 import com.rikumi.colorosmod.hooks.NotificationHooks;
+import com.rikumi.colorosmod.hooks.NotificationOutlineHooks;
+import com.rikumi.colorosmod.hooks.ActiveTileOutlineHooks;
 import com.rikumi.colorosmod.hooks.PasswordInputHooks;
 import com.rikumi.colorosmod.hooks.StatusBarLyricHooks;
 import com.rikumi.colorosmod.hooks.SignalHooks;
 import com.rikumi.colorosmod.hooks.FoldIdleMediaHooks;
 import com.rikumi.colorosmod.hooks.StatusBarFontHooks;
+import com.rikumi.colorosmod.hooks.MergedCardRatioHooks;
 import com.rikumi.colorosmod.hooks.LauncherHooks;
 import com.rikumi.colorosmod.hooks.KeyguardHooks;
 import com.rikumi.colorosmod.hooks.MediaProviderHooks;
@@ -166,6 +170,10 @@ public class XposedInit extends XposedModule {
     // 命中时把高亮磁贴(Wi-Fi/蓝牙)与滑条(音量/亮度)的圆角换成
     // R.dimen.qs_hl_tile_corner_radius_circle_oneplus(60dp), 其余用 qs_hl_tile_corner_radius_circle(16dp)。
     // 开关开启时统一强制到 QS_CORNER_RADIUS_DIMEN 指定的那一档(合并式与分离式都生效)。
+    public static final String KEY_QS_ACTIVE_OUTLINE_ENABLED = "qs_active_outline_enabled";
+    public static final String KEY_QS_ACTIVE_COLOR_ENABLED = "qs_active_color_enabled";
+    public static final String KEY_QS_ACTIVE_COLOR = "qs_active_color";
+    public static final String KEY_NOTIFICATION_OUTLINE_ENABLED = "notification_outline_enabled";
     public static final String KEY_QS_NORMAL_CORNER_RADIUS_ENABLED = "qs_normal_corner_radius_enabled";
     // 分离版控制中心左右切换取消切入效果: 通知中心/控制中心之间左右滑动时直接平移而非切变。
     public static final String KEY_QS_PANEL_SWITCH_NO_CUT_ENABLED = "qs_panel_switch_no_cut_enabled";
@@ -186,6 +194,10 @@ public class XposedInit extends XposedModule {
     public static final String KEY_FLUID_CLOUD_KEEP_PERCENT_ENABLED = "fluid_cloud_keep_percent_enabled";
     public static final String KEY_MERGE_DUAL_SIGNAL = "merge_dual_sim_signal";
     public static final String KEY_FOLD_IDLE_MEDIA = "fold_idle_media";
+    public static final String KEY_QS_MERGED_GAP_PERCENT_TENTHS = "qs_merged_gap_percent_tenths";
+    public static final String KEY_QS_MERGED_FOUR_COLUMNS = "qs_merged_four_columns";
+    public static final String KEY_QS_MERGED_GAP_ENABLED = "qs_merged_gap_enabled";
+    public static final String KEY_QS_MERGED_CARD_RATIO = "qs_merged_card_ratio";
     public static final String KEY_QS_FILL_EMPTY = "qs_fill_empty";
     public static final String KEY_SEPARATE_NETWORK_TYPE = "separate_network_type";
     public static final String KEY_HIDE_ROAMING_ICON = "hide_roaming_icon";
@@ -523,6 +535,9 @@ public class XposedInit extends XposedModule {
             SignalHooks.onSettingsSnapshotPublished();
             FoldIdleMediaHooks.refresh();
             StatusBarFontHooks.refresh();
+            MergedCardRatioHooks.refresh();
+            ActiveTileOutlineHooks.refresh();
+            NotificationOutlineHooks.refresh();
         }
         if (first) {
             synchronized (sLoadLock) {
@@ -736,6 +751,8 @@ public class XposedInit extends XposedModule {
             catch (Throwable t) { log("lyric hot reload cleanup failed: " + t); }
             try { NotificationHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("notification hot reload cleanup failed: " + t); }
+            try { NotificationOutlineHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("notification outline hot reload cleanup failed: " + t); }
             try { GestureHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("gesture hot reload cleanup failed: " + t); }
             try { PasswordInputHooks.cleanupForHotReload(); }
@@ -744,6 +761,8 @@ public class XposedInit extends XposedModule {
             catch (Throwable t) { log("signal hot reload cleanup failed: " + t); }
             try { FoldIdleMediaHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("fold media hot reload cleanup failed: " + t); }
+            try { MergedCardRatioHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("merged card ratio cleanup failed: " + t); }
             try { StatusBarFontHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("status font hot reload cleanup failed: " + t); }
             try { KeyguardHooks.cleanupForHotReload(); }
@@ -847,7 +866,7 @@ public class XposedInit extends XposedModule {
             return false;
         }
         try {
-            Object[] state = new Object[13];
+            Object[] state = new Object[15];
             state[0] = StatusBarLyricHooks.captureHotReloadHost();
             state[1] = NotificationHooks.captureHotReloadHost();
             state[2] = SystemServerHooks.captureHotReloadHost();
@@ -861,6 +880,8 @@ public class XposedInit extends XposedModule {
             state[10] = SignalHooks.captureHotReloadHosts();
             state[11] = FoldIdleMediaHooks.captureHotReloadHosts();
             state[12] = StatusBarFontHooks.captureHotReloadHosts();
+            state[13] = MergedCardRatioHooks.captureHotReloadHosts();
+            state[14] = QsHooks.captureHotReloadNames();
             param.setSavedInstanceState(state);
         } catch (Throwable t) {
             cancelProcessPreflight();
@@ -1023,7 +1044,10 @@ public class XposedInit extends XposedModule {
                             log("onHotReloaded: restore fold media hosts failed: " + t);
                         }
                         try {
+                            if (state.length > 13) MergedCardRatioHooks.restoreHotReloadHosts(state[13]);
                             if (state.length > 12) StatusBarFontHooks.restoreHotReloadHosts(state[12]);
+                            if (state.length > 14) QsHooks.restoreHotReloadNames(state[14]);
+                            if (state.length > 13) QsHooks.restoreNamesInRoots(state[13]);
                         } catch (Throwable t) {
                             log("onHotReloaded: restore status font hosts failed: " + t);
                         }

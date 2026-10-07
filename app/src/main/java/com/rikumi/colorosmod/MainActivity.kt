@@ -1,5 +1,6 @@
 package com.rikumi.colorosmod
 
+import androidx.compose.ui.graphics.toArgb
 import android.content.ComponentName
 import android.content.Context
 import android.content.SharedPreferences
@@ -95,6 +96,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        restoreRemovedThemeColor(this)
         if (listenerRegistered.compareAndSet(false, true)) {
             XposedServiceHelper.registerListener(object : XposedServiceHelper.OnServiceListener {
                 override fun onServiceBind(service: XposedService) { xposedServices.add(service) }
@@ -158,6 +160,7 @@ internal data class SwitchItem(
     val sliderStep: Int = 1,
     val sliderDisplayScale: Float = 1f,
     val rootBacked: Boolean = false,
+    val colorKey: String? = null,
 ) : SettingsItem
 
 // MediaProvider 默认目录屏蔽项。它不参与分类/全局主开关，只保存用户选择；开启时仅尝试
@@ -212,9 +215,16 @@ private val QS: List<SettingsItem> = listOf(
     SwitchItem("qs_normal_corner_radius_enabled", "OxygenOS 恢复正常圆角"),
     SwitchItem("qs_clock_no_expand_anim_enabled", "合并版时间日期固定单行"),
     SwitchItem("anc_tile_enabled", "音量条显示切换降噪模式图标"),
+    GroupTitleItem("合并控制中心现代化"),
+    SwitchItem("qs_merged_card_ratio", "合并通控中心保持宽高比例"),
+    SwitchItem("qs_merged_gap_enabled", "调整合并控制中心栏间距", sliderKey = "qs_merged_gap_percent_tenths", sliderMin = 40, sliderMax = 60, sliderStep = 5, sliderDefault = 50, sliderDisplayScale = 0.1f, sliderUnit = "%"),
+    SwitchItem("qs_merged_four_columns", "合并通控中心磁贴改为四列"),
+    SwitchItem("qs_active_outline_enabled", "允许激活态叠加轮廓光"),
+    SwitchItem("qs_active_color_enabled", "自定义控制中心激活态颜色", colorKey = "qs_active_color"),
 )
 private val NOTIF: List<SettingsItem> = listOf(
     GroupTitleItem("通知中心设置"),
+    SwitchItem("notification_outline_enabled", "通知支持轮廓光效"),
     SwitchItem("notification_swipe_to_dismiss_enabled", "通知左滑直接清除"),
     SwitchItem("notification_pull_expand_enabled", "通知下滑展开"),
     SwitchItem("notification_subtitle_enabled", "缩小通知静默区域副标题", sliderKey = "notification_subtitle_sp", sliderMax = 16, sliderDefault = 8, sliderUnit = "sp"),
@@ -312,7 +322,7 @@ private data class Category(
 // 首页分组: 每组一张卡片。锁屏紧随通知中心, 其余三个另开一组。
 private val CATEGORY_GROUPS: List<List<Category>> = listOf(
     listOf(
-        Category("desktop", "桌面", MiuixIcons.GridView, DESKTOP),
+        Category("desktop", "桌面设置", MiuixIcons.GridView, DESKTOP),
         Category("quick_settings", "控制中心", MiuixIcons.Tune, QS),
         Category("notification", "通知中心与状态栏", MiuixIcons.Community, NOTIF),
         Category("lockscreen", "锁屏", MiuixIcons.Lock, LOCKSCREEN),
@@ -1271,7 +1281,7 @@ private fun softRebootSystem(ctx: Context) {
 // 读取 ColorOS 主题色。SystemUI 在 OpUtils#getThemeAccentColor 里 resolve R.attr.couiColorPrimary
 // 并落盘到 Settings.Secure["sysui_type_accent_color"], 直接读该 key 即可(与莫奈动态色是两套体系)。
 // 兜底退而读 theme_customization_overlay_packages JSON 里的 accent_color / system_palette。
-private fun colorOSAccentColor(context: Context, fallback: Long): Color {
+internal fun colorOSAccentColor(context: Context, fallback: Long): Color {
     return try {
         // 首选: SystemUI 计算并缓存的 ColorOS 主题色。
         val accent = Settings.Secure.getString(context.contentResolver, "sysui_type_accent_color")

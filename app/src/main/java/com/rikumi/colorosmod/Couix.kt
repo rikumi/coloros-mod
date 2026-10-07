@@ -1,5 +1,8 @@
 package com.rikumi.colorosmod
 
+import androidx.compose.ui.graphics.toArgb
+import top.yukonga.miuix.kmp.basic.ColorPalette
+import top.yukonga.miuix.kmp.basic.TextButton
 import android.app.Activity
 import android.content.Context
 import android.content.SharedPreferences
@@ -1623,6 +1626,64 @@ private fun CouixSwitchRow(
             }
         }
     }
+    if (item.colorKey != null) {
+        val colorKey = item.colorKey
+        val defaultColor = colorOSAccentColor(ctx, 0xFF00B4D8).toArgb()
+        var selected by remember(colorKey, version) { mutableStateOf(Color(prefs.getInt(colorKey, defaultColor))) }
+        var hex by remember(colorKey, version) { mutableStateOf(selected.toArgb().toUInt().toString(16).padStart(8, '0').uppercase()) }
+        var expanded by remember(item.key) { mutableStateOf(false) }
+        Column {
+            CouixSwitchPreference(
+                checked = checked,
+                onCheckedChange = {
+                    checked = it
+                    expanded = it
+                    setInt(ctx, colorKey, selected.toArgb())
+                    setBool(ctx, item.key, it)
+                    onItemChanged()
+                },
+                title = item.label,
+                onTitleClick = if (checked) ({ expanded = !expanded }) else null,
+                leftTrailingContent = { if (checked) Box(Modifier.size(22.dp).clip(RoundedCornerShape(6.dp)).background(selected)) },
+            )
+            AnimatedVisibility(visible = checked && expanded) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = COUIX_ROW_HPADDING, vertical = COUIX_ROW_VPADDING)) {
+                    ColorPalette(color = selected, onColorChanged = {
+                        selected = it
+                        hex = it.toArgb().toUInt().toString(16).padStart(8, '0').uppercase()
+                    })
+                    top.yukonga.miuix.kmp.basic.TextField(
+                        value = hex,
+                        onValueChange = { value ->
+                            hex = value.removePrefix("#").filter { it in "0123456789abcdefABCDEF" }.take(8).uppercase()
+                            if (hex.length == 6 || hex.length == 8) {
+                                val argb = hex.toLong(16) or (if (hex.length == 6) 0xff000000L else 0L)
+                                selected = Color(argb.toInt())
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        label = "ARGB / RGB",
+                        singleLine = true,
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(text = "取消", modifier = Modifier.weight(1f), onClick = {
+                            selected = Color(prefs.getInt(colorKey, defaultColor))
+                            hex = selected.toArgb().toUInt().toString(16).padStart(8, '0').uppercase()
+                            expanded = false
+                        })
+                        TextButton(text = "确认", modifier = Modifier.weight(1f), onClick = {
+                            if (hex.length == 6 || hex.length == 8) {
+                                setInt(ctx, colorKey, selected.toArgb())
+                                expanded = false
+                                onItemChanged()
+                            } else android.widget.Toast.makeText(ctx, "请输入六位或八位十六进制颜色值", android.widget.Toast.LENGTH_SHORT).show()
+                        })
+                    }
+                }
+            }
+        }
+        return
+    }
     if (item.sliderKey == null) {
         CouixSwitchPreference(
             checked = checked,
@@ -1678,7 +1739,7 @@ private fun CouixSwitchRow(
                         text = if (item.sliderDisplayScale == 1f) {
                             "${intVal}${item.sliderUnit}"
                         } else {
-                            String.format(java.util.Locale.US, "%.2f%s", intVal * item.sliderDisplayScale, item.sliderUnit)
+                            String.format(java.util.Locale.US, if (item.sliderDisplayScale >= 0.1f) "%.1f%s" else "%.2f%s", intVal * item.sliderDisplayScale, item.sliderUnit)
                         },
                         style = MiuixTheme.textStyles.body2.copy(
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,

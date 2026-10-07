@@ -54,6 +54,9 @@ public final class SystemUiHooks {
         // 合并控制中心时间日期取消展开动画: 始终注入, 运行时按 KEY_QS_CLOCK_NO_EXPAND_ANIM_ENABLED 门控。
         QsHooks.hookQsClockNoExpandAnim(lpparam);
         FoldIdleMediaHooks.hookFoldIdleMedia(lpparam);
+        MergedCardRatioHooks.hook(lpparam);
+        ActiveTileOutlineHooks.hook(lpparam);
+        NotificationOutlineHooks.hook(lpparam);
         // Feature 17 — 流体云出现时不隐藏电量百分比: 始终注入, 运行时按 KEY_FLUID_CLOUD_KEEP_PERCENT_ENABLED 门控。
         StatusBarHooks.hookFluidCloudKeepPercent(lpparam);
         SignalHooks.hookDualSignal(lpparam);
