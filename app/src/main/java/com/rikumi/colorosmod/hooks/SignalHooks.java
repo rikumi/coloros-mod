@@ -269,9 +269,6 @@ public final class SignalHooks {
             first.second = second;
             second.primary = first;
             second.group.setAlpha(0f);
-            int comboWidth = Math.max(first.requiredComboWidth(), second.requiredComboWidth());
-            first.setComboWidth(comboWidth);
-            second.setComboWidth(comboWidth);
         }
         for (int i = 0; i < container.getChildCount(); i++) {
             Mobile mobile = mobiles.get(container.getChildAt(i));
@@ -328,6 +325,18 @@ public final class SignalHooks {
                 mobile.inout.setTranslationX(mobile.inoutTranslationX
                         + (networkMode != 0 ? 3 * density(mobile.root) : 0));
             }
+        }
+        if (enabled && visible.size() == 2) {
+            Mobile first = visible.get(0), second = visible.get(1);
+            boolean hasType = networkMode == 0
+                    ? first.typeVisibility == View.VISIBLE || second.typeVisibility == View.VISIBLE
+                    : networkMode == 1 && first.label != null && first.label.getVisibility() == View.VISIBLE;
+            boolean hasActivity = first.inout != null && first.inout.getVisibility() == View.VISIBLE
+                    || second.inout != null && second.inout.getVisibility() == View.VISIBLE;
+            int width = Math.max(first.requiredComboWidth(hasType, hasActivity),
+                    second.requiredComboWidth(hasType, hasActivity));
+            first.setComboWidth(width);
+            second.setComboWidth(width);
         }
     }
 
@@ -672,6 +681,7 @@ public final class SignalHooks {
         final ViewGroup combo;
         final int originalComboMinWidth;
         int reservedComboWidth;
+        boolean reservedTypeSlot, reservedActivitySlot;
         final View.OnLayoutChangeListener layoutListener;
         int roamingVisibility, roamingSpaceVisibility;
         final ImageView signal, type, inout;
@@ -705,12 +715,21 @@ public final class SignalHooks {
             groupAlpha = group.getAlpha();
         }
 
-        int requiredComboWidth() {
+        int requiredComboWidth(boolean includeType, boolean includeActivity) {
             if (combo == null) return 0;
+            if (reservedTypeSlot != includeType || reservedActivitySlot != includeActivity) {
+                reservedTypeSlot = includeType;
+                reservedActivitySlot = includeActivity;
+                reservedComboWidth = 0;
+            }
             int width = originalComboMinWidth;
-            // FrameLayout 取子项最大宽度；GONE 子项也按其原生资源尺寸保留占位。
+            // 仅保留双卡中实际使用的附加元素占位，避免 GONE 箭头的旧宽度留下空白。
             for (int i = 0; i < combo.getChildCount(); i++) {
                 View child = combo.getChildAt(i);
+                // 无制式显示时不保留其资源宽度，否则 Wi-Fi 等状态会留下额外空白。
+                if (child == type && !includeType || child == inout && !includeActivity) continue;
+                // 合并漫游标记已由外部 R1/R2 文字显示，不保留原生漫游图标占位。
+                if (child == roaming) continue;
                 ViewGroup.LayoutParams params = child.getLayoutParams();
                 int childWidth = Math.max(child.getMeasuredWidth(), child.getMinimumWidth());
                 if (params.width >= 0) childWidth = params.width;
