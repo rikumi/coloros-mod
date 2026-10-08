@@ -144,7 +144,7 @@ internal sealed interface SettingsItem
 
 // 分组小标题: 表示其后(到下一个 GroupTitleItem 或列表末尾)的 SwitchItem 开启一个新分组,
 // 可放在其它 item 之间或首个 item 前面。title 为空字符串表示仅分隔不显示标题。
-internal data class GroupTitleItem(val title: String) : SettingsItem
+internal data class GroupTitleItem(val title: String, val titleRes: Int = 0) : SettingsItem
 
 // 单个设置项: key 用于持久化与 Xposed 读取, label 取自原 strings.xml 中的名称。sliderKey 非空时
 // 开关打开后下方显示滑条(范围 0..sliderMax 整数步进, 默认 sliderDefault, sliderUnit 为值后缀)。
@@ -161,6 +161,7 @@ internal data class SwitchItem(
     val sliderDisplayScale: Float = 1f,
     val rootBacked: Boolean = false,
     val colorKey: String? = null,
+    val labelRes: Int = 0,
 ) : SettingsItem
 
 // MediaProvider 默认目录屏蔽项。它不参与分类/全局主开关，只保存用户选择；开启时仅尝试
@@ -217,18 +218,18 @@ private val QS: List<SettingsItem> = listOf(
     SwitchItem("qs_normal_corner_radius_enabled", "OxygenOS 恢复正常圆角"),
     SwitchItem("qs_clock_no_expand_anim_enabled", "合并版时间日期固定单行"),
     SwitchItem("anc_tile_enabled", "音量条显示切换降噪模式图标"),
-    GroupTitleItem("合并控制中心现代化"),
-    SwitchItem("qs_merged_hollow", "合并通控中心前两磁贴采用空心激活态"),
-    SwitchItem("qs_merged_radiant", "合并通控中心开启全新焕彩样式"),
-    SwitchItem("qs_merged_card_ratio", "合并通控中心保持宽高比例"),
-    SwitchItem("qs_merged_gap_enabled", "调整合并控制中心栏间距", sliderKey = "qs_merged_gap_percent_tenths", sliderMin = 40, sliderMax = 60, sliderStep = 5, sliderDefault = 50, sliderDisplayScale = 0.1f, sliderUnit = "%"),
-    SwitchItem("qs_merged_four_columns", "合并通控中心磁贴改为四列"),
-    SwitchItem("qs_merged_settings_rotation", "合并通控中心设置按钮旋转"),
-    SwitchItem("qs_merged_tile_scale_animation", "合并通控中心修复磁贴区缩放动画"),
-    SwitchItem("qs_merged_tile_clip_animation", "合并通控中心修复二次下拉动画裁切"),
-    SwitchItem("qs_merged_two_finger_expand", "合并通控中心允许双指下拉直接展开"),
-    SwitchItem("qs_active_outline_enabled", "允许激活态叠加轮廓光"),
-    SwitchItem("qs_active_color_enabled", "自定义控制中心激活态颜色", colorKey = "qs_active_color"),
+    GroupTitleItem("合并控制中心现代化", R.string.qs_merged_modernization),
+    SwitchItem("qs_merged_hollow", "合并通控中心前两磁贴采用空心激活态", labelRes = R.string.qs_merged_hollow),
+    SwitchItem("qs_merged_radiant", "合并通控中心开启全新焕彩样式", labelRes = R.string.qs_merged_radiant),
+    SwitchItem("qs_merged_card_ratio", "合并通控中心保持宽高比例", labelRes = R.string.qs_merged_card_ratio),
+    SwitchItem("qs_merged_gap_enabled", "调整合并控制中心栏间距", sliderKey = "qs_merged_gap_percent_tenths", sliderMin = 40, sliderMax = 60, sliderStep = 5, sliderDefault = 50, sliderDisplayScale = 0.1f, sliderUnit = "%", labelRes = R.string.qs_merged_gap_enabled),
+    SwitchItem("qs_merged_four_columns", "合并通控中心磁贴改为四列", labelRes = R.string.qs_merged_four_columns),
+    SwitchItem("qs_merged_settings_rotation", "合并通控中心设置按钮旋转", labelRes = R.string.qs_merged_settings_rotation),
+    SwitchItem("qs_merged_tile_scale_animation", "合并通控中心修复磁贴区缩放动画", labelRes = R.string.qs_merged_tile_scale_animation),
+    SwitchItem("qs_merged_tile_clip_animation", "合并通控中心修复二次下拉动画裁切", labelRes = R.string.qs_merged_tile_clip_animation),
+    SwitchItem("qs_merged_two_finger_expand", "合并通控中心允许双指下拉直接展开", labelRes = R.string.qs_merged_two_finger_expand),
+    SwitchItem("qs_active_outline_enabled", "允许激活态叠加轮廓光", labelRes = R.string.qs_active_outline_enabled),
+    SwitchItem("qs_active_color_enabled", "自定义控制中心激活态颜色", colorKey = "qs_active_color", labelRes = R.string.qs_active_color_enabled),
 )
 private val NOTIF: List<SettingsItem> = listOf(
     GroupTitleItem("通知中心设置"),
@@ -358,7 +359,7 @@ private fun MasterOverride?.valueFor(scope: String?): Boolean? =
     this?.takeIf { it.scope == null || it.scope == scope }?.value
 
 // 设置分组: desc 为分组小标题(空字符串仅分隔不显示标题), items 为该组全部设置项。
-private data class SwitchGroup(val desc: String?, val items: List<SettingsItem>)
+private data class SwitchGroup(val desc: String?, val items: List<SettingsItem>, val descRes: Int = 0)
 
 // 过滤出实际设置项(GroupTitleItem 只是分组标题, 无 key 不参与开关)。
 private val List<SettingsItem>.switches: List<SwitchItem> get() = filterIsInstance<SwitchItem>()
@@ -381,12 +382,14 @@ private fun List<SettingsItem>.splitByDivider(): List<SwitchGroup> {
     if (isEmpty()) return emptyList()
     val result = mutableListOf<SwitchGroup>()
     var desc: String? = null
+    var descRes = 0
     var current = mutableListOf<SettingsItem>()
     forEach { item ->
         when (item) {
             is GroupTitleItem -> {
-                if (current.isNotEmpty()) result.add(SwitchGroup(desc, current))
+                if (current.isNotEmpty()) result.add(SwitchGroup(desc, current, descRes))
                 desc = item.title
+                descRes = item.titleRes
                 current = mutableListOf()
             }
             is SwitchItem -> current.add(item)
@@ -394,7 +397,7 @@ private fun List<SettingsItem>.splitByDivider(): List<SwitchGroup> {
             is SelectItem -> current.add(item)
         }
     }
-    if (current.isNotEmpty()) result.add(SwitchGroup(desc, current))
+    if (current.isNotEmpty()) result.add(SwitchGroup(desc, current, descRes))
     return result
 }
 
@@ -682,7 +685,7 @@ private fun CategoryScreen(
                 // 分组小标题: GroupTitleItem 的 title 非空(且非空字符串)时在卡片上方显示。
                 val desc = group.desc
                 if (!desc.isNullOrEmpty()) {
-                    item { CouixSmallTitle(text = desc) }
+                    item { CouixSmallTitle(text = if (group.descRes != 0) androidx.compose.ui.res.stringResource(group.descRes) else desc) }
                 }
                 item {
                     CouixGroup(

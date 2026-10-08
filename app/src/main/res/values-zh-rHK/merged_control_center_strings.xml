@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="qs_merged_modernization">合併控制中心現代化</string>
+    <string name="qs_merged_hollow">合併通控中心前兩個圖塊採用空心啟用樣式</string>
+    <string name="qs_merged_radiant">合併通控中心啟用全新煥彩樣式</string>
+    <string name="qs_merged_card_ratio">合併通控中心保持長寬比例</string>
+    <string name="qs_merged_gap_enabled">調整合併控制中心欄間距</string>
+    <string name="qs_merged_four_columns">合併通控中心圖塊改為四欄</string>
+    <string name="qs_merged_settings_rotation">合併通控中心設定按鈕旋轉</string>
+    <string name="qs_merged_tile_scale_animation">合併通控中心修復圖塊區縮放動畫</string>
+    <string name="qs_merged_tile_clip_animation">合併通控中心修復二次下拉動畫裁切</string>
+    <string name="qs_merged_two_finger_expand">合併通控中心允許雙指下拉直接展開</string>
+    <string name="qs_active_outline_enabled">允許在啟用狀態疊加輪廓光</string>
+    <string name="qs_active_color_enabled">自訂控制中心啟用狀態顏色</string>
+</resources>

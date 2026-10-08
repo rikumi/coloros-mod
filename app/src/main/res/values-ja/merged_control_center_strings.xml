@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="qs_merged_modernization">統合通知・コントロールセンターの刷新</string>
+    <string name="qs_merged_hollow">統合通知・コントロールセンター：先頭2枚のタイルのアイコン部分のみを強調</string>
+    <string name="qs_merged_radiant">統合通知・コントロールセンター：新しいカラフルなスタイル</string>
+    <string name="qs_merged_card_ratio">統合通知・コントロールセンター：タイルの縦横比を維持</string>
+    <string name="qs_merged_gap_enabled">統合通知・コントロールセンターの列間隔を調整</string>
+    <string name="qs_merged_four_columns">統合通知・コントロールセンター：タイルを4列に配置</string>
+    <string name="qs_merged_settings_rotation">統合通知・コントロールセンター：設定ボタンを回転</string>
+    <string name="qs_merged_tile_scale_animation">統合通知・コントロールセンター：タイル領域の拡大縮小アニメーションを修正</string>
+    <string name="qs_merged_tile_clip_animation">統合通知・コントロールセンター：2回目の下スワイプ時のアニメーションの切れを修正</string>
+    <string name="qs_merged_two_finger_expand">統合通知・コントロールセンター：2本指の下スワイプで全展開</string>
+    <string name="qs_active_outline_enabled">有効なタイルの上に輪郭の光を重ねる</string>
+    <string name="qs_active_color_enabled">コントロールセンターの有効なタイルの色を変更</string>
+</resources>

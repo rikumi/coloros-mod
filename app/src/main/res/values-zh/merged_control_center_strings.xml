@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="qs_merged_modernization">合并控制中心现代化</string>
+    <string name="qs_merged_hollow">合并通控中心前两磁贴采用空心激活态</string>
+    <string name="qs_merged_radiant">合并通控中心开启全新焕彩样式</string>
+    <string name="qs_merged_card_ratio">合并通控中心保持宽高比例</string>
+    <string name="qs_merged_gap_enabled">调整合并控制中心栏间距</string>
+    <string name="qs_merged_four_columns">合并通控中心磁贴改为四列</string>
+    <string name="qs_merged_settings_rotation">合并通控中心设置按钮旋转</string>
+    <string name="qs_merged_tile_scale_animation">合并通控中心修复磁贴区缩放动画</string>
+    <string name="qs_merged_tile_clip_animation">合并通控中心修复二次下拉动画裁切</string>
+    <string name="qs_merged_two_finger_expand">合并通控中心允许双指下拉直接展开</string>
+    <string name="qs_active_outline_enabled">允许激活态叠加轮廓光</string>
+    <string name="qs_active_color_enabled">自定义控制中心激活态颜色</string>
+</resources>

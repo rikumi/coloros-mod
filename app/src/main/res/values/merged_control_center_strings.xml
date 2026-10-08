@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="qs_merged_modernization">Modernize the combined shade</string>
+    <string name="qs_merged_hollow">Combined shade: icon-only activation for the first two tiles</string>
+    <string name="qs_merged_radiant">Combined shade: enable the new colorful style</string>
+    <string name="qs_merged_card_ratio">Combined shade: preserve tile aspect ratios</string>
+    <string name="qs_merged_gap_enabled">Adjust combined shade column spacing</string>
+    <string name="qs_merged_four_columns">Combined shade: use four tile columns</string>
+    <string name="qs_merged_settings_rotation">Combined shade: rotate the settings button</string>
+    <string name="qs_merged_tile_scale_animation">Combined shade: fix tile area scaling animations</string>
+    <string name="qs_merged_tile_clip_animation">Combined shade: fix clipping during the second pull-down</string>
+    <string name="qs_merged_two_finger_expand">Combined shade: fully expand with a two-finger swipe</string>
+    <string name="qs_active_outline_enabled">Allow outline lighting over active tiles</string>
+    <string name="qs_active_color_enabled">Customize active tile colors</string>
+</resources>

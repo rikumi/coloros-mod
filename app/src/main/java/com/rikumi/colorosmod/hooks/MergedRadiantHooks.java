@@ -399,10 +399,15 @@ public final class MergedRadiantHooks {
         if (state != null && XposedHelpers.getIntField(state, "state") == 2) {
             String spec = (String) XposedHelpers.getObjectField(state, "spec");
             boolean network = "wifi".equals(spec) || "bt".equals(spec);
-            CharSequence label = (CharSequence) XposedHelpers.getObjectField(state, "label");
+            // Highlight Bluetooth cards render labelDesc (including device counts),
+            // while State.label can remain the generic Bluetooth title.
+            CharSequence label = "bt".equals(spec) ? ((TextView) title.getCurrentView()).getText()
+                    : (CharSequence) XposedHelpers.getObjectField(state, "label");
             boolean connected = network && !TextUtils.isEmpty(label) && !TextUtils.equals(label,
                     tile.getResources().getString(resource(tile,
-                            "wifi".equals(spec) ? "quick_settings_wifi_label" : "quick_settings_bluetooth_label", "string")));
+                            "wifi".equals(spec) ? "quick_settings_wifi_label" : "quick_settings_bluetooth_label", "string")))
+                    && (!"bt".equals(spec) || !TextUtils.equals(label,
+                            tile.getResources().getString(resource(tile, "quick_settings_connecting", "string"))));
             text = tile.getResources().getString(resource(tile,
                     connected ? "quick_settings_connected" : "oplus_qs_status_subtitle_open", "string"));
         }

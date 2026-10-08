@@ -1671,6 +1671,7 @@ private fun CouixSwitchRow(
     overrideValue: Boolean?,
     onItemChanged: () -> Unit,
 ) {
+    val label = if (item.labelRes != 0) androidx.compose.ui.res.stringResource(item.labelRes) else item.label
     val scope = rememberCoroutineScope()
     // 系统设置不保存在 prefs，不能因其它条目的 prefs 刷新而重置状态。
     // 普通设置仍随 version 重读；系统设置仅在首次进入或主开关覆盖变化时读取。
@@ -1710,7 +1711,7 @@ private fun CouixSwitchRow(
                     setBool(ctx, item.key, it)
                     onItemChanged()
                 },
-                title = item.label,
+                title = label,
                 onTitleClick = if (checked) ({ expanded = !expanded }) else null,
                 leftTrailingContent = { if (checked) Box(Modifier.size(22.dp).clip(RoundedCornerShape(6.dp)).background(selected)) },
             )
@@ -1766,7 +1767,7 @@ private fun CouixSwitchRow(
                 }
                 onItemChanged()
             },
-            title = item.label,
+            title = label,
             subtitle = item.subtitle,
         )
         return
@@ -1797,7 +1798,7 @@ private fun CouixSwitchRow(
                 }
                 onItemChanged()
             },
-            title = item.label,
+            title = label,
             subtitle = item.subtitle,
             onTitleClick = if (checked) {
                 { expanded = !expanded }
