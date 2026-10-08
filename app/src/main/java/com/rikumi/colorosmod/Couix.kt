@@ -1,6 +1,7 @@
 package com.rikumi.colorosmod
 
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.graphicsLayer
 import top.yukonga.miuix.kmp.basic.ColorPalette
 import top.yukonga.miuix.kmp.basic.TextButton
 import android.app.Activity
@@ -988,6 +989,7 @@ fun CouixSwitchPreference(
     onTitleClick: (() -> Unit)? = null,
     leftTrailingContent: @Composable RowScope.() -> Unit = {},
     showDivider: Boolean = false,
+    enabled: Boolean = true,
 ) {
     val density = LocalDensity.current
     val tick = couixSwitchTick()
@@ -1000,7 +1002,8 @@ fun CouixSwitchPreference(
         modifier = modifier
             .fillMaxWidth()
             .onGloballyPositioned { rowHeightPx = it.size.height }
-            .clickable {
+            .graphicsLayer { alpha = if (enabled) 1f else 0.38f }
+            .clickable(enabled = enabled) {
                 tick()
                 onCheckedChange(!checked)
             },
@@ -1750,8 +1753,11 @@ private fun CouixSwitchRow(
         return
     }
     if (item.sliderKey == null) {
+        val available = item.key != "qs_merged_radiant"
+                || (rowOverride ?: prefs.getBoolean("qs_merged_hollow", false))
         CouixSwitchPreference(
-            checked = checked,
+            checked = checked && available,
+            enabled = available,
             onCheckedChange = {
                 checked = it
                 if (!item.rootBacked) setBool(ctx, item.key, it)

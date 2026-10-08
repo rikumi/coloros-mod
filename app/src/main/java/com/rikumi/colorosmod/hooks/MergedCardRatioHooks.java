@@ -2,6 +2,7 @@ package com.rikumi.colorosmod.hooks;
 
 import static com.rikumi.colorosmod.XposedInit.*;
 
+import android.content.res.Configuration;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
@@ -27,7 +28,7 @@ public final class MergedCardRatioHooks {
     private static final WeakHashMap<View, Boolean> nativeLabelPadding = new WeakHashMap<>();
     private static final WeakHashMap<View, Boolean> layoutListeners = new WeakHashMap<>();
     private static final View.OnLayoutChangeListener layoutListener = (view, l, t, r, b, ol, ot, or, ob) -> {
-        if (!readBool(KEY_QS_MERGED_CARD_RATIO, false)) return;
+        if (!ratioEnabled(view)) return;
         if (containerClass.isInstance(view)) refreshPaths((ViewGroup) view);
         else adjustLayout(view);
     };
@@ -44,6 +45,18 @@ public final class MergedCardRatioHooks {
     private static final ThreadLocal<Boolean> restoringRadius = new ThreadLocal<>();
     private static final Handler handler = new Handler(Looper.getMainLooper());
     private static final ThreadLocal<Boolean> remeasuring = new ThreadLocal<>();
+    static boolean ratioEnabled(View view) {
+        return view.getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT
+                && readBool(KEY_QS_MERGED_CARD_RATIO, false);
+    }
+
+    private static float iconFactor(View view) {
+        if (!ratioEnabled(view)) return 1f;
+        if (MergedTileGridHooks.root(view) != null)
+            return readBool(KEY_QS_MERGED_FOUR_COLUMNS, false) ? 1f : .92f;
+        return .95f;
+    }
+
     static float gapFraction() {
         if (!readBool(KEY_QS_MERGED_GAP_ENABLED, false)) return 0.05f;
         int value = Math.max(40, Math.min(60, readInt(KEY_QS_MERGED_GAP_PERCENT_TENTHS, 50)));
@@ -81,12 +94,12 @@ public final class MergedCardRatioHooks {
                     "onMeasure", int.class, int.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             View icon = (View) p.thisObject;
-                            if (!readBool(KEY_QS_MERGED_CARD_RATIO, false) || mergedRoot(icon) == null) return;
+                            if (!ratioEnabled(icon) || mergedRoot(icon) == null) return;
                             int current = XposedHelpers.getIntField(icon, "iconSizePx");
                             if (!iconSizes.containsKey(icon)) iconSizes.put(icon, current);
                             int id = icon.getResources().getIdentifier("qs_tile_icon_size", "dimen", "com.android.systemui");
                             int base = id != 0 ? icon.getResources().getDimensionPixelSize(id) : iconSizes.get(icon);
-                            int size = Math.max(1, Math.round(areaScale(icon) * base));
+                            int size = Math.max(1, Math.round(areaScale(icon) * iconFactor(icon) * base));
                             XposedHelpers.setIntField(icon, "iconSizePx", size);
                             // 测量和图形统一尺寸，消除系统小空间模式另行施加的缩小倍率。
                             rememberIconTransform(icon);
@@ -104,7 +117,7 @@ public final class MergedCardRatioHooks {
                     "updateLabelPadding", new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             View tile = (View) p.thisObject;
-                            if (!readBool(KEY_QS_MERGED_CARD_RATIO, false) || MergedTileGridHooks.root(tile) == null) return;
+                            if (!ratioEnabled(tile) || MergedTileGridHooks.root(tile) == null) return;
                             View group = field(tile, "mLabelGroup"), indicator = field(tile, "mExpandIndicator");
                             if (group != null) {
                                 nativeLabelPadding.put(group, true);
@@ -149,13 +162,13 @@ public final class MergedCardRatioHooks {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     p.setObjectExtra("previousOutlineOwner", outlineOwner.get());
                     View view = (View) p.thisObject;
-                    if (readBool(KEY_QS_MERGED_CARD_RATIO, false) && mergedRoot(view) != null) outlineOwner.set(view);
+                    if (ratioEnabled(view) && mergedRoot(view) != null) outlineOwner.set(view);
                 }
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     View previous = (View) p.getObjectExtra("previousOutlineOwner");
                     if (previous != null) outlineOwner.set(previous); else outlineOwner.remove();
                     View view = (View) p.thisObject;
-                    if (!p.hasThrowable() && readBool(KEY_QS_MERGED_CARD_RATIO, false) && mergedRoot(view) != null) applyOutline(view);
+                    if (!p.hasThrowable() && ratioEnabled(view) && mergedRoot(view) != null) applyOutline(view);
                 }
             };
             XposedHelpers.findAndHookDeclaredMethod(highlightClass, "onOutlineUpdate", java.util.List.class, outlineChanged);
@@ -174,6 +187,8 @@ public final class MergedCardRatioHooks {
             Class<?> layout = XposedHelpers.findClass("androidx.constraintlayout.widget.ConstraintLayout", pkg.classLoader);
             XposedHelpers.findAndHookDeclaredMethod(layout, "onMeasure", int.class, int.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (containerClass.isInstance(p.thisObject) && !ratioEnabled((View) p.thisObject))
+                        restore((ViewGroup) p.thisObject);
                     if (!enabled(p)) return;
                     ViewGroup root = (ViewGroup) p.thisObject;
                     hosts.put(root, true);
@@ -237,7 +252,7 @@ public final class MergedCardRatioHooks {
 
     private static boolean enabled(XC_MethodHook.MethodHookParam p) {
         return !Boolean.TRUE.equals(remeasuring.get()) && containerClass.isInstance(p.thisObject)
-                && readBool(KEY_QS_MERGED_CARD_RATIO, false);
+                && ratioEnabled((View) p.thisObject);
     }
 
     private static boolean highlight(ViewGroup holder, int gap) {
@@ -292,7 +307,7 @@ public final class MergedCardRatioHooks {
 
     /** 只缩放合并版卡片区域内的半径，外部磁贴保持系统行为。 */
     public static float scaleRadius(View view, float radius) {
-        if (Boolean.TRUE.equals(restoringRadius.get()) || !readBool(KEY_QS_MERGED_CARD_RATIO, false)) return radius;
+        if (Boolean.TRUE.equals(restoringRadius.get()) || !ratioEnabled(view)) return radius;
         Float surfaceScale = MergedTileGridHooks.surfaceScale(view);
         return radius * (surfaceScale != null ? surfaceScale : areaScale(view));
     }
@@ -369,7 +384,9 @@ public final class MergedCardRatioHooks {
 
     private static boolean isTileSurface(View view) {
         View ancestor = view.getParent() instanceof View parent ? parent : null;
-        while (ancestor != null && !normalTileClass.isInstance(ancestor))
+        // Highlight cards also keep their full card background in mBg (an ImageView).
+        // Exclude it from icon transforms just like the circular backgrounds of normal tiles.
+        while (ancestor != null && !normalTileClass.isInstance(ancestor) && !highlightClass.isInstance(ancestor))
             ancestor = ancestor.getParent() instanceof View parent ? parent : null;
         return ancestor != null && (view == field(ancestor, "mIconFrame") || view == field(ancestor, "mBg"));
     }
@@ -390,7 +407,7 @@ public final class MergedCardRatioHooks {
             View toggle = field(view, "toggleView");
             if (toggle != null && toggle.getClass().getName().equals("com.oplus.systemui.qs.base.seek.ClipBrightnessView")) {
                 IconTransform original = rememberIconTransform(toggle);
-                float scale = areaScale(toggle);
+                float scale = areaScale(toggle) * iconFactor(toggle);
                 toggle.setScaleX(original.scaleX * scale); toggle.setScaleY(original.scaleY * scale);
                 toggle.setTranslationY(original.translationY - (scale - 1f) * toggle.getHeight() / 2f);
             } else if (toggle instanceof ImageView image) {
@@ -410,6 +427,21 @@ public final class MergedCardRatioHooks {
 
     private static boolean applyGeometry(View view, ViewGroup root) {
         boolean changed = false;
+        if (view instanceof ImageView && !isTileSurface(view)) {
+            // 图片图标仅调整绘制大小，保留布局及触摸区域；QSIconView 自行调整 iconSizePx。
+            View ancestor = view;
+            boolean qsIcon = false;
+            while (ancestor != root && ancestor != null) {
+                if (iconClass.isInstance(ancestor)) { qsIcon = true; break; }
+                ancestor = ancestor.getParent() instanceof View parent ? parent : null;
+            }
+            int cover = view.getResources().getIdentifier("oplus_media_cover_image", "id", "com.android.systemui");
+            if (!qsIcon && (cover == 0 || view.getId() != cover)) {
+                IconTransform original = rememberIconTransform(view);
+                float factor = iconFactor(view);
+                view.setScaleX(original.scaleX * factor); view.setScaleY(original.scaleY * factor);
+            }
+        }
         if (sliderLayout(view) || (view.getParent() instanceof View tile && normalTileClass.isInstance(tile)
                 && view == field(tile, "mIconFrame"))) {
             ensureLayoutListener(view);
@@ -575,13 +607,13 @@ public final class MergedCardRatioHooks {
 
     private static final class GeometryPass {
         final int width, children;
-        final float density, fontScale, scale, surfaceScale;
+        final float density, fontScale, scale, surfaceScale, iconFactor;
         final long tiles;
         GeometryPass(ViewGroup root) {
             width = root.getMeasuredWidth(); children = root.getChildCount();
             density = root.getResources().getDisplayMetrics().density;
             fontScale = root.getResources().getConfiguration().fontScale;
-            scale = areaScale(root);
+            scale = areaScale(root); iconFactor = iconFactor(root);
             Float surface = MergedTileGridHooks.surfaceScale(root);
             surfaceScale = surface != null ? surface : scale;
             long identity = 0;
@@ -596,7 +628,7 @@ public final class MergedCardRatioHooks {
         boolean same(GeometryPass previous) {
             return previous != null && width == previous.width && children == previous.children && tiles == previous.tiles
                     && density == previous.density && fontScale == previous.fontScale && scale == previous.scale
-                    && surfaceScale == previous.surfaceScale;
+                    && surfaceScale == previous.surfaceScale && iconFactor == previous.iconFactor;
         }
     }
     private static boolean applyGeometryIfNeeded(ViewGroup root) {
@@ -664,7 +696,7 @@ public final class MergedCardRatioHooks {
             MergedTileGridHooks.refresh();
             for (ViewGroup root : new ArrayList<>(hosts.keySet())) {
                 if (root == null) continue;
-                if (!readBool(KEY_QS_MERGED_CARD_RATIO, false)) restore(root);
+                if (!ratioEnabled(root)) restore(root);
                 cardScales.remove(root);
                 geometryPasses.remove(root);
                 root.requestLayout();

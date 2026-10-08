@@ -3,6 +3,8 @@ package com.rikumi.colorosmod.hooks;
 import static com.rikumi.colorosmod.XposedInit.*;
 
 import android.graphics.Paint;
+import android.graphics.Rect;
+import android.view.ViewTreeObserver;
 import android.widget.TextView;
 import android.view.View;
 import android.view.ViewGroup;
@@ -25,6 +27,7 @@ final class MergedTileGridHooks {
     private static final WeakHashMap<Object, Long> animatorGeometry = new WeakHashMap<>();
     private static final WeakHashMap<Object, Integer> fixedAnimators = new WeakHashMap<>();
     private static final WeakHashMap<ViewGroup, Original> hosts = new WeakHashMap<>();
+    private static final WeakHashMap<View, PanelClip> panelClips = new WeakHashMap<>();
     private static final String[] FIELDS = {"mCellWidth", "mCellHeight", "mResourceCellHeight", "mEstimatedCellHeight", "mCellMarginHorizontal", "mCellMarginVertical", "mSidePadding"};
 
     static void hook(XC_LoadPackage.LoadPackageParam pkg) {
@@ -32,6 +35,25 @@ final class MergedTileGridHooks {
             tileClass = XposedHelpers.findClass("com.android.systemui.qs.TileLayout", pkg.classLoader);
             headerClass = XposedHelpers.findClass("com.oplus.systemui.qs.widget.OplusHeaderTileLayout", pkg.classLoader);
             quickControllerClass = XposedHelpers.findClass("com.android.systemui.qs.QuickQSPanelController", pkg.classLoader);
+            XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.OplusQSPanelContainer", pkg.classLoader,
+                    "updateQSBounds", Rect.class, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            View panel = (View) XposedHelpers.getObjectField(p.thisObject, "mQSPanel");
+                            if (panel == null) return;
+                            PanelClip clip = panelClips.get(panel);
+                            if (clip == null) {
+                                clip = new PanelClip(panel);
+                                panelClips.put(panel, clip);
+                            }
+                            Rect nativeBounds = (Rect) p.args[0];
+                            if (nativeBounds == null) clip.nativeBounds = null;
+                            else if (clip.nativeBounds == null) clip.nativeBounds = new Rect(nativeBounds);
+                            else clip.nativeBounds.set(nativeBounds);
+                            clip.updateListener(panel);
+                            // Keep the native expansion height intact; only enlarge its drawing clip.
+                            if (nativeBounds != null) p.args[0] = panelBounds(panel, clip);
+                        }
+                    });
             XposedHelpers.findAndHookDeclaredMethod(quickControllerClass, "onInit", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) { quickControllers.put(p.thisObject, true); }
             });
@@ -56,7 +78,7 @@ final class MergedTileGridHooks {
             XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.OplusQSPanelContainer", pkg.classLoader,
                     "getTopGap", float.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (!readBool(KEY_QS_MERGED_CARD_RATIO, false)) return;
+                            if (!MergedCardRatioHooks.ratioEnabled((View) p.thisObject)) return;
                             Float gap = MergedCardRatioHooks.regionGap((View) p.thisObject);
                             if (gap != null) p.setResult(gap);
                         }
@@ -64,21 +86,22 @@ final class MergedTileGridHooks {
             XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.OplusQSPanelContainer", pkg.classLoader,
                     "updateViewState", float.class, float.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (readBool(KEY_QS_MERGED_CARD_RATIO, false)) p.args[1] = 1f;
+                            if (MergedCardRatioHooks.ratioEnabled((View) p.thisObject)
+                                    && !readBool(KEY_QS_MERGED_TILE_SCALE_ANIMATION, false)) p.args[1] = 1f;
                         }
                     });
             XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.OplusQSAnimator", pkg.classLoader,
                     "updateAnimators$1", new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             fixedAnimators.put(XposedHelpers.getObjectField(p.thisObject, "mQQSTileScaleAnimator"), 1);
-                            if (readBool(KEY_QS_MERGED_CARD_RATIO, false)) animatorGeometry.put(p.thisObject, animationGeometry(p.thisObject));
+                            if (ratioAnimator(p.thisObject)) animatorGeometry.put(p.thisObject, animationGeometry(p.thisObject));
                         }
                     });
             XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.OplusQSAnimator", pkg.classLoader,
                     "onLayoutChange", View.class, int.class, int.class, int.class, int.class,
                     int.class, int.class, int.class, int.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (!readBool(KEY_QS_MERGED_CARD_RATIO, false)) return;
+                            if (!ratioAnimator(p.thisObject)) return;
                             Object animator = p.thisObject;
                             p.setResult(null);
                             if (pendingAnimations.containsKey(animator)) return;
@@ -91,7 +114,7 @@ final class MergedTileGridHooks {
                                 if (current == null) return;
                                 pendingAnimations.remove(current);
                                 Long built = animatorGeometry.get(current);
-                                boolean enabled = readBool(KEY_QS_MERGED_CARD_RATIO, false);
+                                boolean enabled = ratioAnimator(current);
                                 if (!enabled || XposedHelpers.getBooleanField(current, "mNeedsAnimatorUpdate")
                                         || built == null || built != animationGeometry(current))
                                     ((Runnable) XposedHelpers.getObjectField(current, "mUpdateAnimators")).run();
@@ -103,15 +126,16 @@ final class MergedTileGridHooks {
             XposedHelpers.findAndHookDeclaredMethod("com.android.systemui.qs.TouchAnimator", pkg.classLoader,
                     "setPosition", float.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (!readBool(KEY_QS_MERGED_CARD_RATIO, false)) return;
                             Integer kind = fixedAnimators.get(p.thisObject);
                             if (kind == null) return;
                             Object[] targets = (Object[]) XposedHelpers.getObjectField(p.thisObject, "mTargets");
-                            for (Object target : targets) if (target instanceof View view) {
+                            boolean adjusted = false;
+                            for (Object target : targets) if (target instanceof View view && MergedCardRatioHooks.ratioEnabled(view)) {
+                                adjusted = true;
                                 if (kind == 0) view.setTranslationX(0f);
                                 else { view.setScaleX(1f); view.setScaleY(1f); }
                             }
-                            p.setResult(null);
+                            if (adjusted) p.setResult(null);
                         }
                     });
             // 展开动画的 squish 路径直接使用 getColumnStart，必须与正常布局使用同一栏间距。
@@ -127,7 +151,10 @@ final class MergedTileGridHooks {
             XposedHelpers.findAndHookDeclaredMethod(headerClass, "getColumnStart", int.class, columnStart);
             XC_MethodHook measure = new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    if (!enabled((View) p.thisObject)) return;
+                    if (!enabled((View) p.thisObject)) {
+                        restore((ViewGroup) p.thisObject);
+                        return;
+                    }
                     ViewGroup root = (ViewGroup) p.thisObject;
                     int width = View.MeasureSpec.getSize((Integer) p.args[0]);
                     configure(root, width);
@@ -184,7 +211,7 @@ final class MergedTileGridHooks {
             Class<?> paged = XposedHelpers.findClass("com.android.systemui.qs.PagedTileLayout", pkg.classLoader);
             XposedHelpers.findAndHookDeclaredMethod(paged, "onMeasure", int.class, int.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    if (!readBool(KEY_QS_MERGED_CARD_RATIO, false) && !fourColumns()) return;
+                    if (!MergedCardRatioHooks.ratioEnabled((View) p.thisObject) && !fourColumns()) return;
                     Object pages = XposedHelpers.getObjectField(p.thisObject, "mPages");
                     if (pages instanceof Iterable<?> list) for (Object page : list)
                         if (page instanceof ViewGroup root && isGrid(root)) {
@@ -271,8 +298,12 @@ final class MergedTileGridHooks {
         MergedCardRatioHooks.refreshPaths(root);
     }
 
+    private static boolean ratioAnimator(Object animator) {
+        return MergedCardRatioHooks.ratioEnabled((View) XposedHelpers.getObjectField(animator, "mQsRootView"));
+    }
+
     private static boolean enabled(View view) {
-        return readBool(KEY_QS_MERGED_CARD_RATIO, false) && isGrid(view);
+        return MergedCardRatioHooks.ratioEnabled(view) && isGrid(view);
     }
     private static boolean isGrid(View view) {
         if (tileClass == null || !tileClass.isInstance(view)) return false;
@@ -460,6 +491,11 @@ final class MergedTileGridHooks {
         root.requestLayout();
     }
     static void refresh() {
+        for (View panel : new ArrayList<>(panelClips.keySet())) if (panel != null) {
+            PanelClip clip = panelClips.get(panel);
+            clip.updateListener(panel);
+            panel.setClipBounds(clip.nativeBounds == null ? null : panelBounds(panel, clip));
+        }
         boolean four = fourColumns(), ratio = readBool(KEY_QS_MERGED_CARD_RATIO, false);
         if (lastFourColumns == null || lastFourColumns != four || lastRatio == null || lastRatio != ratio) {
             lastFourColumns = four; lastRatio = ratio;
@@ -476,17 +512,28 @@ final class MergedTileGridHooks {
             }
         }
         for (ViewGroup root : new ArrayList<>(hosts.keySet())) if (root != null) {
-            if (!readBool(KEY_QS_MERGED_CARD_RATIO, false)) restore(root);
+            if (!MergedCardRatioHooks.ratioEnabled(root)) restore(root);
             root.requestLayout();
         }
     }
     static ArrayList<Object> capture() {
         ArrayList<Object> result = new ArrayList<>(hosts.keySet());
         result.addAll(columnHosts.keySet()); result.addAll(quickControllers.keySet());
+        for (View panel : new ArrayList<>(panelClips.keySet())) if (panel != null) {
+            Rect bounds = panelClips.get(panel).nativeBounds;
+            result.add(new Object[]{panel, bounds == null ? null : new Rect(bounds)});
+        }
         return result;
     }
     static void restoreHosts(Iterable<?> views) {
         for (Object view : views) {
+            if (view instanceof Object[] record && record.length == 2 && record[0] instanceof View panel) {
+                PanelClip clip = new PanelClip(panel);
+                clip.nativeBounds = record[1] instanceof Rect bounds ? new Rect(bounds) : null;
+                panelClips.put(panel, clip);
+                clip.updateListener(panel);
+                continue;
+            }
             if (quickControllerClass.isInstance(view)) quickControllers.put(view, true);
             if (!(view instanceof ViewGroup root) || !isGrid(root)) continue;
             columnHosts.put(root, true);
@@ -495,6 +542,12 @@ final class MergedTileGridHooks {
         }
     }
     static void cleanup() {
+        for (View panel : new ArrayList<>(panelClips.keySet())) if (panel != null) {
+            PanelClip clip = panelClips.get(panel);
+            if (clip.listening && panel.getViewTreeObserver().isAlive()) panel.getViewTreeObserver().removeOnPreDrawListener(clip.listener);
+            panel.setClipBounds(clip.nativeBounds);
+        }
+        panelClips.clear();
         for (Object animator : new ArrayList<>(pendingAnimations.keySet())) {
             Runnable callback = pendingAnimations.get(animator);
             if (animator != null && callback != null)
@@ -508,6 +561,58 @@ final class MergedTileGridHooks {
             for (Object controller : new ArrayList<>(quickControllers.keySet())) if (controller != null) XposedHelpers.callMethod(controller, "setTiles");
         } finally { restoringColumns.remove(); }
         hosts.clear(); pagedPages.clear(); columnHosts.clear(); quickControllers.clear(); fixedAnimators.clear(); animatorGeometry.clear(); lastFourColumns = null; lastRatio = null;
+    }
+    private static Rect panelBounds(View panel, PanelClip clip) {
+        clip.bounds.set(clip.nativeBounds);
+        if (!readBool(KEY_QS_MERGED_TILE_CLIP_ANIMATION, false)) return clip.bounds;
+        View scrim = clip.scrim == null ? null : clip.scrim.get();
+        if (scrim == null || scrim.getRootView() != panel.getRootView()) {
+            scrim = panel.getRootView().findViewById(clip.scrimId);
+            clip.scrim = new WeakReference<>(scrim);
+        }
+        if (scrim == null) return clip.bounds;
+        Rect drawableBounds = (Rect) XposedHelpers.callMethod(scrim, "getDrawableBounds");
+        if (drawableBounds == null || drawableBounds.isEmpty() || panel.getScaleY() <= 0f) return clip.bounds;
+        scrim.getLocationInWindow(clip.scrimLocation);
+        panel.getLocationInWindow(clip.panelLocation);
+        // NotificationBarDrawable draws the handle at drawableBounds.top + 8dp.
+        // Stop 2dp before that handle, using its live position after all animations.
+        int bottom = Math.round((clip.scrimLocation[1] + drawableBounds.top + clip.handleGap
+                - clip.panelLocation[1]) / panel.getScaleY());
+        if (bottom > clip.bounds.bottom) clip.bounds.bottom = bottom;
+        return clip.bounds;
+    }
+    private static final class PanelClip {
+        Rect nativeBounds;
+        final Rect bounds = new Rect(), currentBounds = new Rect();
+        final int[] scrimLocation = new int[2], panelLocation = new int[2];
+        final int scrimId, handleGap;
+        WeakReference<View> scrim;
+        boolean listening;
+        final ViewTreeObserver.OnPreDrawListener listener;
+        void updateListener(View panel) {
+            boolean enabled = nativeBounds != null && readBool(KEY_QS_MERGED_TILE_CLIP_ANIMATION, false);
+            ViewTreeObserver observer = panel.getViewTreeObserver();
+            if (!observer.isAlive() || enabled == listening) return;
+            if (enabled) observer.addOnPreDrawListener(listener);
+            else observer.removeOnPreDrawListener(listener);
+            listening = enabled;
+        }
+        PanelClip(View panel) {
+            scrimId = panel.getResources().getIdentifier("scrim_notifications", "id", "com.android.systemui");
+            int marginId = panel.getResources().getIdentifier("notification_scrim_handle_margin_top", "dimen", "com.android.systemui");
+            handleGap = panel.getResources().getDimensionPixelSize(marginId)
+                    - Math.round(2f * panel.getResources().getDisplayMetrics().density);
+            WeakReference<View> owner = new WeakReference<>(panel);
+            listener = () -> {
+                View view = owner.get();
+                if (view != null && nativeBounds != null) {
+                    Rect desired = panelBounds(view, this);
+                    if (!view.getClipBounds(currentBounds) || !currentBounds.equals(desired)) view.setClipBounds(desired);
+                }
+                return true;
+            };
+        }
     }
     private static final class Original {
         final int[] values = new int[FIELDS.length];

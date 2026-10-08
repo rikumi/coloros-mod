@@ -16,6 +16,8 @@ import com.rikumi.colorosmod.hooks.SignalHooks;
 import com.rikumi.colorosmod.hooks.FoldIdleMediaHooks;
 import com.rikumi.colorosmod.hooks.StatusBarFontHooks;
 import com.rikumi.colorosmod.hooks.MergedCardRatioHooks;
+import com.rikumi.colorosmod.hooks.MergedRadiantHooks;
+import com.rikumi.colorosmod.hooks.MergedSettingsRotationHooks;
 import com.rikumi.colorosmod.hooks.LauncherHooks;
 import com.rikumi.colorosmod.hooks.StatusBarExtrasHooks;
 import com.rikumi.colorosmod.hooks.KeyguardHooks;
@@ -171,6 +173,12 @@ public class XposedInit extends XposedModule {
     // R.dimen.qs_hl_tile_corner_radius_circle_oneplus(60dp), 其余用 qs_hl_tile_corner_radius_circle(16dp)。
     // 开关开启时统一强制到 QS_CORNER_RADIUS_DIMEN 指定的那一档(合并式与分离式都生效)。
     public static final String KEY_QS_ACTIVE_OUTLINE_ENABLED = "qs_active_outline_enabled";
+    public static final String KEY_QS_MERGED_RADIANT = "qs_merged_radiant";
+    public static final String KEY_QS_MERGED_HOLLOW = "qs_merged_hollow";
+    public static final String KEY_QS_MERGED_SETTINGS_ROTATION = "qs_merged_settings_rotation";
+    public static final String KEY_QS_MERGED_TILE_SCALE_ANIMATION = "qs_merged_tile_scale_animation";
+    public static final String KEY_QS_MERGED_TILE_CLIP_ANIMATION = "qs_merged_tile_clip_animation";
+    public static final String KEY_QS_MERGED_TWO_FINGER_EXPAND = "qs_merged_two_finger_expand";
     public static final String KEY_QS_ACTIVE_COLOR_ENABLED = "qs_active_color_enabled";
     public static final String KEY_QS_ACTIVE_COLOR = "qs_active_color";
     public static final String KEY_QS_NORMAL_CORNER_RADIUS_ENABLED = "qs_normal_corner_radius_enabled";
@@ -560,6 +568,8 @@ public class XposedInit extends XposedModule {
             StatusBarFontHooks.refresh();
             MergedCardRatioHooks.refresh();
             ActiveTileOutlineHooks.refresh();
+            MergedRadiantHooks.refresh();
+            MergedSettingsRotationHooks.refresh();
             StatusBarExtrasHooks.refresh();
         }
         if (first) {
@@ -782,6 +792,9 @@ public class XposedInit extends XposedModule {
             catch (Throwable t) { log("signal hot reload cleanup failed: " + t); }
             try { FoldIdleMediaHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("fold media hot reload cleanup failed: " + t); }
+            try { MergedRadiantHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("merged radiant cleanup failed: " + t); }
+            MergedSettingsRotationHooks.cleanup();
             try { MergedCardRatioHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("merged card ratio cleanup failed: " + t); }
             try { StatusBarExtrasHooks.cleanupForHotReload(); }
@@ -889,7 +902,7 @@ public class XposedInit extends XposedModule {
             return false;
         }
         try {
-            Object[] state = new Object[16];
+            Object[] state = new Object[18];
             state[0] = StatusBarLyricHooks.captureHotReloadHost();
             state[1] = NotificationHooks.captureHotReloadHost();
             state[2] = SystemServerHooks.captureHotReloadHost();
@@ -906,6 +919,8 @@ public class XposedInit extends XposedModule {
             state[13] = MergedCardRatioHooks.captureHotReloadHosts();
             state[14] = QsHooks.captureHotReloadNames();
             state[15] = StatusBarExtrasHooks.captureHotReloadHosts();
+            state[16] = MergedRadiantHooks.captureHotReloadHosts();
+            state[17] = MergedSettingsRotationHooks.capture();
             param.setSavedInstanceState(state);
         } catch (Throwable t) {
             cancelProcessPreflight();
@@ -1076,6 +1091,17 @@ public class XposedInit extends XposedModule {
                             if (state.length > 13) QsHooks.restoreNamesInRoots(state[13]);
                         } catch (Throwable t) {
                             log("onHotReloaded: restore status font hosts failed: " + t);
+                        }
+                        try {
+                            if (state.length > 16) MergedRadiantHooks.restoreHotReloadHosts(state[16]);
+                            if (state.length > 13) MergedRadiantHooks.restoreInRoots(state[13]);
+                        } catch (Throwable t) {
+                            log("onHotReloaded: restore merged tile styles failed: " + t);
+                        }
+                        try {
+                            if (state.length > 17) MergedSettingsRotationHooks.restoreHosts(state[17]);
+                        } catch (Throwable t) {
+                            log("onHotReloaded: restore merged settings rotation failed: " + t);
                         }
                     }
                 };

@@ -218,9 +218,15 @@ private val QS: List<SettingsItem> = listOf(
     SwitchItem("qs_clock_no_expand_anim_enabled", "合并版时间日期固定单行"),
     SwitchItem("anc_tile_enabled", "音量条显示切换降噪模式图标"),
     GroupTitleItem("合并控制中心现代化"),
+    SwitchItem("qs_merged_hollow", "合并通控中心前两磁贴采用空心激活态"),
+    SwitchItem("qs_merged_radiant", "合并通控中心开启全新焕彩样式"),
     SwitchItem("qs_merged_card_ratio", "合并通控中心保持宽高比例"),
     SwitchItem("qs_merged_gap_enabled", "调整合并控制中心栏间距", sliderKey = "qs_merged_gap_percent_tenths", sliderMin = 40, sliderMax = 60, sliderStep = 5, sliderDefault = 50, sliderDisplayScale = 0.1f, sliderUnit = "%"),
     SwitchItem("qs_merged_four_columns", "合并通控中心磁贴改为四列"),
+    SwitchItem("qs_merged_settings_rotation", "合并通控中心设置按钮旋转"),
+    SwitchItem("qs_merged_tile_scale_animation", "合并通控中心修复磁贴区缩放动画"),
+    SwitchItem("qs_merged_tile_clip_animation", "合并通控中心修复二次下拉动画裁切"),
+    SwitchItem("qs_merged_two_finger_expand", "合并通控中心允许双指下拉直接展开"),
     SwitchItem("qs_active_outline_enabled", "允许激活态叠加轮廓光"),
     SwitchItem("qs_active_color_enabled", "自定义控制中心激活态颜色", colorKey = "qs_active_color"),
 )
@@ -1192,7 +1198,11 @@ private fun migrateLegacyPrefs(ctx: Context, de: SharedPreferences): Boolean {
 }
 
 internal fun setBool(ctx: Context, key: String, value: Boolean) {
-    ctx.settingsPrefs().edit().putBoolean(key, value).commit()
+    val prefs = ctx.settingsPrefs()
+    if (key == "qs_merged_radiant" && value && !prefs.getBoolean("qs_merged_hollow", false)) return
+    val editor = prefs.edit().putBoolean(key, value)
+    if (key == "qs_merged_hollow" && !value) editor.putBoolean("qs_merged_radiant", false)
+    editor.commit()
     SettingsProvider.notifySettingsChanged(ctx)
 }
 

@@ -35,26 +35,28 @@ public final class ActiveTileOutlineHooks {
             XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.base.res.drawable.MixColorTileDrawable",
                     pkg.classLoader, "draw", Canvas.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            boolean customColor = readBool(KEY_QS_ACTIVE_COLOR_ENABLED, false);
-                            if (!customColor && !readBool(KEY_QS_ACTIVE_OUTLINE_ENABLED, false)) return;
                             Drawable drawable = (Drawable) p.thisObject;
+                            if (MergedRadiantHooks.iconOnlyBackground(drawable)) return;
+                            Integer radiantColor = MergedRadiantHooks.activeBackground(drawable);
+                            boolean customColor = readBool(KEY_QS_ACTIVE_COLOR_ENABLED, false);
+                            if (radiantColor == null && !customColor && !readBool(KEY_QS_ACTIVE_OUTLINE_ENABLED, false)) return;
                             if (!tracked.containsKey(drawable)) {
                                 Object autoBlur = XposedHelpers.getObjectField(drawable, "autoBlurDrawable");
                                 Object proxy = XposedHelpers.callMethod(autoBlur, "getViewBlurProxy");
                                 View owner = (View) XposedHelpers.callMethod(proxy, "getView");
                                 if (owner != null) { views.put(owner, true); tracked.put(drawable, true); }
                             }
-                            if (!customColor || !isActive(drawable)) return;
+                            if ((radiantColor == null && !customColor) || !isActive(drawable)) return;
                             int original = XposedHelpers.getIntField(drawable, "maskColor");
                             p.setObjectExtra("originalMaskColor", original);
-                            XposedHelpers.setIntField(drawable, "maskColor", readInt(KEY_QS_ACTIVE_COLOR, 0xff00b4d8));
+                            XposedHelpers.setIntField(drawable, "maskColor", radiantColor != null ? radiantColor : readInt(KEY_QS_ACTIVE_COLOR, 0xff00b4d8));
                         }
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             Object original = p.getObjectExtra("originalMaskColor");
                             if (original instanceof Integer color) XposedHelpers.setIntField(p.thisObject, "maskColor", color);
                             if (p.hasThrowable() || !readBool(KEY_QS_ACTIVE_OUTLINE_ENABLED, false)) return;
                             Drawable drawable = (Drawable) p.thisObject;
-                            if (!isActive(drawable) || drawable.getAlpha() == 0) return;
+                            if (MergedRadiantHooks.iconOnlyBackground(drawable) || !isActive(drawable) || drawable.getAlpha() == 0) return;
                             try { drawOverlay(drawable, (Canvas) p.args[0]); }
                             catch (Throwable t) {
                                 // 出错的实例停止尝试，避免绘制循环中反复创建着色器或输出日志。
@@ -69,7 +71,9 @@ public final class ActiveTileOutlineHooks {
                     pkg.classLoader, "draw", Canvas.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             Drawable drawable = (Drawable) p.thisObject;
-                            if (!readBool(KEY_QS_ACTIVE_COLOR_ENABLED, false) || !isActive(drawable)) return;
+                            if (MergedRadiantHooks.iconOnlyBackground(drawable)) return;
+                            Integer radiantColor = MergedRadiantHooks.activeBackground(drawable);
+                            if ((radiantColor == null && !readBool(KEY_QS_ACTIVE_COLOR_ENABLED, false)) || !isActive(drawable)) return;
                             if (!tracked.containsKey(drawable)) {
                                 Drawable.Callback callback = drawable.getCallback();
                                 for (int i = 0; callback instanceof Drawable parent && i < 8; i++) callback = parent.getCallback();
@@ -77,11 +81,11 @@ public final class ActiveTileOutlineHooks {
                             }
                             Paint paint = colorPaints.get(drawable);
                             if (paint == null) { paint = new Paint(Paint.ANTI_ALIAS_FLAG); colorPaints.put(drawable, paint); }
-                            int color = readInt(KEY_QS_ACTIVE_COLOR, 0xff00b4d8);
+                            int color = radiantColor != null ? radiantColor : readInt(KEY_QS_ACTIVE_COLOR, 0xff00b4d8);
                             paint.setColor(color);
                             paint.setAlpha((color >>> 24) * drawable.getAlpha() / 255);
                             Drawable original = (Drawable) XposedHelpers.getObjectField(drawable, "colorDrawable");
-                            paint.setColorFilter(original.getColorFilter());
+                            paint.setColorFilter(radiantColor != null ? null : original.getColorFilter());
                             ((Canvas) p.args[0]).drawPath((Path) XposedHelpers.getObjectField(drawable, "path"), paint);
                             p.setResult(null);
                         }
