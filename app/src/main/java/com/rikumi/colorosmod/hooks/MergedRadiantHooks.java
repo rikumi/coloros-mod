@@ -29,11 +29,13 @@ import java.util.WeakHashMap;
 /** Merged-shade colorful icons; highlight-card activation is confined to the icon circle. */
 public final class MergedRadiantHooks {
     private static Class<?> highlightClass, normalClass, blurProvider, seekBarBlurManager, colorUtil, iconColorState, tileState, qsHelper;
+    private static Class<?> volumeIconClass, colorfulUtil;
     private static int activeAttr, inactiveAttr, inoperableAttr, unavailableAttr;
     private static boolean restoring, settingTint;
     private static final WeakHashMap<View, Card> cards = new WeakHashMap<>();
     private static final WeakHashMap<View, WeakReference<Object>> icons = new WeakHashMap<>();
     private static final WeakHashMap<Object, ColorStateList> nativeTints = new WeakHashMap<>();
+    private static final WeakHashMap<View, Boolean> volumeIcons = new WeakHashMap<>();
     private static final HashMap<Integer, ColorStateList> tints = new HashMap<>();
     private static final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
     private static final Runnable refreshTask = MergedRadiantHooks::refreshNow;
@@ -47,6 +49,28 @@ public final class MergedRadiantHooks {
             colorUtil = XposedHelpers.findClass("com.oplus.systemui.qs.base.util.QsColorUtil", pkg.classLoader);
             qsHelper = XposedHelpers.findClass("com.oplus.systemui.qs.helper.QSFragmentHelper", pkg.classLoader);
             iconColorState = XposedHelpers.findClass("com.oplus.systemui.qs.base.res.model.TileIconColorState", pkg.classLoader);
+            volumeIconClass = XposedHelpers.findClass("com.oplus.systemui.qs.base.seek.OplusQsVolumeIconView", pkg.classLoader);
+            colorfulUtil = XposedHelpers.findClass("com.oplus.systemui.qs.base.util.QsColorfulConfigUtil", pkg.classLoader);
+            XposedHelpers.findAndHookDeclaredMethod(volumeIconClass, "getUnMuteIconColor", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    View icon = (View) p.thisObject;
+                    if (!merged(icon)) return;
+                    volumeIcons.put(icon, true);
+                    if (restoring || enabled(icon)) return;
+                    int blue = (Integer) XposedHelpers.getStaticObjectField(colorfulUtil, "QS_COLORFUL_ICON_ACTIVE_BLUE_COLOR");
+                    if (p.getResult() instanceof Integer color && color == blue)
+                        p.setResult(XposedHelpers.getStaticObjectField(colorUtil, "BRIGHTNESS_ICON_BG_LIGHT_COLOR"));
+                }
+            });
+            Class<?> volumeState = XposedHelpers.findClass("com.android.systemui.plugins.qs.QSVolume$VolumeState", pkg.classLoader);
+            XposedHelpers.findAndHookDeclaredMethod(volumeIconClass, "updateIconState", volumeState, new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    View icon = (View) p.thisObject;
+                    if (!merged(icon)) return;
+                    volumeIcons.put(icon, true);
+                    refreshVolumeIcon(icon);
+                }
+            });
             Class<?> triple = XposedHelpers.findClass("kotlin.Triple", pkg.classLoader);
             XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.base.res.drawable.MixColorTileDrawable",
                     pkg.classLoader, "updateColor", triple, boolean.class, new XC_MethodHook() {
@@ -489,6 +513,7 @@ public final class MergedRadiantHooks {
         handler.post(refreshTask);
     }
     private static void refreshNow() {
+            for (View icon : new ArrayList<>(volumeIcons.keySet())) if (icon != null) refreshVolumeIcon(icon);
             for (View tile : new ArrayList<>(cards.keySet())) if (tile != null) updateCard(tile);
             for (View icon : new ArrayList<>(icons.keySet())) if (icon != null) {
                 Object proxy = icons.get(icon).get();
@@ -501,6 +526,7 @@ public final class MergedRadiantHooks {
     }
     public static Object captureHotReloadHosts() {
         ArrayList<Object> state = new ArrayList<>();
+        state.addAll(volumeIcons.keySet());
         for (View icon : new ArrayList<>(icons.keySet())) if (icon != null) {
             Object proxy = icons.get(icon).get();
             if (proxy != null) state.add(new Object[]{icon, proxy, nativeTints.get(proxy), icon.getRootView()});
@@ -547,6 +573,7 @@ public final class MergedRadiantHooks {
         refreshNow();
     }
     private static void restoreTree(View view) {
+        if (volumeIconClass.isInstance(view) && merged(view)) volumeIcons.put(view, true);
         if (merged(view) && (highlightClass.isInstance(view) || normalClass.isInstance(view))) {
             if (highlightClass.isInstance(view)) bind(view);
             View icon = (View) XposedHelpers.callMethod(view, "getIcon");
@@ -563,6 +590,7 @@ public final class MergedRadiantHooks {
         handler.removeCallbacksAndMessages(null);
         restoring = true;
         try {
+            for (View icon : new ArrayList<>(volumeIcons.keySet())) if (icon != null) refreshVolumeIcon(icon);
             for (View tile : new ArrayList<>(cards.keySet())) if (tile != null) {
                 Card card = cards.get(tile);
                 updateCard(tile); tile.removeOnLayoutChangeListener(card.listener);
@@ -573,7 +601,17 @@ public final class MergedRadiantHooks {
                 if (tile != null) refreshBackground(tile);
             }
             for (Object proxy : new ArrayList<>(nativeTints.keySet())) if (proxy != null) setTint(proxy, nativeTints.get(proxy));
-        } finally { cards.clear(); icons.clear(); nativeTints.clear(); tints.clear(); restoring = false; }
+        } finally { cards.clear(); icons.clear(); volumeIcons.clear(); nativeTints.clear(); tints.clear(); restoring = false; }
+    }
+    private static void refreshVolumeIcon(View icon) {
+        Object state = XposedHelpers.getObjectField(icon, "qsVolumeState");
+        if (state == null) return;
+        int level = (Integer) XposedHelpers.callMethod(state, "getLevel");
+        int route = (Integer) XposedHelpers.callMethod(state, "getRoute");
+        if (level < 0 || route == -1) return;
+        // Same threshold used by native normal, Bluetooth and wired icon states.
+        int distance = (Integer) XposedHelpers.callMethod(state, "getDistanceFromBottom");
+        XposedHelpers.callMethod(icon, "updateIconColor", level == 0, distance >= 20);
     }
     private static final class Card {
         WeakReference<View> circle;
