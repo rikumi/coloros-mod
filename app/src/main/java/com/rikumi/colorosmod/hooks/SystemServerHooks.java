@@ -405,6 +405,8 @@ public final class SystemServerHooks {
     // 不可拦 exitFlexibleTaskWindowInnerLocked —— 图标成形/缩小动画在其 handleEvent() 内, 截断就卡在松手位置。
     // 同时把焦点交给小窗下方任务, 避免"窗口已 hide 但仍 focused"导致音量键无响应 / ANR。
     public static void hookFloatWindowEdgeHangSystemServer(final XC_LoadPackage.LoadPackageParam lpparam) {
+        sEdgeHangHooksReady = false;
+        boolean coreHooksReady = false;
         try {
             final Class<?> taskExtImplCls = XposedHelpers.findClass(
                     "com.android.server.wm.TaskExtImpl", lpparam.classLoader);
@@ -417,15 +419,91 @@ public final class SystemServerHooks {
             sFloatHandleController = fhcCls;
             sFlexibleWindowService = fwmsCls;
 
+            // 仅在原生贴边退出的提交期间接管，普通退后台不能因旧浮窗记录而被拦截。
+            final Class<?> ftcCls = XposedHelpers.findClass(
+                    "com.android.server.wm.FlexibleTaskController", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(ftcCls, "exitFlexibleTask", taskCls,
+                    boolean.class, int.class, int.class, boolean.class, boolean.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            param.setObjectExtra(EDGE_EXIT_TASK, sEdgeExitTask.get());
+                            sEdgeExitTask.set(Integer.valueOf(16).equals(param.args[2])
+                                    ? param.args[0] : null);
+                        }
+
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            Object previous = param.getObjectExtra(EDGE_EXIT_TASK);
+                            if (previous == null) sEdgeExitTask.remove();
+                            else sEdgeExitTask.set(previous);
+                            // 原生提交还会隐藏表面、移除小窗及通知监听器。完成后再同步输入焦点，
+                            // 不依赖用户切换前台来触发下一次焦点计算。原方法的锁已释放，需重新获取。
+                            if (param.hasThrowable() || param.args[0] == null
+                                    || sHungTaskIds.isEmpty()) return;
+                            try {
+                                Object wm = XposedHelpers.getObjectField(param.args[0], "mWmService");
+                                synchronized (XposedHelpers.getObjectField(wm, "mGlobalLock")) {
+                                    if (isActiveHungTask(param.args[0])) focusTaskBehind(param.args[0]);
+                                }
+                            } catch (Throwable t) {
+                                log("!!! edge_hang commit focus failed: " + t);
+                            }
+                        }
+                    });
+
+            final Class<?> windowCls = XposedHelpers.findClass(
+                    "com.android.server.wm.WindowState", lpparam.classLoader);
+            XC_MethodHook rejectHungWindowInput = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    if (sHungTaskIds.isEmpty()) return;
+                    try {
+                        if (isActiveHungTask(XposedHelpers.callMethod(param.thisObject, "getTask"))) {
+                            param.setResult(false);
+                        }
+                    } catch (Throwable t) {
+                        log("!!! edge_hang input eligibility failed: " + t);
+                    }
+                }
+            };
+            // 仅 hide Task 的 SurfaceControl 不改变 WindowState 的可见性和输入资格。
+            // 否则 findFocusedWindow 仍会选中隐藏小窗，手势条和识屏服务看到的焦点仍错误。
+            // getTask() 对手势条等非 Activity 窗口返回 null，不改变原生长按识别和监听器。
+            XposedHelpers.findAndHookMethod(windowCls, "canReceiveKeys", boolean.class,
+                    rejectHungWindowInput);
+            XposedHelpers.findAndHookMethod(windowCls, "canReceiveTouchInput", rejectHungWindowInput);
+
+            final Class<?> arCls = XposedHelpers.findClass(
+                    "com.android.server.wm.ActivityRecord", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(arCls, "addToStopping", boolean.class, boolean.class,
+                    String.class, new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            // exitFlexibleTask 在跳过 moveTaskToBack 后，仍会将支持 PiP 的
+                            // Activity 加入停止队列。只拦这次贴边提交，不干预锁屏等暂停流程。
+                            if (!"startToFloatAnimation".equals(param.args[2])) return;
+                            try {
+                                Object task = XposedHelpers.callMethod(param.thisObject, "getTask");
+                                if (task == sEdgeExitTask.get() && isActiveHungTask(task)) {
+                                    param.setResult(null);
+                                }
+                            } catch (Throwable t) {
+                                log("!!! edge_hang stop eligibility failed: " + t);
+                            }
+                        }
+                    });
+
             XposedHelpers.findAndHookMethod(taskExtImplCls, "moveTaskToBackForPanorama",
                     taskCls, boolean.class, int.class,
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
-                                if (!readBool(KEY_FLOAT_WINDOW_EDGE_HANG_ENABLED, false)) return;
+                                if (!sEdgeHangHooksReady
+                                        || !readBoolCached(KEY_FLOAT_WINDOW_EDGE_HANG_ENABLED, false)) return;
                                 final Object task = param.args[0];
-                                if (task == null) return;
+                                if (task == null || task != sEdgeExitTask.get()) return;
                                 final int taskId = XposedHelpers.getIntField(task, "mTaskId");
 
                                 // 只介入"贴边成浮窗"一路: 此时 addFloatHandle 已把任务加入浮窗列表。
@@ -435,18 +513,18 @@ public final class SystemServerHooks {
                                     return;
                                 }
 
-                                // 先把焦点交给小窗下方任务, 避免 hidden + focused 造成 ANR。
+                                // 先登记再计算焦点，使本次计算就排除隐藏小窗的输入窗口。
+                                sHungTaskIds.add(Integer.valueOf(taskId));
+                                sHungTasks.put(Integer.valueOf(taskId), new WeakReference<Object>(task));
                                 focusTaskBehind(task);
 
                                 // 可选: 贴边挂机静音, 回到前台时恢复。
-                                if (readBool(KEY_FLOAT_WINDOW_EDGE_HANG_MUTE_ENABLED, false)) {
+                                if (readBoolCached(KEY_FLOAT_WINDOW_EDGE_HANG_MUTE_ENABLED, false)) {
                                     muteFloatTask(taskId, task);
                                 }
 
                                 // 跳过 Task.moveTaskToBack: 任务保持在台前, 应用继续挂机。
                                 param.setResult(null);
-                                sHungTaskIds.add(Integer.valueOf(taskId));
-                                sHungTasks.put(Integer.valueOf(taskId), new WeakReference<Object>(task));
                                 log(">>> edge_hang: skip moveTaskToBack, taskId=" + taskId);
                                 showEdgeHangToast();
                             } catch (Throwable t) {
@@ -465,6 +543,15 @@ public final class SystemServerHooks {
                         if (sHungTaskIds.isEmpty()) return;
                         final int taskId = XposedHelpers.getIntField(param.thisObject, "mTaskId");
                         if (!sHungTaskIds.contains(taskId)) return;
+                        boolean floating = isTaskInFloatingList(taskId);
+                        if (!floating || !readBoolCached(KEY_FLOAT_WINDOW_EDGE_HANG_ENABLED, false)) {
+                            Object task = param.thisObject;
+                            releaseHungTask(task);
+                            // 开关关闭时补回此前跳过的原生退后台；在原生 prepareSurfaces 前执行，
+                            // 由系统按更新后的任务状态决定表面可见性。
+                            if (floating) XposedHelpers.callMethod(task, "moveTaskToBack", task);
+                            return;
+                        }
                         XposedHelpers.setAdditionalInstanceField(param.thisObject,
                                 LAST_SHOWING, Boolean.valueOf(
                                         XposedHelpers.getBooleanField(param.thisObject, "mLastSurfaceShowing")));
@@ -485,11 +572,8 @@ public final class SystemServerHooks {
                         if (!isTaskInFloatingList(taskId)) {
                             // 已还原成浮窗(点把手)或已被移除: 交还系统。mLastSurfaceShowing 置 false,
                             // 否则系统认为 surface 已是 shown, 不再下发 show, 窗口反倒不再显示。
-                            sHungTaskIds.remove(taskId);
-                            sHungTasks.remove(Integer.valueOf(taskId));
-                            XposedHelpers.setBooleanField(task, "mLastSurfaceShowing", false);
+                            releaseHungTask(task);
                             // 任务离开浮窗列表 = 用户点开小窗 / 关闭应用: 静音在此处可靠地恢复。
-                            restoreMuteIfNeeded();
                             log(">>> edge_hang: task " + taskId + " left floating list, release surface");
                             return;
                         }
@@ -508,6 +592,19 @@ public final class SystemServerHooks {
                     }
                 }
             });
+            XposedHelpers.findAndHookMethod(taskCls, "removeImmediately", String.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                if (sHungTaskIds.contains(XposedHelpers.getIntField(
+                                        param.thisObject, "mTaskId"))) releaseHungTask(param.thisObject);
+                            } catch (Throwable t) {
+                                log("!!! edge_hang remove task cleanup failed: " + t);
+                            }
+                        }
+                    });
+            coreHooksReady = true;
             log(">>> matched android (system_server): float_window_edge_hang (skip moveTaskToBack)");
         } catch (Throwable t) {
             log("!!! float_window_edge_hang system_server hook failed: " + t);
@@ -528,7 +625,8 @@ public final class SystemServerHooks {
                                 if (sHungTaskIds.isEmpty()) return;
                                 // args: (keyguardChanged, keyguardShowing, displayId); 只处理解锁。
                                 if (!Boolean.TRUE.equals(param.args[0])
-                                        || Boolean.TRUE.equals(param.args[1])) return;
+                                        || Boolean.TRUE.equals(param.args[1])
+                                        || !Integer.valueOf(0).equals(param.args[2])) return;
                                 // 解锁后的 resume 晚于本回调, 延后纠正; 再复查一次兜住更慢的时序。
                                 postAsyncDelayed(new Runnable() {
                                     @Override
@@ -564,7 +662,8 @@ public final class SystemServerHooks {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     try {
-                        if (sHungTaskIds.isEmpty()) return;
+                        if (sHungTaskIds.isEmpty()
+                                || !readBoolCached(KEY_FLOAT_WINDOW_EDGE_HANG_ENABLED, false)) return;
                         Object ar = param.args[0];
                         if (ar == null) return;
                         Object t = XposedHelpers.callMethod(ar, "getTask");
@@ -573,9 +672,7 @@ public final class SystemServerHooks {
                         if (!sHungTaskIds.contains(id)) return;
                         if (!isTaskInFloatingList(id.intValue())) {
                             // 已还原成浮窗/已关闭: 焦点归它是对的, 交还系统。
-                            sHungTaskIds.remove(id);
-                            sHungTasks.remove(id);
-                            releaseHungTaskMuteAsync(id.intValue());
+                            releaseHungTask(t);
                             return;
                         }
                         Object behind = findBehindActivity(t);
@@ -587,6 +684,8 @@ public final class SystemServerHooks {
                     }
                 }
             });
+            // 输入、表面及焦点 hook 必须全部可用；不支持的 ROM 保留原生退后台。
+            sEdgeHangHooksReady = coreHooksReady;
             log(">>> matched android (system_server): float_window_edge_hang (focus invariant)");
         } catch (Throwable t) {
             log("!!! float_window_edge_hang focus invariant hook failed: " + t);
@@ -832,6 +931,28 @@ public final class SystemServerHooks {
         }
     }
 
+    private static boolean isActiveHungTask(Object task) {
+        if (task == null || sHungTaskIds.isEmpty()
+                || !readBoolCached(KEY_FLOAT_WINDOW_EDGE_HANG_ENABLED, false)) return false;
+        try {
+            int id = XposedHelpers.getIntField(task, "mTaskId");
+            WeakReference<Object> ref = sHungTasks.get(id);
+            return sHungTaskIds.contains(id) && ref != null && ref.get() == task
+                    && isTaskInFloatingList(id);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    // 调用者持有 WM 全局锁；表面记账恢复为实际隐藏状态，下一次原生遍历才能重新 show。
+    private static void releaseHungTask(Object task) {
+        int id = XposedHelpers.getIntField(task, "mTaskId");
+        sHungTaskIds.remove(id);
+        sHungTasks.remove(id);
+        XposedHelpers.setBooleanField(task, "mLastSurfaceShowing", false);
+        releaseHungTaskMuteAsync(id);
+    }
+
     // 若焦点正落在挂机小窗上, 把它交还给下面的主窗口。
     private static void refocusBehindHungTasks(String reason) {
         try {
@@ -846,16 +967,13 @@ public final class SystemServerHooks {
                     releaseHungTaskMuteAsync(id.intValue());
                     continue;
                 }
-                if (!isTaskInFloatingList(id)) {
-                    // 已还原成浮窗: 焦点归它是对的, 不再干预。
-                    sHungTaskIds.remove(id);
-                    sHungTasks.remove(id);
-                    releaseHungTaskMuteAsync(id.intValue());
-                    continue;
+                Object wm = XposedHelpers.getObjectField(task, "mWmService");
+                synchronized (XposedHelpers.getObjectField(wm, "mGlobalLock")) {
+                    if (!isActiveHungTask(task)) continue;
+                    if (!isFocusedTask(task)) continue;
+                    focusTaskBehind(task);
+                    log(">>> edge_hang: refocus behind on " + reason + ", taskId=" + id);
                 }
-                if (!isFocusedTask(task)) continue;
-                focusTaskBehind(task);
-                log(">>> edge_hang: refocus behind on " + reason + ", taskId=" + id);
             }
         } catch (Throwable t) {
             log("!!! edge_hang refocus failed: " + t);
@@ -902,7 +1020,7 @@ public final class SystemServerHooks {
             if (ftc == null) return null;
             // getTaskUnderFlexible 是 private, XposedHelpers 反射可调用。
             Object behind = XposedHelpers.callMethod(ftc, "getTaskUnderFlexible", floatTask);
-            if (behind == null) return null;
+            if (behind == null || behind == floatTask || isActiveHungTask(behind)) return null;
             if (!Boolean.TRUE.equals(XposedHelpers.callMethod(behind, "isTopActivityFocusable"))
                     || !Boolean.TRUE.equals(XposedHelpers.callMethod(behind, "isVisible"))) {
                 return null;
@@ -945,9 +1063,11 @@ public final class SystemServerHooks {
             Collections.synchronizedMap(new HashMap<Integer, WeakReference<Object>>());
 
     // 贴边挂机中弹出的提示文案。
-    private static final String EDGE_HANG_TOAST_TEXT = "贴边挂机中";
     // prepareSurfaces 的 before/after 之间传递 Task.mLastSurfaceShowing 的附加字段键。
     private static final String LAST_SHOWING = "colorosModLastSurfaceShowing";
+    private static final String EDGE_EXIT_TASK = "colorosModEdgeExitTask";
+    private static final ThreadLocal<Object> sEdgeExitTask = new ThreadLocal<>();
+    private static volatile boolean sEdgeHangHooksReady;
     private static volatile Object sPamExt;           // PlaybackActivityMonitorExtImpl 实例
     private static int sMutedTaskId = -1;
     private static int sMutedUid = -1;
@@ -984,7 +1104,7 @@ public final class SystemServerHooks {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             try {
-                                if (!readBool(KEY_FLOAT_WINDOW_EDGE_HANG_MUTE_ENABLED, false)) return;
+                                if (!readBoolCached(KEY_FLOAT_WINDOW_EDGE_HANG_MUTE_ENABLED, false)) return;
                             } catch (Throwable ignored) {
                                 return;
                             }
@@ -1069,10 +1189,12 @@ public final class SystemServerHooks {
     // 用户并没有点开它。静音必须贯穿整个挂机期间, 直到用户主动点开小窗。
     private static void restoreMuteIfNeeded() {
         synchronized (MUTE_LOCK) {
-            if (sPendingMuteTaskId >= 0 && !isTaskInFloatingList(sPendingMuteTaskId)) {
+            if (sPendingMuteTaskId >= 0 && (!sHungTaskIds.contains(sPendingMuteTaskId)
+                    || !isTaskInFloatingList(sPendingMuteTaskId))) {
                 cancelPendingMuteLocked();
             }
-            if (sMutedUid >= 0 && !isTaskInFloatingList(sMutedTaskId)) {
+            if (sMutedUid >= 0 && (!sHungTaskIds.contains(sMutedTaskId)
+                    || !isTaskInFloatingList(sMutedTaskId))) {
                 restoreMutedLocked();
             }
         }
@@ -1236,7 +1358,11 @@ public final class SystemServerHooks {
                 try {
                     Context ctx = systemContext();
                     if (ctx == null) return;
-                    Toast.makeText(ctx, EDGE_HANG_TOAST_TEXT, Toast.LENGTH_SHORT).show();
+                    Context moduleContext = ctx.createPackageContext(
+                            "com.rikumi.colorosmod", Context.CONTEXT_IGNORE_SECURITY)
+                            .createConfigurationContext(ctx.getResources().getConfiguration());
+                    Toast.makeText(ctx, moduleContext.getString(
+                            com.rikumi.colorosmod.R.string.ui_edge_hang), Toast.LENGTH_SHORT).show();
                 } catch (Throwable t) {
                     log("!!! edge_hang toast failed: " + t);
                 }
@@ -1644,7 +1770,8 @@ public final class SystemServerHooks {
                                 }
                                 if (uid != sLauncherUid) return;
                                 final String arg = (String) param.args[0];
-                                if (arg == null || arg.isEmpty()) return;
+                                if (arg == null || (!arg.startsWith("cmtask:")
+                                        && !arg.startsWith("cmpkg:"))) return;
                                 param.setResult(null); // 跳过原方法, 不做"只杀后台"的弱处理
                                 final Object ams = param.thisObject;
                                 // "cmtask:<taskId>": 定向杀掉某个任务所在的进程, 用于划掉小程序。
@@ -1678,9 +1805,13 @@ public final class SystemServerHooks {
                                     }
                                     return;
                                 }
-                                final String pkg = arg;
-                                // 用调用方自身的用户 id, 避免 Launcher 传进来的可能是 USER_CURRENT。
-                                final int userId = uid / 100000;
+                                // userId 来自被划掉任务的 TaskKey，不能用 Launcher 自身用户。
+                                if (!arg.startsWith("cmpkg:")) return;
+                                int separator = arg.indexOf(':', 6);
+                                if (separator < 0) return;
+                                final int userId = Integer.parseInt(arg.substring(6, separator));
+                                final String pkg = arg.substring(separator + 1);
+                                if (userId < 0 || pkg.isEmpty()) return;
                                 Thread killThread = new Thread(new Runnable() {
                                     @Override public void run() {
                                         try {
@@ -1797,6 +1928,7 @@ public final class SystemServerHooks {
     }
 
     public static void cleanupForHotReload() {
+        RecentFreeformHistoryHooks.cleanupForHotReload();
         synchronized (MUTE_LOCK) {
             cancelPendingMuteLocked();
             // canHotReload rejects active mute, but restore defensively before dropping sPamExt.
@@ -1815,6 +1947,8 @@ public final class SystemServerHooks {
         sFlexibleWindowService = null;
         sHungTaskIds.clear();
         sHungTasks.clear();
+        sEdgeExitTask.remove();
+        sEdgeHangHooksReady = false;
         sLauncherUid = -1;
         sSecurityMarginBackup.remove();
         synchronized (WIDTH_POLICY_LOCK) {

@@ -49,6 +49,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
@@ -85,6 +86,8 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.RectangleShape
@@ -602,10 +605,11 @@ fun CouixTopAppBar(
 @Composable
 internal fun CouixCard(
     modifier: Modifier = Modifier,
+    backgroundColor: Color? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val baseCard = CardDefaults.defaultColors()
-    val cardColors: CardColors = baseCard.copy(color = baseCard.color.copy(alpha = 0.8f))
+    val cardColors: CardColors = baseCard.copy(color = backgroundColor ?: baseCard.color.copy(alpha = 0.8f))
     Card(
         modifier = modifier.padding(
             start = COUIX_GROUP_HMARGIN,
@@ -1118,7 +1122,8 @@ internal fun CouixGroup(
                 when (item) {
                     is SwitchItem -> CouixSwitchRow(item = item, prefs = prefs, ctx = ctx, version = version, overrideValue = overrideValue, onItemChanged = onItemChanged)
                     is FolderBlockItem -> CouixFolderBlockRow(item = item, prefs = prefs, ctx = ctx, version = version, overrideValue = overrideValue, onItemChanged = onItemChanged)
-                    is SelectItem -> CouixSelectRow(item = item, prefs = prefs, ctx = ctx, version = version)
+                    is SelectItem -> CouixSelectRow(item = item, prefs = prefs, ctx = ctx, version = version,
+                        onItemChanged = onItemChanged)
                     is GroupTitleItem -> Unit
                 }
             }
@@ -1250,7 +1255,7 @@ private fun CouixDropdownDivider() {
 }
 
 /**
- * 折叠行右侧的下拉指示箭头（细线风格，与勾图标一致）：用两段圆头描边线段绘制成下指 chevron。
+ * 折叠行右侧的下拉指示箭头（细线风格，与勾图标一致）：用单条连续路径绘制，避免转角处重复叠加透明度。
  */
 @Composable
 private fun CouixDropdownArrow(
@@ -1264,8 +1269,12 @@ private fun CouixDropdownArrow(
         val p1 = Offset(w * 0.18f, h * 0.36f)
         val p2 = Offset(w * 0.5f, h * 0.68f)
         val p3 = Offset(w * 0.82f, h * 0.36f)
-        drawLine(color, p1, p2, strokeWidth = sw, cap = StrokeCap.Round)
-        drawLine(color, p2, p3, strokeWidth = sw, cap = StrokeCap.Round)
+        val path = Path().apply {
+            moveTo(p1.x, p1.y)
+            lineTo(p2.x, p2.y)
+            lineTo(p3.x, p3.y)
+        }
+        drawPath(path, color, style = Stroke(width = sw, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 }
 
@@ -1275,6 +1284,7 @@ private fun CouixSelectRow(
     prefs: SharedPreferences,
     ctx: Context,
     version: Int,
+    onItemChanged: () -> Unit = {},
 ) {
     var selected by remember(item.key, version) {
         mutableStateOf(prefs.getInt(item.key, item.defaultValue).coerceIn(0, item.options.lastIndex))
@@ -1287,7 +1297,7 @@ private fun CouixSelectRow(
             popupVisible = false
         }
     }
-    val options = item.options
+    val options = item.options.map { androidx.compose.ui.res.stringResource(it) }
     val onSurface = MiuixTheme.colorScheme.onSurface
     val summary = MiuixTheme.colorScheme.onSurfaceVariantSummary
 
@@ -1310,11 +1320,12 @@ private fun CouixSelectRow(
                         expanded = true
                     }
                 }
-                .padding(horizontal = COUIX_ROW_HPADDING, vertical = COUIX_ROW_VPADDING),
+                .padding(horizontal = COUIX_ROW_HPADDING, vertical = COUIX_ROW_VPADDING)
+                .heightIn(min = COUIX_SWITCH_H),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             BasicText(
-                text = item.label,
+                text = androidx.compose.ui.res.stringResource(item.label),
                 style = MiuixTheme.textStyles.body1.copy(color = onSurface),
                 modifier = Modifier.weight(1f),
             )
@@ -1360,6 +1371,7 @@ private fun CouixSelectRow(
                             if (index != selected) {
                                 selected = index
                                 setInt(ctx, item.key, index)
+                                onItemChanged()
                             }
                         }
                     }
@@ -1671,7 +1683,7 @@ private fun CouixSwitchRow(
     overrideValue: Boolean?,
     onItemChanged: () -> Unit,
 ) {
-    val label = if (item.labelRes != 0) androidx.compose.ui.res.stringResource(item.labelRes) else item.label
+    val label = androidx.compose.ui.res.stringResource(item.label)
     val scope = rememberCoroutineScope()
     // 系统设置不保存在 prefs，不能因其它条目的 prefs 刷新而重置状态。
     // 普通设置仍随 version 重读；系统设置仅在首次进入或主开关覆盖变化时读取。
@@ -1735,17 +1747,17 @@ private fun CouixSwitchRow(
                         singleLine = true,
                     )
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(text = "取消", modifier = Modifier.weight(1f), onClick = {
+                        TextButton(text = ctx.getString(R.string.ui_cancel), modifier = Modifier.weight(1f), onClick = {
                             selected = Color(prefs.getInt(colorKey, defaultColor))
                             hex = selected.toArgb().toUInt().toString(16).padStart(8, '0').uppercase()
                             expanded = false
                         })
-                        TextButton(text = "确认", modifier = Modifier.weight(1f), onClick = {
+                        TextButton(text = ctx.getString(R.string.ui_confirm), modifier = Modifier.weight(1f), onClick = {
                             if (hex.length == 6 || hex.length == 8) {
                                 setInt(ctx, colorKey, selected.toArgb())
                                 expanded = false
                                 onItemChanged()
-                            } else android.widget.Toast.makeText(ctx, "请输入六位或八位十六进制颜色值", android.widget.Toast.LENGTH_SHORT).show()
+                            } else android.widget.Toast.makeText(ctx, ctx.getString(R.string.ui_invalid_color), android.widget.Toast.LENGTH_SHORT).show()
                         })
                     }
                 }
@@ -1768,7 +1780,7 @@ private fun CouixSwitchRow(
                 onItemChanged()
             },
             title = label,
-            subtitle = item.subtitle,
+            subtitle = item.subtitle?.let { androidx.compose.ui.res.stringResource(it) },
         )
         return
     }
@@ -1799,7 +1811,7 @@ private fun CouixSwitchRow(
                 onItemChanged()
             },
             title = label,
-            subtitle = item.subtitle,
+            subtitle = item.subtitle?.let { androidx.compose.ui.res.stringResource(it) },
             onTitleClick = if (checked) {
                 { expanded = !expanded }
             } else {
@@ -1809,9 +1821,9 @@ private fun CouixSwitchRow(
                 if (checked) {
                     BasicText(
                         text = if (item.sliderDisplayScale == 1f) {
-                            "${intVal}${item.sliderUnit}"
+                            "${intVal}${if (item.sliderUnitRes != 0) ctx.getString(item.sliderUnitRes) else item.sliderUnit}"
                         } else {
-                            String.format(java.util.Locale.US, if (item.sliderDisplayScale >= 0.1f) "%.1f%s" else "%.2f%s", intVal * item.sliderDisplayScale, item.sliderUnit)
+                            String.format(java.util.Locale.US, if (item.sliderDisplayScale >= 0.1f) "%.1f%s" else "%.2f%s", intVal * item.sliderDisplayScale, if (item.sliderUnitRes != 0) ctx.getString(item.sliderUnitRes) else item.sliderUnit)
                         },
                         style = MiuixTheme.textStyles.body2.copy(
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,

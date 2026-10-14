@@ -6,9 +6,11 @@ import android.net.Uri;
 import android.util.Log;
 
 import com.rikumi.colorosmod.hooks.QsHooks;
+import com.rikumi.colorosmod.hooks.WeatherHooks;
 import com.rikumi.colorosmod.hooks.GestureHooks;
 import com.rikumi.colorosmod.hooks.AncTileHooks;
 import com.rikumi.colorosmod.hooks.NotificationHooks;
+import com.rikumi.colorosmod.hooks.MonochromeNotificationHooks;
 import com.rikumi.colorosmod.hooks.ActiveTileOutlineHooks;
 import com.rikumi.colorosmod.hooks.PasswordInputHooks;
 import com.rikumi.colorosmod.hooks.StatusBarLyricHooks;
@@ -104,6 +106,7 @@ public class XposedInit extends XposedModule {
             "notification_pull_expand_enabled";
     public static final String KEY_RECENTS_SHOW_HIDDEN_ENABLED = "recents_show_hidden_enabled";
     public static final String KEY_RECENTS_HIDE_FREEFORM_ENABLED = "recents_hide_freeform_enabled";
+    public static final String KEY_RECENTS_HIDE_CLOSED_FREEFORM_ENABLED = "recents_hide_closed_freeform_enabled";
     public static final String KEY_HIDE_APPS_NOVERIFY_ENABLED = "hide_apps_noverify_enabled";
     public static final String KEY_HIDE_APPS_TITLE_FOLDER_ENABLED = "hide_apps_title_folder_enabled";
     // 停用应用免密码: 设置里停用"受生物识别保护"的应用(config_biometric_protected_package_names)
@@ -171,7 +174,7 @@ public class XposedInit extends XposedModule {
     // 系统用 FlavorTwoFeatureOption.isFlavorTwoDeviceExp()(= 一加品牌 && 海外 exp 区域)判定 OxygenOS,
     // 命中时把高亮磁贴(Wi-Fi/蓝牙)与滑条(音量/亮度)的圆角换成
     // R.dimen.qs_hl_tile_corner_radius_circle_oneplus(60dp), 其余用 qs_hl_tile_corner_radius_circle(16dp)。
-    // 开关开启时统一强制到 QS_CORNER_RADIUS_DIMEN 指定的那一档(合并式与分离式都生效)。
+    // 调整长形磁贴圆角：关闭保留原值，开启使用短边的 0–50% 自定义半径。
     public static final String KEY_QS_ACTIVE_OUTLINE_ENABLED = "qs_active_outline_enabled";
     public static final String KEY_QS_MERGED_RADIANT = "qs_merged_radiant";
     public static final String KEY_QS_MERGED_HOLLOW = "qs_merged_hollow";
@@ -182,15 +185,15 @@ public class XposedInit extends XposedModule {
     public static final String KEY_QS_ACTIVE_COLOR_ENABLED = "qs_active_color_enabled";
     public static final String KEY_QS_ACTIVE_COLOR = "qs_active_color";
     public static final String KEY_QS_NORMAL_CORNER_RADIUS_ENABLED = "qs_normal_corner_radius_enabled";
+    public static final String KEY_QS_CORNER_RADIUS_MODE = "qs_corner_radius_mode";
+    public static final String KEY_QS_CORNER_RADIUS_ENABLED = "qs_corner_radius_enabled";
+    public static final String KEY_QS_CORNER_RADIUS_DP = "qs_corner_radius_dp";
+    public static final String KEY_QS_CORNER_RADIUS_PERCENT = "qs_corner_radius_percent";
     // 分离版控制中心左右切换取消切入效果: 通知中心/控制中心之间左右滑动时直接平移而非切变。
     public static final String KEY_QS_PANEL_SWITCH_NO_CUT_ENABLED = "qs_panel_switch_no_cut_enabled";
     // 合并控制中心时间日期取消展开动画: 一次下拉(fraction=0)时页脚时间与日期处于"小字号 + 未位移"
     // 的初始态, 继续展开时系统把它们放大到约 2 倍并平移到新位置(见 QsHooks#hookQsClockNoExpandAnim)。
     public static final String KEY_QS_CLOCK_NO_EXPAND_ANIM_ENABLED = "qs_clock_no_expand_anim_enabled";
-    // false = 强制普通圆角(默认, 即本功能的正常行为); 改为 true 可强制 OxygenOS 大圆角, 用于确认注入是否生效。
-    public static final boolean QS_CORNER_RADIUS_FORCE_ONEPLUS = false;
-    public static final String QS_CORNER_RADIUS_DIMEN = QS_CORNER_RADIUS_FORCE_ONEPLUS
-            ? "qs_hl_tile_corner_radius_circle_oneplus" : "qs_hl_tile_corner_radius_circle";
     // 圆角轮廓 provider 与构造入口(QSConstant#getSmoothRoundRectOutlineProvider)。
     public static final String QS_OUTLINE_PROVIDER_CLASS =
             "com.oplusos.systemui.common.outline.RoundRectOutlineProvider";
@@ -339,8 +342,14 @@ public class XposedInit extends XposedModule {
     public static final int KEYGUARD_NOTIFICATION_OFFSET_DP_MAX = 40;
     // 输入密码界面支持侧滑或下滑返回: 允许键盘区下滑手势穿透到 bouncer 容器收起返回锁屏,
     // 放行系统侧滑返回手势; 并把"上滑使用指纹解锁"提示改为"下滑返回指纹解锁"。
-    // 状态栏歌词: 数据源是 ColorOS 媒体接口的 metadata.lyricInfo, 无需注入音乐软件/伪装机型。
+    // 歌词显示模式: 0=关闭 / 1=通知区域 / 2=流体云；旧布尔键仅供升级兼容。
+    public static final String KEY_STATUSBAR_LYRIC_MODE = "statusbar_lyric_mode";
+    public static final int STATUSBAR_LYRIC_MODE_OFF = 0;
+    public static final int STATUSBAR_LYRIC_MODE_NOTIFICATION = 1;
+    public static final int STATUSBAR_LYRIC_MODE_LIVE_ALERTS = 2;
+    // 旧版本状态栏歌词设置，升级迁移完成后不再写入。
     public static final String KEY_STATUSBAR_LYRIC_ENABLED = "statusbar_lyric_enabled";
+    public static final String KEY_FLUID_CLOUD_LYRIC_ENABLED = "fluid_cloud_lyric_enabled";
     // 第三方状态栏歌词避让: 第三方悬浮窗左上角进入状态栏区域时隐藏系统时钟。
     public static final String KEY_STATUSBAR_LYRIC_AVOID_THIRD_PARTY_ENABLED =
             "statusbar_lyric_avoid_third_party_enabled";
@@ -559,11 +568,19 @@ public class XposedInit extends XposedModule {
         if (!sSyncActive || all == null) return;
         boolean first = !sSettingsLoaded;
         sSnapshot = all;
+        if (sIsSystemServer) {
+            com.rikumi.colorosmod.hooks.RecentFreeformHistoryHooks.onSettingsSnapshotPublished(all);
+        }
+        if ("com.android.settings".equals(sHookedPackageName)) {
+            SettingsHooks.onSettingsSnapshotPublished();
+        }
         if ("com.android.launcher".equals(sProcessName)) {
             LauncherHooks.onSettingsSnapshotPublished(all);
         }
         if ("com.android.systemui".equals(sHookedPackageName)) {
+            QsHooks.onCornerRadiusSettingsChanged();
             SignalHooks.onSettingsSnapshotPublished();
+            StatusBarLyricHooks.onSettingsSnapshotPublished();
             FoldIdleMediaHooks.refresh();
             StatusBarFontHooks.refresh();
             MergedCardRatioHooks.refresh();
@@ -571,6 +588,7 @@ public class XposedInit extends XposedModule {
             MergedRadiantHooks.refresh();
             MergedSettingsRotationHooks.refresh();
             StatusBarExtrasHooks.refresh();
+            MonochromeNotificationHooks.refresh();
         }
         if (first) {
             synchronized (sLoadLock) {
@@ -777,6 +795,9 @@ public class XposedInit extends XposedModule {
             catch (Throwable t) { log("system_server hot reload cleanup failed: " + t); }
             return;
         }
+        if ("com.android.settings".equals(sHookedPackageName)) {
+            SettingsHooks.cleanupForHotReload();
+        }
         if ("com.android.systemui".equals(sHookedPackageName)) {
             try { AncTileHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("anc hot reload cleanup failed: " + t); }
@@ -795,6 +816,7 @@ public class XposedInit extends XposedModule {
             try { MergedRadiantHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("merged radiant cleanup failed: " + t); }
             MergedSettingsRotationHooks.cleanup();
+            QsHooks.cleanupCornerRadiusForHotReload();
             try { MergedCardRatioHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("merged card ratio cleanup failed: " + t); }
             try { StatusBarExtrasHooks.cleanupForHotReload(); }
@@ -1005,6 +1027,7 @@ public class XposedInit extends XposedModule {
             SystemServerHooks.hookFloatWindowSizeLimits(systemServerLpparam());
             SystemServerHooks.hookFloatWindowCount(systemServerLpparam());
             SystemServerHooks.hookRecentsSwipeUpKillSystemServer(systemServerLpparam());
+            com.rikumi.colorosmod.hooks.RecentFreeformHistoryHooks.hook(systemServerLpparam());
             SystemServerHooks.hookStatusBarThirdPartyOverlayEvents(systemServerLpparam());
             SystemServerHooks.hookCompactCanvasCaptionInsets(systemServerLpparam());
             SystemServerHooks.hookCompactFlexibleCaptionBar(systemServerLpparam());
@@ -1192,6 +1215,8 @@ public class XposedInit extends XposedModule {
                 || "com.oplus.safecenter".equals(packageName)
                 || "com.android.settings".equals(packageName)
                 || "com.oplus.wallpapers".equals(packageName)
+                || "com.coloros.weather2".equals(packageName)
+                || "net.oneplus.weather".equals(packageName)
                 || "com.android.providers.media.module".equals(packageName);
     }
 
@@ -1221,6 +1246,9 @@ public class XposedInit extends XposedModule {
             LauncherHooks.hookLauncher(lpparam);
         } else if ("com.android.systemui".equals(lpparam.packageName)) {
             SystemUiHooks.hookSystemUi(lpparam);
+        } else if ("com.coloros.weather2".equals(lpparam.packageName)
+                || "net.oneplus.weather".equals(lpparam.packageName)) {
+            WeatherHooks.hookWeather(lpparam);
         } else if ("com.oplus.pscanvas".equals(lpparam.packageName)) {
             MultiWindowHooks.hookCanvasControlBar(lpparam);
         } else if ("com.oplus.safecenter".equals(lpparam.packageName)) {
@@ -1243,6 +1271,7 @@ public class XposedInit extends XposedModule {
             SystemServerHooks.hookFloatWindowCount(lpparam);
             // system_server: 多任务上划彻底结束进程, 配合 LauncherHooks 的 removeTask 补调
             SystemServerHooks.hookRecentsSwipeUpKillSystemServer(lpparam);
+            com.rikumi.colorosmod.hooks.RecentFreeformHistoryHooks.hook(lpparam);
             // system_server: 第三方悬浮窗变化事件, 供状态栏歌词避让功能按事件刷新窗口信息。
             SystemServerHooks.hookStatusBarThirdPartyOverlayEvents(lpparam);
             // system_server: 将画布分屏嵌入应用的状态栏 inset 同步缩至三点控制栏的新高度。
@@ -1325,6 +1354,12 @@ public class XposedInit extends XposedModule {
     private static Object settingsValue(String key) {
         Integer v = sSnapshot.get(key);
         if (v != null) return v;
+        // system_server 的调用方可能仍持有 AMS/WMS 锁。即使预热失败也不能等待
+        // worker 或同步获取 Provider，否则会形成 WMS -> AMS 的反向锁依赖。
+        if (sIsSystemServer) {
+            Object[] cached = sCache.get(key);
+            return cached != null ? cached[1] : null;
+        }
         // 已加载过全量快照仍没有该键: 说明确实没写过, 直接回落到调用方的默认值, 不必再走 IPC。
         if (sSettingsLoaded) return null;
         ensureFirstLoad();

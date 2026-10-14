@@ -24,11 +24,11 @@ internal fun restoreRemovedThemeColor(context: Context) {
             val output = process.inputStream.bufferedReader().use { it.readText() }
             check(process.waitFor() == 0 && output.lineSequence().any { it.trim() == "THEME_RESTORE_OK" }) {
                 output.lineSequence().firstOrNull { it.startsWith("THEME_RESTORE_ERROR: ") }
-                    ?.removePrefix("THEME_RESTORE_ERROR: ") ?: output.trim().takeLast(500).ifBlank { "无法执行恢复命令，请检查 root 权限" }
+                    ?.removePrefix("THEME_RESTORE_ERROR: ") ?: output.trim().takeLast(500).ifBlank { ctx.getString(R.string.ui_restore_command_failed) }
             }
         }.exceptionOrNull()
         if (error != null) withContext(Dispatchers.Main) {
-            android.widget.Toast.makeText(ctx, "原始主题恢复失败：${error.message}", android.widget.Toast.LENGTH_LONG).show()
+            android.widget.Toast.makeText(ctx, ctx.getString(R.string.ui_restore_theme_failed, error.message), android.widget.Toast.LENGTH_LONG).show()
         }
     }
 }

@@ -23,6 +23,41 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
  * 设置(com.android.settings) 作用域的全部 hook：首页图标风格(紧凑/列表)。
  */
 public final class SettingsHooks {
+    // 仅主线程访问页面引用和原生样式；后台快照发布只投递刷新。
+    private static final android.os.Handler HOME_HANDLER =
+            new android.os.Handler(android.os.Looper.getMainLooper());
+    private static java.lang.ref.WeakReference<Object> sHomeScreen =
+            new java.lang.ref.WeakReference<>(null);
+    private static final java.util.WeakHashMap<Object, Integer> sOriginalIconStyles =
+            new java.util.WeakHashMap<>();
+    private static final Runnable REFRESH_HOME = new Runnable() {
+        @Override public void run() {
+            Object screen = sHomeScreen.get();
+            if (screen == null) return;
+            int style = readIntCached(KEY_SETTINGS_HOME_ICON_STYLE,
+                    SETTINGS_HOME_ICON_STYLE_DEFAULT);
+            int couiStyle = style == SETTINGS_HOME_ICON_STYLE_DEFAULT ? -1
+                    : style == SETTINGS_HOME_ICON_STYLE_CIRCLE ? 0 : 1;
+            applySettingsHomeIconStyle(screen, couiStyle, screen.getClass().getClassLoader());
+        }
+    };
+
+    public static void onSettingsSnapshotPublished() {
+        HOME_HANDLER.removeCallbacks(REFRESH_HOME);
+        HOME_HANDLER.post(REFRESH_HOME);
+    }
+
+    public static void cleanupForHotReload() {
+        HOME_HANDLER.removeCallbacks(REFRESH_HOME);
+        // 旧 generation 卸载时恢复页面现有图标，避免遗留模块样式。
+        Object screen = sHomeScreen.get();
+        if (screen != null) {
+            applySettingsHomeIconStyle(screen, -1, screen.getClass().getClassLoader());
+        }
+        sHomeScreen.clear();
+        sOriginalIconStyles.clear();
+    }
+
 // 设置首页图标样式: 复用 Settings/Oplus 已有的 COUIRoundImageView 绘制路径。
 // Oplus 首页来自 top_level_settings_oplus.xml, 不经过 DashboardFeatureProviderImpl;
 // COUIPreference 的 couiIconStyle=0 是圆形, =1 是不规则圆角图标。
@@ -42,12 +77,9 @@ public final class SettingsHooks {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             if (!oplusTopLevelClass.isInstance(param.thisObject)) return;
-                            int style = readInt(KEY_SETTINGS_HOME_ICON_STYLE,
-                                    SETTINGS_HOME_ICON_STYLE_DEFAULT);
-                            if (style == SETTINGS_HOME_ICON_STYLE_DEFAULT) return;
-                            int couiStyle = style == SETTINGS_HOME_ICON_STYLE_CIRCLE ? 0 : 1;
-                            applySettingsHomeIconStyle(param.args[0], couiStyle,
-                                    lpparam.classLoader);
+                            sHomeScreen = new java.lang.ref.WeakReference<>(param.args[0]);
+                            // 首屏只读缓存；快照尚未就绪时保留原生图标，由 worker 发布后补刷新。
+                            REFRESH_HOME.run();
                         }
                     });
             log("HOOK OK settings native COUI homepage icon style");
@@ -67,9 +99,16 @@ public final class SettingsHooks {
                 if (icon != null) {
                     int current = (Integer) XposedHelpers.callMethod(
                             preferenceGroup, "getIconStyle");
-                    if (current != couiStyle) {
-                        XposedHelpers.callMethod(preferenceGroup, "setIconStyle", couiStyle);
+                    Integer original = sOriginalIconStyles.get(preferenceGroup);
+                    if (couiStyle >= 0 && original == null) {
+                        sOriginalIconStyles.put(preferenceGroup, current);
                     }
+                    int target = couiStyle >= 0 ? couiStyle
+                            : original != null ? original : current;
+                    if (current != target) {
+                        XposedHelpers.callMethod(preferenceGroup, "setIconStyle", target);
+                    }
+                    if (couiStyle < 0) sOriginalIconStyles.remove(preferenceGroup);
                 }
             }
             Class<?> preferenceGroupClass = XposedHelpers.findClass(

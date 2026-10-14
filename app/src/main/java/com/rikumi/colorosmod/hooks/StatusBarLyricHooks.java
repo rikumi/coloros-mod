@@ -58,6 +58,8 @@ public final class StatusBarLyricHooks {
     private static final int STATE_PLAYING = 3;
     /** 歌词轮询间隔(ms)。歌词最短切换间隔通常 >200ms, 250ms 足够跟手且开销很小。 */
     private static final long TICK_INTERVAL_MS = 250L;
+    /** Track metadata can arrive in separate callbacks; retain the current cloud geometry briefly. */
+    private static final long TRACK_LYRIC_SETTLE_MS = 5000L;
 
     private static final String CLS_PHONE_STATUS_BAR_VIEW =
             "com.android.systemui.statusbar.phone.PhoneStatusBarView";
@@ -75,7 +77,7 @@ public final class StatusBarLyricHooks {
     private static final float LYRIC_VERTICAL_OFFSET_DP = 1f;
 
     /** 歌词与左侧通知图标之间的外边距(dp): 位于歌词盒子**之外**, 歌词永远画不到它里面。 */
-    private static final int LYRIC_MARGIN_START_DP = 2;
+    private static final int LYRIC_MARGIN_START_DP = 6;
     // 歌词右边缘与流体云之间保留的间距(dp)。流体云(CapsulePluginContainer)覆盖在状态栏最上层,
     // 贴着它裁切会让歌词边缘被压住, 故右边界要再往左让出这一段。
     private static final int LYRIC_GAP_BEFORE_FLUID_DP = 4;
@@ -161,6 +163,12 @@ public final class StatusBarLyricHooks {
     /** 歌词缓存标识: 歌词原文整体变化才重新解析, 避免每次 metadata 更新都重解析。 */
     private static String sLyricSource = null;
     private static boolean sTicking = false;
+    private static Runnable sLyricTick;
+    private static String sTrackIdentity;
+    private static boolean sCloudLyricWidthReserved;
+    private static boolean sCloudLyricTrackPending;
+    private static long sCloudLyricTrackChangedAt;
+    private static int sLastLyricSettings = -1;
 
     // 歌词的裁切窗口。字幕 TextView 比容器宽(整句不换行), 靠 translationX 滚动, 故左右两侧都必须裁在盒子里:
     // 左侧 = 通知图标右侧 + 4dp 外边距, 右侧 = 右边界(挖孔 / 流体云左侧再让 8dp)。不依赖 setClipChildren
@@ -229,11 +237,13 @@ public final class StatusBarLyricHooks {
     private static void setPanelExpanded(boolean expanded) {
         if (expanded == sPanelExpanded) return;
         sPanelExpanded = expanded;
+        runOnMain(() -> FluidCloudLyricGeometry.setPanelExpanded(expanded));
         runOnMain(() -> setLyricHiddenForPanel(expanded));
     }
 
     public static void hookStatusBarLyric(final XC_LoadPackage.LoadPackageParam lpparam) {
         sGenerationActive = true;
+        FluidCloudLyricHooks.init(lpparam);
         // 通知图标区仓库由 NotificationHooks#hookNativeNotificationIcon 抓取并统一下发显示模式,
         // 这里不再重复 hook, 避免两处各写一份造成互相拉扯(图标 <-> 数字来回跳)。
         hookStatusBarView(lpparam);
@@ -436,6 +446,7 @@ public final class StatusBarLyricHooks {
     /** Destructive cleanup commit; external registrations were detached in preflight. */
     public static synchronized void cleanupForHotReload() {
         sGenerationActive = false;
+        FluidCloudLyricHooks.clear();
         Handler handler = sMainHandler;
         try {
             if (handler != null) handler.removeCallbacksAndMessages(null);
@@ -496,6 +507,9 @@ public final class StatusBarLyricHooks {
         sLines = null;
         sLyricSource = null;
         sTicking = false;
+        sLyricTick = null;
+            sTrackIdentity = null;
+            sCloudLyricTrackPending = false;
         sLyricView = null;
         sOutgoingView = null;
         sIncomingView = null;
@@ -766,6 +780,7 @@ public final class StatusBarLyricHooks {
     }
 
     private static void attachLyricView(FrameLayout root) {
+        FluidCloudLyricHooks.clear();
         sStatusBarRoot = root;
         registerThirdPartyWindowObserver(root.getContext());
     // 宿主容器: 通知图标所在的 status_bar_start_side_content_for_fake(LinearLayout, 高 fill_parent)。
@@ -823,7 +838,7 @@ public final class StatusBarLyricHooks {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT);
         lp.gravity = Gravity.CENTER_VERTICAL;
-        // 歌词与左边的通知图标之间留 4dp(会被 updateLyricWidth 计入起点, 因此可用宽度仍正确)。
+        // 歌词与左边的通知图标之间留 6dp(会被 updateLyricWidth 计入起点, 因此可用宽度仍正确)。
         lp.leftMargin = Math.round(dpToPx(ctx, LYRIC_MARGIN_START_DP));
         int index = (icons != null && icons.getParent() == clockHost)
                 ? clockHost.indexOfChild(icons) + 1 : -1;
@@ -877,6 +892,7 @@ public final class StatusBarLyricHooks {
     // 故起点 = 宿主左边缘 + 前面兄弟宽度(含 margin); 不能直接量容器自己(隐藏时 GONE, 坐标不更新)。右边界取三者
     // 最小: 左半容器右边缘、挖孔 cutout_space_view 左边缘、流体云左边缘。不能用 clock 定位(隐藏后坐标返回 0)。
     private static void updateLyricWidth(View root, View host, FrameLayout container) {
+        if (container.getLayoutParams() instanceof FrameLayout.LayoutParams) return;
         try {
             int[] rootLoc = new int[2];
             root.getLocationOnScreen(rootLoc);
@@ -1115,6 +1131,11 @@ public final class StatusBarLyricHooks {
                 public void onPlaybackStateChanged(PlaybackState state) {
                     refreshLyric();
                 }
+
+                @Override
+                public void onSessionDestroyed() {
+                    refreshLyric();
+                }
             };
 
     private static void initMediaListener(Context ctx) {
@@ -1201,19 +1222,62 @@ public final class StatusBarLyricHooks {
     }
 
     /** 找到正在播放的会话, 必要时重新解析歌词, 然后刷新显示。 */
+    public static void onSettingsSnapshotPublished() {
+        if (!sGenerationActive || sListenersPreparedForHotReload || sMainHandler == null) return;
+        runOnMain(() -> {
+            int settings = lyricMode();
+            if (settings == sLastLyricSettings) return;
+            sLastLyricSettings = settings;
+            if (settings != STATUSBAR_LYRIC_MODE_LIVE_ALERTS) {
+                sCloudLyricWidthReserved = false;
+                sCloudLyricTrackPending = false;
+            }
+            stopTicking();
+            hideAllLyrics();
+            if (sMediaInited) refreshLyric();
+        });
+    }
+
+    private static boolean lyricsEnabled() {
+        return lyricMode() != STATUSBAR_LYRIC_MODE_OFF;
+    }
+
+    public static int lyricMode() {
+        int mode = readInt(KEY_STATUSBAR_LYRIC_MODE, -1);
+        if (mode >= STATUSBAR_LYRIC_MODE_OFF && mode <= STATUSBAR_LYRIC_MODE_LIVE_ALERTS) {
+            if (mode == STATUSBAR_LYRIC_MODE_OFF) return STATUSBAR_LYRIC_MODE_OFF;
+            return readBool(KEY_FLUID_CLOUD_LYRIC_ENABLED, false)
+                    || mode == STATUSBAR_LYRIC_MODE_LIVE_ALERTS
+                    ? STATUSBAR_LYRIC_MODE_LIVE_ALERTS : mode;
+        }
+        if (!readBool(KEY_STATUSBAR_LYRIC_ENABLED, false)) return STATUSBAR_LYRIC_MODE_OFF;
+        return readBool(KEY_FLUID_CLOUD_LYRIC_ENABLED, false)
+                ? STATUSBAR_LYRIC_MODE_LIVE_ALERTS : STATUSBAR_LYRIC_MODE_NOTIFICATION;
+    }
+
+    private static void hideAllLyrics() {
+        FluidCloudLyricHooks.clear();
+        hideLyric();
+    }
+
     private static void refreshLyric() {
         try {
-            if (!readBool(KEY_STATUSBAR_LYRIC_ENABLED, false)) {
+            if (!lyricsEnabled()) {
+                sCloudLyricWidthReserved = false;
+                sCloudLyricTrackPending = false;
                 stopTicking();
-                runOnMain(StatusBarLyricHooks::hideLyric);
+                runOnMain(StatusBarLyricHooks::hideAllLyrics);
                 return;
             }
             MediaSessionManager msm = sSessionManager;
             if (msm == null) return;
             List<MediaController> list = msm.getActiveSessions(null);
             if (list == null || list.isEmpty()) {
+                sCloudLyricWidthReserved = false;
+                sCloudLyricTrackPending = false;
                 stopTicking();
-                runOnMain(StatusBarLyricHooks::hideLyric);
+                sController = null;
+                runOnMain(StatusBarLyricHooks::hideAllLyrics);
                 return;
             }
 
@@ -1221,26 +1285,58 @@ public final class StatusBarLyricHooks {
             for (MediaController c : list) {
                 PlaybackState st = c.getPlaybackState();
                 if (st != null && st.getState() == STATE_PLAYING) {
-                    playing = c;
-                    break;
+                    if (playing == null) playing = c;
                 }
             }
             if (playing == null) {
+                // A track change can briefly buffer/skip before its final metadata arrives.
+                // Keep the already-expanded cloud through that state, but still clear on pause/stop.
+                if (sCloudLyricWidthReserved && sController != null) {
+                    for (MediaController c : list) {
+                        if (sController.getSessionToken().equals(c.getSessionToken())
+                                && isPlaybackTransition(c.getPlaybackState())) {
+                            sController = c;
+                            runOnMain(StatusBarLyricHooks::clearRenderedLyric);
+                            startTicking();
+                            return;
+                        }
+                    }
+                }
+                sCloudLyricWidthReserved = false;
+                sCloudLyricTrackPending = false;
                 sController = null;
                 stopTicking();
-                runOnMain(StatusBarLyricHooks::hideLyric);
+                runOnMain(StatusBarLyricHooks::hideAllLyrics);
                 return;
             }
+            boolean sessionChanged = sController == null
+                    || !sController.getSessionToken().equals(playing.getSessionToken());
             sController = playing;
 
             // 歌词: metadata -> "lyricInfo"(JSON) -> "lyric"(原文)
             MediaMetadata md = playing.getMetadata();
+            String track = md == null ? sTrackIdentity : md.getString(MediaMetadata.METADATA_KEY_MEDIA_ID)
+                    + "\n" + md.getString(MediaMetadata.METADATA_KEY_TITLE)
+                    + "\n" + md.getString(MediaMetadata.METADATA_KEY_ARTIST);
+            if (sessionChanged || !TextUtils.equals(track, sTrackIdentity)) {
+                stopTicking();
+                sCloudLyricTrackPending = sCloudLyricWidthReserved
+                        && lyricMode() == STATUSBAR_LYRIC_MODE_LIVE_ALERTS;
+                sCloudLyricTrackChangedAt = SystemClock.elapsedRealtime();
+                if (!sCloudLyricTrackPending) sCloudLyricWidthReserved = false;
+                sTrackIdentity = track;
+                sLines = null;
+                sLyricSource = null;
+                // Decide whether to shrink only after inspecting the new song's lyric information.
+                runOnMain(StatusBarLyricHooks::clearRenderedLyric);
+            }
             String raw = null;
             if (md != null) {
                 String info = md.getString(METADATA_KEY_LYRIC_INFO);
                 if (!TextUtils.isEmpty(info)) {
                     try {
-                        raw = new JSONObject(info).optString(LYRIC_INFO_KEY_LYRIC, null);
+                        JSONObject lyricInfo = new JSONObject(info);
+                        raw = lyricInfo.optString(LYRIC_INFO_KEY_LYRIC, null);
                     } catch (Throwable t) {
                         log("statusbar_lyric parse lyricInfo error: " + t);
                     }
@@ -1248,61 +1344,135 @@ public final class StatusBarLyricHooks {
             }
             if (raw == null || raw.trim().length() == 0) {
                 stopTicking();
-                runOnMain(StatusBarLyricHooks::hideLyric);
+                sLines = null;
+                sLyricSource = null;
+                if (sCloudLyricTrackPending && !trackLyricSettlePending()) {
+                    sCloudLyricWidthReserved = false;
+                    runOnMain(StatusBarLyricHooks::hideAllLyrics);
+                } else if (sCloudLyricWidthReserved) startTicking();
+                else runOnMain(StatusBarLyricHooks::hideAllLyrics);
                 return;
             }
             if (!raw.equals(sLyricSource)) {
+                stopTicking();
+                runOnMain(StatusBarLyricHooks::clearRenderedLyric);
                 sLines = parseLyric(raw);
                 sLyricSource = raw;
             }
-            startTicking(playing);
+            if (sLines != null && !sLines.isEmpty() && FluidCloudLyricHooks.isHosting(sLyricView)) {
+                sCloudLyricWidthReserved = true;
+                sCloudLyricTrackPending = false;
+            }
+            startTicking();
         } catch (Throwable t) {
+            stopTicking();
+            runOnMain(StatusBarLyricHooks::hideAllLyrics);
             log("statusbar_lyric refreshLyric error: " + t);
         }
     }
 
     /** 按播放进度定时刷新当前行。 */
-    private static void startTicking(final MediaController controller) {
+    private static boolean isPlaybackTransition(PlaybackState state) {
+        if (state == null) return false;
+        int value = state.getState();
+        return value == PlaybackState.STATE_BUFFERING || value == PlaybackState.STATE_CONNECTING
+                || value == PlaybackState.STATE_SKIPPING_TO_PREVIOUS
+                || value == PlaybackState.STATE_SKIPPING_TO_NEXT
+                || value == PlaybackState.STATE_SKIPPING_TO_QUEUE_ITEM;
+    }
+
+    /** Keep the previous cloud width only while the new playing track can still publish lyrics. */
+    private static boolean trackLyricSettlePending() {
+        if (!sCloudLyricTrackPending || lyricMode() != STATUSBAR_LYRIC_MODE_LIVE_ALERTS) {
+            return false;
+        }
+        return SystemClock.elapsedRealtime() - sCloudLyricTrackChangedAt < TRACK_LYRIC_SETTLE_MS;
+    }
+
+    private static void startTicking() {
         if (sTicking) return;
         sTicking = true;
         final Runnable tick = new Runnable() {
             @Override
             public void run() {
+                if (sLyricTick != this) return;
+                sLyricTick = null;
                 sTicking = false;
+                if (!sGenerationActive || sListenersPreparedForHotReload) return;
                 try {
-                    if (!readBool(KEY_STATUSBAR_LYRIC_ENABLED, false)) {
-                        runOnMain(StatusBarLyricHooks::hideLyric);
+                    if (!lyricsEnabled()) {
+                        runOnMain(StatusBarLyricHooks::hideAllLyrics);
                         return;
                     }
-                    PlaybackState st = controller.getPlaybackState();
+                    MediaController current = sController;
+                    PlaybackState st = current == null ? null : current.getPlaybackState();
                     if (st == null || st.getState() != STATE_PLAYING) {
-                        runOnMain(StatusBarLyricHooks::hideLyric);
+                        if (sCloudLyricWidthReserved && isPlaybackTransition(st)) {
+                            runOnMain(() -> {
+                                clearRenderedLyric();
+                                if (!FluidCloudLyricHooks.show(sStatusBarRoot, sLyricView, sPanelExpanded)) {
+                                    hideAllLyrics();
+                                }
+                            });
+                            refreshLyric();
+                            return;
+                        }
+                        sCloudLyricWidthReserved = false;
+                        runOnMain(StatusBarLyricHooks::hideAllLyrics);
                         return;
                     }
                     long pos = estimatePosition(st);
                     CharSequence text = findLineAt(pos);
-                    // 流体云会动态出现/消失, 每次 tick 重算可用宽度(内部会跳过无变化的情况)。
-                    // 必须从状态栏根布局开始找 cutout/流体云, 宿主只是通知图标那一层。
-                    final FrameLayout c = sLyricView;
-                    final View root = sStatusBarRoot;
-                    if (c != null && root != null && c.getParent() instanceof View) {
-                        updateLyricWidth(root, (View) c.getParent(), c);
-                    }
                     if (text == null) {
-                        runOnMain(StatusBarLyricHooks::hideLyric);
+                        runOnMain(() -> {
+                            if (sCloudLyricWidthReserved && FluidCloudLyricHooks.show(
+                                    sStatusBarRoot, sLyricView, sPanelExpanded)) {
+                                clearRenderedLyric();
+                                sLyricView.setVisibility(View.VISIBLE);
+                                setHiddenForLyric(true);
+                                setNotificationNumberMode(false);
+                            } else {
+                                hideAllLyrics();
+                            }
+                        });
                     } else {
                         final CharSequence t2 = text;
                         runOnMain(() -> {
+                            boolean wasCloud = sLyricView != null && sLyricView.getLayoutParams()
+                                    instanceof FrameLayout.LayoutParams;
+                            if (FluidCloudLyricHooks.show(sStatusBarRoot, sLyricView, sPanelExpanded)) {
+                                sCloudLyricWidthReserved = true;
+                                setNotificationNumberMode(false);
+                                setHiddenForLyric(true);
+                                syncLyricTextColor();
+                                int width = sLyricView.getLayoutParams().width;
+                                if (sLyricMaxWidthPx != width) {
+                                    sLyricMaxWidthPx = width;
+                                    syncScrollToAvailableWidth();
+                                }
+                                showLyric(t2);
+                                return;
+                            }
+                            if (FluidCloudLyricHooks.enabled()) {
+                                hideLyric();
+                                return;
+                            }
+                            // clear() has restored the same lyric view to its status-bar host.
+                            if (wasCloud) sLyricMaxWidthPx = 0;
+                            if (sLyricView != null && sLyricView.getParent() instanceof View) {
+                                updateLyricWidth(sStatusBarRoot, (View) sLyricView.getParent(), sLyricView);
+                            }
                             // 每拍都重新声明一次(showLyric 文本未变时会提前返回):
                             // 时钟可见性会被系统动态改, 通知图标模式也可能被系统回滚。
                             setHiddenForLyric(true);
-                            setNotificationNumberMode(true);
+                            setNotificationNumberMode(!FluidCloudLyricHooks.enabled());
                             // 兜底同步颜色: 时钟可能经 onDarkChanged 之外的路径刷色。
                             syncLyricTextColor();
                             showLyric(t2);
                         });
                     }
                 } catch (Throwable t) {
+                    runOnMain(StatusBarLyricHooks::hideAllLyrics);
                     log("statusbar_lyric tick error: " + t);
                 }
                 // 继续下一拍(无论本次结果如何, 只要还在播放就保持轮询)。
@@ -1310,11 +1480,18 @@ public final class StatusBarLyricHooks {
             }
         };
         Handler h = sMainHandler;
-        if (h != null) h.postDelayed(tick, TICK_INTERVAL_MS);
+        if (h != null) {
+            sLyricTick = tick;
+            h.postDelayed(tick, TICK_INTERVAL_MS);
+        } else {
+            sTicking = false;
+        }
     }
 
     private static void stopTicking() {
-        // 轮询靠 startTicking 的 sTicking 标志自终止: 置 false 后下一个 tick 不再续期。
+        Runnable tick = sLyricTick;
+        sLyricTick = null;
+        if (tick != null && sMainHandler != null) sMainHandler.removeCallbacks(tick);
         sTicking = false;
     }
 
@@ -1355,7 +1532,8 @@ public final class StatusBarLyricHooks {
             if (l.timeMs <= positionMs) result = l.text;
             else break;
         }
-        if (result != null && isPlaceholderLyric(result)) return null;
+        if (result != null && (result.toString().trim().isEmpty()
+                || isPlaceholderLyric(result))) return null;
         return result;
     }
 
@@ -1380,11 +1558,9 @@ public final class StatusBarLyricHooks {
                     if (t != null) times.add(t);
                     i = end + 1;
                 }
-                if (!times.isEmpty() && i < line.length()) {
+                if (!times.isEmpty()) {
                     String text = line.substring(i).trim();
-                    if (text.length() > 0) {
-                        for (Long t : times) out.add(new Line(t, text));
-                    }
+                    for (Long t : times) out.add(new Line(t, text));
                 }
             } else if (c0 == '{') {
                 try {
@@ -1398,7 +1574,7 @@ public final class StatusBarLyricHooks {
                             String tx = item != null ? item.optString(LYRIC_TEXT, null) : null;
                             if (tx != null) sb.append(tx);
                         }
-                        if (sb.length() > 0) out.add(new Line(t, sb.toString()));
+                        out.add(new Line(t, sb.toString()));
                     }
                 } catch (Throwable ignored) {
                     // 单行解析失败不影响其它行。
@@ -1456,10 +1632,11 @@ public final class StatusBarLyricHooks {
         if (sCurrentText != null && TextUtils.equals(sCurrentText, text)) return;
         sCurrentText = text;
 
-        // 每次真正换文本都重新声明一次: 隐藏时钟 + 通知图标切"只显示数字"。
+        // 每次真正换文本都重新声明一次；云内歌词保留通知图标，普通状态栏歌词使用数字。
         // 两者内部都有状态判断, 重复调用只是 no-op, 可以防住 SystemUI 把可见性改回去。
         setHiddenForLyric(true);
-        setNotificationNumberMode(true);
+        setNotificationNumberMode(!FluidCloudLyricHooks.isHosting(container)
+                && !FluidCloudLyricHooks.enabled());
 
         // 下拉通知栏期间: 只把当前这句更新到视图上, 容器保持隐藏, 等收起时再显示。
         if (sPanelExpanded) {
@@ -1469,6 +1646,21 @@ public final class StatusBarLyricHooks {
             applyTextWidth(outgoing, text);
             outgoing.setText(text);
             resetTvTransform(outgoing);
+            return;
+        }
+
+        // Fluid Cloud lyrics stay on the capsule centerline; only horizontal overflow may scroll.
+        if (FluidCloudLyricHooks.isHosting(container)) {
+            cancelSwitchAnimator();
+            cancelScrollAnimator();
+            resetTv(incoming);
+            applyTextWidth(outgoing, text);
+            outgoing.setText(text);
+            resetTvTransform(outgoing);
+            outgoing.setVisibility(View.VISIBLE);
+            container.setTranslationY(0f);
+            container.setVisibility(View.VISIBLE);
+            startSinglePassScroll(outgoing, text);
             return;
         }
 
@@ -1557,6 +1749,26 @@ public final class StatusBarLyricHooks {
         tv.setTranslationX(0f);
     }
 
+    static void centerCloudLyric(View view) {
+        if (view != sLyricView) return;
+        Runnable center = () -> {
+            if (view != sLyricView || sOutgoingView == null || sIncomingView == null) return;
+            cancelSwitchAnimator();
+            cancelScrollAnimator();
+            CharSequence text = sCurrentText;
+            if (text != null) {
+                applyTextWidth(sOutgoingView, text);
+                sOutgoingView.setText(text);
+                sOutgoingView.setVisibility(View.VISIBLE);
+                resetTvTransform(sOutgoingView);
+                resetTv(sIncomingView);
+                startSinglePassScroll(sOutgoingView, text);
+            }
+            view.setTranslationY(0f);
+        };
+        runOnMain(center);
+    }
+
     // 歌词超长时单向往左滚到尽头停下(不来回、不重复), 只在新文本首次显示/切换动画结束时调用一次。
     // 被平移的是**完整承载整句**的 TextView(见 applyTextWidth), 它比容器宽多少就滚多少;
     // 容器是固定的裁切窗口, 不参与平移。
@@ -1570,7 +1782,6 @@ public final class StatusBarLyricHooks {
                 if (sOutgoingView != tv) return;
                 float target = computeScrollTarget(tv, text);
                 sScrollTargetX = target;
-                if (target >= 0f) return;
                 animateScrollTo(tv, 0f, target, true);
             }
         };
@@ -1583,9 +1794,19 @@ public final class StatusBarLyricHooks {
     // 终点 = 可用宽度 - 文本宽度, 其中可用宽度是**裁切窗口的宽度**, 不是 TextView 自己的宽度。
     private static float computeScrollTarget(TextView tv, CharSequence text) {
         if (tv == null) return 0f;
-        float textWidth = tv.getPaint().measureText(text == null ? "" : text.toString());
-        float available = sLyricMaxWidthPx > 0 ? sLyricMaxWidthPx : 0f;
+        float textWidth = measureLyricTextWidth(tv, text);
+        float available = availableLyricWidth();
+        if (available <= 0f) return 0f;
         return Math.min(0f, available - textWidth);
+    }
+
+    private static float availableLyricWidth() {
+        return sLyricMaxWidthPx > 0 ? sLyricMaxWidthPx : 0f;
+    }
+
+    private static float measureLyricTextWidth(TextView tv, CharSequence text) {
+        return tv == null ? 0f
+                : tv.getPaint().measureText(text == null ? "" : text.toString());
     }
 
     // 从 from 单向滚到 to 后停下(不来回、不重复), withDelay=true 时带起始停顿。
@@ -1614,9 +1835,8 @@ public final class StatusBarLyricHooks {
         sScrollAnimator = anim;
     }
 
-    // 可用宽度变窄(流体云出现)后让已滚到位的歌词**接着往下滚**: 流体云可能在整句滚完后才出现,
-    // 右边界被它收窄后原终点不够用, 尾巴会一直被挡住。故检测终点变化后从当前位置续滚到新终点。
-    // 只在终点变窄时续滚(变宽则不动, 免得来回抖); 续滚不加起始停顿 —— 它是被打断滚动的延续。
+    // 可用宽度变窄后，让已经开始滚动的歌词从当前位置续滚到新终点。
+    // 变宽时不重置位置，避免短歌词因布局变化跳到右侧。
     private static void syncScrollToAvailableWidth() {
         FrameLayout container = sLyricView;
         TextView tv = sOutgoingView;
@@ -1628,12 +1848,11 @@ public final class StatusBarLyricHooks {
         if (text == null) return;
 
         float target = computeScrollTarget(tv, text);
-        if (target >= sScrollTargetX - 0.5f) return; // 终点没变窄, 无需处理。
+        if (target >= sScrollTargetX - 0.5f) return; // 终点没有变窄, 无需处理。
         float current = tv.getTranslationX();
-        if (current <= target + 0.5f) return;        // 已经滚到位。
-
+        if (current <= target + 0.5f) return; // 已滚到位。
         sScrollTargetX = target;
-        // 同样是固定速率, 与首次滚动的速度完全一致。
+        // 同样使用固定速率, 与首次滚动速度一致。
         animateScrollTo(tv, current, target, false);
     }
 
@@ -1651,13 +1870,20 @@ public final class StatusBarLyricHooks {
         }
     }
 
-    private static void hideLyric() {
-        FrameLayout container = sLyricView;
-        if (container == null) return;
+    private static void clearRenderedLyric() {
         cancelSwitchAnimator();
         cancelScrollAnimator();
-        // 无论容器当前是否可见都尝试还原, 避免状态残留(内部有判断, 重复调用是 no-op)。
         sCurrentText = null;
+        if (sOutgoingView != null) sOutgoingView.setText(null);
+        if (sIncomingView != null) resetTv(sIncomingView);
+    }
+
+    private static void hideLyric() {
+        FluidCloudLyricHooks.clear();
+        FrameLayout container = sLyricView;
+        if (container == null) return;
+        clearRenderedLyric();
+        // 无论容器当前是否可见都尝试还原, 避免状态残留(内部有判断, 重复调用是 no-op)。
         setNotificationNumberMode(false);
         setHiddenForLyric(false);
         if (container.getVisibility() == View.GONE) return;

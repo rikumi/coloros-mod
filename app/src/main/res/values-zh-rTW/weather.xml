@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="weather_hide_air_quality">隱藏空氣品質</string>
+    <string name="weather_hide_sun">隱藏日出日落</string>
+    <string name="weather_hide_cctv">隱藏央視天氣預報</string>
+    <string name="weather_hide_life">隱藏生活指數</string>
+    <string name="weather_hide_ads">隱藏廣告</string>
+    <string name="weather_hide_pollen">隱藏花粉提示</string>
+    <string name="weather_hide_clothing">隱藏穿衣建議</string>
+    <string name="weather_hide_sunscreen">隱藏防曬建議</string>
+    <string name="weather_hide_makeup">隱藏美妝建議</string>
+    <string name="weather_hide_flu">隱藏流感提示</string>
+    <string name="weather_hide_operations">隱藏全部營運卡片</string>
+    <string name="weather_hide_meteorology_bg">隱藏氣象卡片背景</string>
+    <string name="weather_legacy_background">舊版動態天氣背景</string>
+    <string name="weather_category_purification">系統淨化</string>
+    <string name="weather_group_weather">天氣</string>
+    <string name="weather_api_region">API 伺服器</string>
+    <string name="weather_api_default">預設</string>
+    <string name="weather_api_china">中國</string>
+    <string name="weather_api_overseas">海外</string>
+    <string name="weather_hide_theme">移除主題換膚</string>
+    <string name="weather_hide_voice">移除天氣語音播報按鈕</string>
+    <string name="weather_navigation_padding">補齊底部導覽區域邊距</string>
+</resources>

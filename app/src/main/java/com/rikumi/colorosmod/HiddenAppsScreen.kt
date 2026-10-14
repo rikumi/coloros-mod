@@ -54,9 +54,9 @@ private fun readLauncherApps(context: Context): List<HiddenAppEntry> {
     fun quote(value: String) = "'" + value.replace("'", "'\\''") + "'"
     val user = android.os.Process.myUid() / 100000
     val output = runRoot("CLASSPATH=${quote(context.applicationInfo.sourceDir)} /system/bin/app_process /system/bin " +
-        "com.rikumi.colorosmod.HiddenAppsQueryCommand $user") ?: error("无法读取应用列表")
+        "com.rikumi.colorosmod.HiddenAppsQueryCommand $user") ?: error(context.getString(R.string.ui_cannot_read_apps))
     val json = output.lineSequence().firstOrNull { it.startsWith("HIDDEN_APPS_QUERY:") }
-        ?.removePrefix("HIDDEN_APPS_QUERY:") ?: error("无法读取安全中心隐藏状态")
+        ?.removePrefix("HIDDEN_APPS_QUERY:") ?: error(context.getString(R.string.ui_cannot_read_hidden_state))
     val array = org.json.JSONArray(json)
     val apps = (0 until array.length()).map { index ->
         val entry = array.getJSONObject(index)
@@ -87,7 +87,7 @@ internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit) {
                 .putBoolean(HiddenLauncherApps.ENABLED, true).commit()) {
             hidden = components
             SettingsProvider.notifySettingsChanged(context)
-        } else Toast.makeText(context, "保存失败", Toast.LENGTH_SHORT).show()
+        } else Toast.makeText(context, context.getString(R.string.ui_save_failed), Toast.LENGTH_SHORT).show()
     }
     BackHandler(enabled = picking) { picking = false }
     LaunchedEffect(hidden) {
@@ -99,20 +99,20 @@ internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit) {
             choices = null
             val result = withContext(Dispatchers.IO) { runCatching { readLauncherApps(context) } }
             choices = result.getOrDefault(emptyList())
-            if (result.isFailure) Toast.makeText(context, "读取应用列表失败，请检查 root 授权", Toast.LENGTH_SHORT).show()
+            if (result.isFailure) Toast.makeText(context, context.getString(R.string.ui_read_apps_failed), Toast.LENGTH_SHORT).show()
         }
     }
     Scaffold(topBar = {
         CouixTopAppBar(
-            title = if (picking) "选择应用" else "彻底隐藏应用",
+            title = if (picking) context.getString(R.string.ui_select_apps) else context.getString(R.string.ui_fully_hidden_apps),
             dividerProgress = couixTopBarDividerProgress(listState, overscroll),
             navigationIcon = {
                 IconButton(onClick = { if (picking) picking = false else onBack() }) {
-                    Icon(MiuixIcons.Back, "返回", tint = MiuixTheme.colorScheme.onSurface, modifier = Modifier.size(COUIX_BACK_ICON))
+                    Icon(MiuixIcons.Back, context.getString(R.string.ui_back), tint = MiuixTheme.colorScheme.onSurface, modifier = Modifier.size(COUIX_BACK_ICON))
                 }
             },
             actions = {
-                if (!picking) BasicText("添加", style = MiuixTheme.textStyles.body1.copy(color = MiuixTheme.colorScheme.primary),
+                if (!picking) BasicText(context.getString(R.string.ui_add), style = MiuixTheme.textStyles.body1.copy(color = MiuixTheme.colorScheme.primary),
                     modifier = Modifier.clickable { picking = true }.padding(horizontal = 12.dp, vertical = 10.dp))
                 RestartMenu(context)
             },
@@ -122,12 +122,12 @@ internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit) {
             item { Spacer(Modifier.height(12.dp)) }
             val current = if (picking) choices?.filter { it.component !in hidden } else entries
             when {
-                current == null -> item { CouixSmallTitle("加载中…") }
-                current.isEmpty() -> item { CouixSmallTitle("暂无应用") }
+                current == null -> item { CouixSmallTitle(context.getString(R.string.ui_loading)) }
+                current.isEmpty() -> item { CouixSmallTitle(context.getString(R.string.ui_no_apps)) }
                 else -> {
                     val groups = if (picking) listOf(
                         null to current.filter { !it.safeHidden },
-                        "已被安全中心隐藏" to current.filter { it.safeHidden },
+                        context.getString(R.string.ui_safe_hidden) to current.filter { it.safeHidden },
                     ) else listOf(null to current)
                     groups.forEach { (title, apps) ->
                         if (apps.isNotEmpty()) {
@@ -145,7 +145,7 @@ internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit) {
                                                     .setComponent(it).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                                             }
                                             if (launch == null || runCatching { context.startActivity(launch); true }.getOrDefault(false).not())
-                                                Toast.makeText(context, "无法打开应用", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, context.getString(R.string.ui_cannot_open_app), Toast.LENGTH_SHORT).show()
                                         })
                                 }
                             }
@@ -176,16 +176,16 @@ private fun HiddenAppRow(app: HiddenAppEntry, picking: Boolean, onAdd: () -> Uni
         }
         CouixRowActionMenu(expanded = expanded, onDismiss = { expanded = false }, anchorHeight = anchorHeight,
             items = listOf(
-                ActionMenuItem("打开", onOpen),
-                ActionMenuItem("应用信息") {
+                ActionMenuItem(context.getString(R.string.ui_open), onOpen),
+                ActionMenuItem(context.getString(R.string.ui_app_info)) {
                     val packageName = ComponentName.unflattenFromString(app.component)?.packageName
                     val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                         android.net.Uri.fromParts("package", packageName, null))
                         .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                     if (runCatching { context.startActivity(intent) }.isFailure)
-                        Toast.makeText(context, "无法打开应用信息", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, context.getString(R.string.ui_cannot_open_app_info), Toast.LENGTH_SHORT).show()
                 },
-                ActionMenuItem("取消隐藏", onRemove),
+                ActionMenuItem(context.getString(R.string.ui_unhide), onRemove),
             ))
     }
 }

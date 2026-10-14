@@ -104,7 +104,7 @@
 | 状态栏与通知中心 | 缩小通知静默区域副标题 | `notification_subtitle_enabled` | `notification_subtitle_sp` 0-16 / 8 |
 | 状态栏与通知中心 | 增加通知上下内边距 | `notification_padding_enabled` | `notification_padding_dp` 0-8 / 4 |
 | 状态栏与通知中心 | 流体云出现时不隐藏电量百分比 | `fluid_cloud_keep_percent_enabled` | — |
-| 状态栏与通知中心 | 状态栏显示歌词 | `statusbar_lyric_enabled` | — |
+| 状态栏与通知中心 | 歌词显示位置 | `statusbar_lyric_mode`（0=关闭 / 1=通知区域 / 2=流体云） | — |
 | 锁屏 | 解锁时关机无需校验密码 | `unlocked_shutdown_noverify_enabled` | — |
 | 锁屏 | 取消密码界面控件光效 | `keyguard_no_light_effect_enabled` | — |
 | 锁屏 | 密码界面支持侧滑/下滑返回 | `keyguard_bouncer_swipe_back_enabled` | — |
@@ -283,7 +283,13 @@
 - hook `com.oplus.systemui.statusbar.pipeline.battery.ui.binder.BatteryViewBinder`
   `#bind$updatePercentOutView(TextView, StatBatteryMeterView, PercentOutIcon)`，before 里把 `args[2]` 的 `isVisible` 置 `true`。
 
-### 状态栏歌词 `statusbar_lyric_enabled`（StatusBarLyricHooks）
+### 歌词显示模式 `statusbar_lyric_mode`（StatusBarLyricHooks）
+
+- 下拉选项为关闭、显示在通知区域、显示在流体云；一键启用写入通知区域模式。旧版
+  `statusbar_lyric_enabled` / `fluid_cloud_lyric_enabled` 在应用设置读取时迁移为对应模式。
+- 流体云模式仅尝试原生音乐胶囊；胶囊不可用时隐藏歌词，不回退到通知区域。
+- 歌词挂载期间固定页面两侧、胶囊容器及外层容器的水平 padding，并将 `CapsuleContainer` 的左右月牙
+  维持在原生零位移；退出时恢复各 View 的原始 padding。收缩阶段沿用当前布局右边缘锚点，即使音乐项暂时隐藏或替换，也只改变左边缘。
 
 **挂载**：hook `com.android.systemui.statusbar.phone.PhoneStatusBarView#onAttachedToWindow`，after 里
 `attachLyricView(root)` + `initMediaListener(ctx)`（媒体监听只注册一次，开关在 `refreshLyric` 里判断，保证实时生效）。

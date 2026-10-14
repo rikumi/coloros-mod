@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="weather_hide_air_quality">Hide air quality</string>
+    <string name="weather_hide_sun">Hide sunrise and sunset</string>
+    <string name="weather_hide_cctv">Hide CCTV forecast</string>
+    <string name="weather_hide_life">Hide lifestyle indices</string>
+    <string name="weather_hide_ads">Hide ads</string>
+    <string name="weather_hide_pollen">Hide pollen tips</string>
+    <string name="weather_hide_clothing">Hide clothing advice</string>
+    <string name="weather_hide_sunscreen">Hide sunscreen advice</string>
+    <string name="weather_hide_makeup">Hide makeup advice</string>
+    <string name="weather_hide_flu">Hide flu tips</string>
+    <string name="weather_hide_operations">Hide all promotional cards</string>
+    <string name="weather_hide_meteorology_bg">Hide meteorology card backgrounds</string>
+    <string name="weather_legacy_background">Legacy animated weather background</string>
+    <string name="weather_category_purification">System cleanup</string>
+    <string name="weather_group_weather">Weather</string>
+    <string name="weather_api_region">API server</string>
+    <string name="weather_api_default">Default</string>
+    <string name="weather_api_china">China</string>
+    <string name="weather_api_overseas">Overseas</string>
+    <string name="weather_hide_theme">Hide theme switching</string>
+    <string name="weather_hide_voice">Hide weather voice broadcast button</string>
+    <string name="weather_navigation_padding">Add bottom navigation area padding</string>
+</resources>

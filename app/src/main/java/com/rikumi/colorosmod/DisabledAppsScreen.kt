@@ -50,10 +50,7 @@ import com.rikumi.colorosmod.XposedInit.KEY_DISABLE_APPS_NOVERIFY_ENABLED
 import com.rikumi.colorosmod.XposedInit.KEY_HIDE_DISABLED_APPS_ENABLED
 
 // 页面顶部说明: 本页不提供直接停用的入口, 只做只读展示与脚本导出。
-private const val DISABLED_APPS_HINT =
-    "为防止误操作损害设备，我们不提供直接停用应用功能；这里列出了已通过其它途径停用和用户级卸载的应用列表，可在右上角导出成脚本方便重复执行。请注意：\n" +
-    "1. 取决于停用应用的途径，导出的脚本仍然可能需要 adb root；\n" +
-    "2. 模块获取的信息可能并不准确，因此脚本可能会导致系统崩溃或不稳定。请始终在无数据的全新系统上执行脚本。"
+
 
 // 说明段落之间的额外间距: 段内靠行距, 段间再拉开一点以区分段落。
 private val HINT_PARAGRAPH_GAP = 2.dp
@@ -124,16 +121,16 @@ private fun appLabel(ctx: Context, apkPath: String): String? {
 }
 
 // 生成导出脚本: 每行一条 adb 命令, 按模式分段并以注释标出(停用 / 用户级卸载)。
-private fun buildExportScript(apps: List<DisabledAppEntry>): String {
+private fun buildExportScript(ctx: Context, apps: List<DisabledAppEntry>): String {
     val sb = StringBuilder("#!/bin/sh\n")
     val disabled = apps.filter { !it.uninstalled }
     val uninstalled = apps.filter { it.uninstalled }
     if (disabled.isNotEmpty()) {
-        sb.append("\n# 停用\n")
+        sb.append("\n# ").append(ctx.getString(R.string.ui_disabled_state)).append("\n")
         disabled.forEach { sb.append("adb shell pm disable-user --user 0 ").append(it.pkg).append('\n') }
     }
     if (uninstalled.isNotEmpty()) {
-        sb.append("\n# 用户级卸载\n")
+        sb.append("\n# ").append(ctx.getString(R.string.ui_user_uninstalled)).append("\n")
         uninstalled.forEach { sb.append("adb shell pm uninstall -k --user 0 ").append(it.pkg).append('\n') }
     }
     return sb.toString()
@@ -150,7 +147,7 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
     LaunchedEffect(Unit) {
         val result = withContext(Dispatchers.IO) { listDisabledApps(ctx) }
         if (result == null) {
-            android.widget.Toast.makeText(ctx, "未授予 root 权限", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(ctx, ctx.getString(R.string.ui_root_denied), android.widget.Toast.LENGTH_SHORT).show()
         }
         apps = result.orEmpty()
     }
@@ -163,13 +160,13 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
             scope.launch(Dispatchers.IO) {
                 val ok = runCatching {
                     ctx.contentResolver.openOutputStream(uri)?.use { out ->
-                        out.write(buildExportScript(current).toByteArray())
+                        out.write(buildExportScript(ctx, current).toByteArray())
                     } != null
                 }.getOrDefault(false)
                 withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(
                         ctx,
-                        if (ok) "已导出" else "导出失败",
+                        if (ok) ctx.getString(R.string.ui_exported) else ctx.getString(R.string.ui_export_failed),
                         android.widget.Toast.LENGTH_SHORT,
                     ).show()
                 }
@@ -179,13 +176,13 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
     Scaffold(
         topBar = {
             CouixTopAppBar(
-                title = "停用应用",
+                title = ctx.getString(R.string.ui_category_disabled),
                 dividerProgress = couixTopBarDividerProgress(listState, overscrollOffset),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = MiuixIcons.Back,
-                            contentDescription = "返回",
+                            contentDescription = ctx.getString(R.string.ui_back),
                             tint = MiuixTheme.colorScheme.onSurface,
                             modifier = Modifier.size(COUIX_BACK_ICON),
                         )
@@ -194,14 +191,14 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
                 actions = {
                     IconButton(onClick = {
                         if (apps.isNullOrEmpty()) {
-                            android.widget.Toast.makeText(ctx, "暂无可导出的应用", android.widget.Toast.LENGTH_SHORT).show()
+                            android.widget.Toast.makeText(ctx, ctx.getString(R.string.ui_no_apps_to_export), android.widget.Toast.LENGTH_SHORT).show()
                         } else {
                             exportLauncher.launch("disabled_apps.sh")
                         }
                     }) {
                         Icon(
                             imageVector = MiuixIcons.Share,
-                            contentDescription = "导出",
+                            contentDescription = ctx.getString(R.string.ui_export),
                             tint = MiuixTheme.colorScheme.onSurface,
                         )
                     }
@@ -219,7 +216,7 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
         ) {
             // 第一个 group: 功能说明, 标题 + subtitle 形式(行内边距与设置项一致)。
             item { CouixCard { DisabledAppsHintRow() } }
-            item { CouixSmallTitle(text = "停用应用设置") }
+            item { CouixSmallTitle(text = ctx.getString(R.string.ui_disabled_settings)) }
             item {
                 CouixCard {
                     DisableAppsNoVerifyRow(ctx)
@@ -227,11 +224,11 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
                     HideDisabledAppsRow(ctx)
                 }
             }
-            item { CouixSmallTitle(text = "已停用的应用") }
+            item { CouixSmallTitle(text = ctx.getString(R.string.ui_disabled_apps)) }
             val current = apps
             when {
-                current == null -> item { CouixSmallTitle(text = "加载中…") }
-                current.isEmpty() -> item { CouixSmallTitle(text = "无已停用或用户级卸载的应用") }
+                current == null -> item { CouixSmallTitle(text = ctx.getString(R.string.ui_loading)) }
+                current.isEmpty() -> item { CouixSmallTitle(text = ctx.getString(R.string.ui_no_disabled_apps)) }
                 // 每行一个独立的惰性 item: 行数上百时不能共用一个容器(见 CouixCardRow 注释)。
                 else -> itemsIndexed(current, key = { _, entry -> entry.pkg }) { index, entry ->
                     CouixCardRow(first = index == 0, last = index == current.lastIndex) {
@@ -257,7 +254,7 @@ private fun DisableAppsNoVerifyRow(ctx: Context) {
             checked = it
             setBool(ctx, KEY_DISABLE_APPS_NOVERIFY_ENABLED, it)
         },
-        title = "停用应用无需输入密码",
+        title = androidx.compose.ui.res.stringResource(R.string.ui_disable_no_password),
     )
 }
 
@@ -273,7 +270,7 @@ private fun HideDisabledAppsRow(ctx: Context) {
             checked = it
             setBool(ctx, KEY_HIDE_DISABLED_APPS_ENABLED, it)
         },
-        title = "在应用管理中隐藏",
+        title = androidx.compose.ui.res.stringResource(R.string.ui_hide_in_app_management),
     )
 }
 
@@ -286,13 +283,13 @@ private fun DisabledAppsHintRow() {
             .padding(horizontal = 16.dp, vertical = 13.dp),
     ) {
         BasicText(
-            text = "功能说明",
+            text = androidx.compose.ui.res.stringResource(R.string.ui_feature_info),
             style = MiuixTheme.textStyles.body1.copy(
                 color = MiuixTheme.colorScheme.onSurface,
             ),
         )
         // 说明按换行符切成多段: 段内走行距, 段间额外加一点间距区分段落。
-        DISABLED_APPS_HINT.split('\n').forEachIndexed { index, paragraph ->
+        androidx.compose.ui.res.stringResource(R.string.ui_disabled_apps_hint).split('\n').forEachIndexed { index, paragraph ->
             BasicText(
                 text = paragraph,
                 style = MiuixTheme.textStyles.body2.copy(
@@ -319,7 +316,7 @@ private fun openAppDetails(ctx: Context, pkg: String) {
             Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg"))
         )
     } catch (_: ActivityNotFoundException) {
-        android.widget.Toast.makeText(ctx, "无法打开该应用的设置页", android.widget.Toast.LENGTH_SHORT)
+        android.widget.Toast.makeText(ctx, ctx.getString(R.string.ui_cannot_open_app_settings), android.widget.Toast.LENGTH_SHORT)
             .show()
     }
 }
@@ -355,7 +352,7 @@ private fun DisabledAppRow(entry: DisabledAppEntry, onClick: () -> Unit) {
             }
         }
         BasicText(
-            text = if (entry.uninstalled) "用户级卸载" else "停用",
+            text = if (entry.uninstalled) androidx.compose.ui.res.stringResource(R.string.ui_user_uninstalled) else androidx.compose.ui.res.stringResource(R.string.ui_disabled_state),
             style = MiuixTheme.textStyles.body2.copy(color = summary),
             modifier = Modifier.padding(start = 12.dp),
         )

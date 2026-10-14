@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="qs_merged_modernization">Modernize combined control center</string>
+    <string name="qs_merged_hollow">Rounded activation for combined CC</string>
+    <string name="qs_merged_radiant">Multi-color style in combined CC</string>
+    <string name="qs_merged_card_ratio">Preserve combined CC aspect ratios</string>
+    <string name="qs_merged_gap_enabled">Adjust combined CC column gap</string>
+    <string name="qs_merged_four_columns">4 tile columns in combined CC</string>
+    <string name="qs_merged_settings_rotation">Settings button rotates in combined CC</string>
+    <string name="qs_merged_tile_scale_animation">Fix combined CC tile row animation</string>
+    <string name="qs_merged_tile_clip_animation">Fix 2nd-pull-down clipping in comb. CC</string>
+    <string name="qs_merged_two_finger_expand">2-finger pull-down</string>
+    <string name="qs_active_outline_enabled">Allow contour glow over activation</string>
+    <string name="qs_active_color_enabled">Customize CC activation color</string>
+</resources>

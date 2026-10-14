@@ -1,0 +1,5 @@
+<resources>
+    <string name="fluid_cloud_lyric">Live alerts lyrics (experimental)</string>
+    <string name="ui_lyric_mode_off">Off</string>
+    <string name="ui_lyric_mode_notification">Notification area</string>
+</resources>

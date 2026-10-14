@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="weather_hide_air_quality">隐藏空气质量</string>
+    <string name="weather_hide_sun">隐藏日出日落</string>
+    <string name="weather_hide_cctv">隐藏央视天气预报</string>
+    <string name="weather_hide_life">隐藏生活指数</string>
+    <string name="weather_hide_ads">隐藏广告</string>
+    <string name="weather_hide_pollen">隐藏花粉提示</string>
+    <string name="weather_hide_clothing">隐藏穿衣建议</string>
+    <string name="weather_hide_sunscreen">隐藏防晒建议</string>
+    <string name="weather_hide_makeup">隐藏美妆建议</string>
+    <string name="weather_hide_flu">隐藏流感提示</string>
+    <string name="weather_hide_operations">隐藏全部运营卡片</string>
+    <string name="weather_hide_meteorology_bg">隐藏气象卡片背景</string>
+    <string name="weather_legacy_background">旧版动态天气背景</string>
+    <string name="weather_category_purification">系统净化</string>
+    <string name="weather_group_weather">天气</string>
+    <string name="weather_api_region">API 服务器</string>
+    <string name="weather_api_default">默认</string>
+    <string name="weather_api_china">中国</string>
+    <string name="weather_api_overseas">海外</string>
+    <string name="weather_hide_theme">去除主题换肤</string>
+    <string name="weather_hide_voice">去除语音播报天气按钮</string>
+    <string name="weather_navigation_padding">补齐底部导航区域边距</string>
+</resources>

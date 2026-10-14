@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="fluid_cloud_lyric">流體雲歌詞（試驗性）</string>
+    <string name="ui_lyric_mode_off">關閉</string>
+    <string name="ui_lyric_mode_notification">顯示在通知區域</string>
+</resources>

@@ -451,12 +451,23 @@ public final class MergedRadiantHooks {
                     title.getPaddingEnd(), subtitle.getPaddingBottom());
         LinearLayout.LayoutParams subtitleParams = (LinearLayout.LayoutParams) subtitle.getLayoutParams();
         LinearLayout.LayoutParams titleParams = (LinearLayout.LayoutParams) title.getLayoutParams();
+        // A MATCH_PARENT child does not contribute its desired width to a
+        // WRAP_CONTENT vertical LinearLayout. Let the English Wi-Fi status
+        // size the text column, rather than inherit a shorter title's width.
+        // Borrow 4dp from the card's 12dp trailing inset without moving its icon.
+        boolean englishWifi = state != null && "wifi".equals(XposedHelpers.getObjectField(state, "spec"))
+                && "en".equals(tile.getResources().getConfiguration().getLocales().get(0).getLanguage());
+        int subtitleWidth = englishWifi ? ViewGroup.LayoutParams.WRAP_CONTENT : ViewGroup.LayoutParams.MATCH_PARENT;
+        int subtitleEnd = titleParams.getMarginEnd() - (englishWifi
+                ? Math.round(4f * tile.getResources().getDisplayMetrics().density * scale) : 0);
         if (subtitleParams.gravity != Gravity.START
+                || subtitleParams.width != subtitleWidth
                 || subtitleParams.getMarginStart() != titleParams.getMarginStart()
-                || subtitleParams.getMarginEnd() != titleParams.getMarginEnd()) {
+                || subtitleParams.getMarginEnd() != subtitleEnd) {
             subtitleParams.gravity = Gravity.START;
+            subtitleParams.width = subtitleWidth;
             subtitleParams.setMarginStart(titleParams.getMarginStart());
-            subtitleParams.setMarginEnd(titleParams.getMarginEnd());
+            subtitleParams.setMarginEnd(subtitleEnd);
             subtitle.setLayoutParams(subtitleParams);
         }
         for (int i = 0; i < subtitle.getChildCount(); i++) {

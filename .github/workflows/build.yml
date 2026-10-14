@@ -117,22 +117,22 @@ jobs:
           git push origin "v${{ steps.version.outputs.version }}"
 
       - name: Generate release changelog
-        id: changelog
         env:
           PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
+          NOTES="docs/releases/$VERSION.md"
+          if [ -f "$NOTES" ]; then
+            cp "$NOTES" release-notes.md
+            exit 0
+          fi
           if [ -n "$PREVIOUS_TAG" ]; then
             RANGE="${PREVIOUS_TAG}..HEAD"
           else
             RANGE="HEAD"
           fi
-          {
-            echo 'body<<CHANGELOG_EOF'
-            git log "$RANGE" --pretty=format:'- %s (%h)' \
-              --invert-grep --grep='^chore: bump version to '
-            echo
-            echo 'CHANGELOG_EOF'
-          } >> "$GITHUB_OUTPUT"
+          git log "$RANGE" --pretty=format:'- %s (%h)' \
+            --invert-grep --grep='^chore: bump version to ' > release-notes.md
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -148,7 +148,7 @@ jobs:
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: v${{ steps.version.outputs.version }}
-          body: ${{ steps.changelog.outputs.body }}
+          body_path: release-notes.md
           files: |
             app/build/outputs/apk/debug/*.apk
             app/build/outputs/apk/release/*.apk
@@ -190,7 +190,7 @@ jobs:
           token: ${{ secrets.XPOSED_REPO_TOKEN }}
           tag_name: v${{ steps.version.outputs.version }}
           name: v${{ steps.version.outputs.version }}
-          body: ${{ steps.changelog.outputs.body }}
+          body_path: release-notes.md
           files: |
             app/build/outputs/apk/debug/*.apk
             app/build/outputs/apk/release/*.apk

@@ -42,6 +42,7 @@ public final class LauncherHooks {
 
     /** 只在隐藏组件集合改变时刷新 Launcher 模型。 */
     public static void onSettingsSnapshotPublished(java.util.Map<String, Integer> settings) {
+        DrawerInstallTimeHooks.onSettingsSnapshotPublished(settings);
         refreshPowerSaveTaskLocks(settingValue(settings, KEY_POWER_SAVE_KEEP_LOCKED_TASKS_ENABLED) == 1);
         if (!sModelReloadActive) return;
         java.util.Set<android.content.ComponentName> components = hiddenLauncherComponents(settings);
@@ -683,6 +684,7 @@ public final class LauncherHooks {
     }
 
     public static void cleanupForHotReload() {
+        DrawerInstallTimeHooks.cleanupForHotReload();
         sLastPowerSaveTaskLockEnabled = null;
         new android.os.Handler(android.os.Looper.getMainLooper()).removeCallbacksAndMessages(sPowerSaveTaskLockToken);
         // 在主线程执行: 置 false 后再移除队列, 保证旧 generation 不会再调用 forceReload。
@@ -941,6 +943,7 @@ public final class LauncherHooks {
 
         // 字母索引滚动定位: 始终注入, 运行时按 KEY_DRAWER_LETTER_SCROLL_ENABLED 门控。
         hookDrawerLetterScroll(lpparam);
+        DrawerInstallTimeHooks.hook(lpparam);
 
         // Feature 2 — 页面与 Dock 间距: 始终注入, 运行时按 KEY_INDICATOR_ENABLED 门控。
         // 系统会把 hotseat 高度变化按 workspaceTopPercentage 分摊到页面位置，
@@ -1903,6 +1906,7 @@ public final class LauncherHooks {
     //   附属任务           -> 只定向杀它自己所在进程, 主进程要留着;
     //   两者都判定不了     -> 退回"同包没有别的卡片才整包强杀"。
     private static final ThreadLocal<String> sPendingKillPkg = new ThreadLocal<>();
+    private static final ThreadLocal<Integer> sPendingKillUser = new ThreadLocal<>();
     // 本次被划掉的任务 id(不论杀不杀进程, 卡片都必须移除, 否则划不掉)
     private static final ThreadLocal<Integer> sPendingRemoveId = new ThreadLocal<>();
     // 划掉主任务时, 需要一起移除的附属任务 id
@@ -1923,6 +1927,7 @@ public final class LauncherHooks {
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
                                 sPendingKillPkg.set(null);
+                                sPendingKillUser.set(null);
                                 sPendingRemoveId.set(null);
                                 sPendingExtraTaskIds.set(null);
                                 sPendingKillTaskId.set(null);
@@ -1939,6 +1944,8 @@ public final class LauncherHooks {
                                         key, "getPackageName");
                                 if (pkg == null || pkg.isEmpty()) return;
                                 int taskId = (Integer) XposedHelpers.getObjectField(key, "id");
+                                int userId = XposedHelpers.getIntField(key, "userId");
+                                sPendingKillUser.set(userId);
                                 // 卡片必须无条件移除(见 after), 否则划掉它不会消失。
                                 sPendingRemoveId.set(taskId);
 
@@ -1952,7 +1959,7 @@ public final class LauncherHooks {
                                     // 划掉主任务: 连同该包剩余的附属任务一起清掉
                                     java.util.List<Integer> others =
                                             new java.util.ArrayList<>();
-                                    collectTaskIdsOfPkg(param.thisObject, pkg, others, taskId);
+                                    collectTaskIdsOfPkg(param.thisObject, pkg, userId, others, taskId);
                                     if (!others.isEmpty()) {
                                         sPendingExtraTaskIds.set(others);
                                         // 清完附属任务后该包一个不剩, 整包强杀。
@@ -1966,7 +1973,7 @@ public final class LauncherHooks {
                                     sPendingKillTaskId.set(taskId);
                                     return;
                                 }
-                                if (kill && countTaskViewsOfPkg(param.thisObject, pkg) <= 1) {
+                                if (kill && countTaskViewsOfPkg(param.thisObject, pkg, userId) <= 1) {
                                     // 常规规则: 同包没有别的卡片才整包强杀
                                     sPendingKillPkg.set(pkg);
                                 }
@@ -1977,10 +1984,12 @@ public final class LauncherHooks {
                         protected void afterHookedMethod(MethodHookParam param) {
                             try {
                                 String pkg = sPendingKillPkg.get();
+                                Integer userId = sPendingKillUser.get();
                                 Integer removeId = sPendingRemoveId.get();
                                 java.util.List<Integer> extra = sPendingExtraTaskIds.get();
                                 Integer killTaskId = sPendingKillTaskId.get();
                                 sPendingKillPkg.set(null);
+                                sPendingKillUser.set(null);
                                 sPendingRemoveId.set(null);
                                 sPendingExtraTaskIds.set(null);
                                 sPendingKillTaskId.set(null);
@@ -2002,8 +2011,8 @@ public final class LauncherHooks {
                                         XposedHelpers.callMethod(amw, "removeTask", id);
                                     }
                                 }
-                                if (pkg != null) {
-                                    requestForceStop(ctx, pkg);
+                                if (pkg != null && userId != null) {
+                                    requestForceStop(ctx, pkg, userId);
                                 } else if (killTaskId != null) {
                                     requestKillTask(ctx, killTaskId);
                                 }
@@ -2045,13 +2054,17 @@ public final class LauncherHooks {
                                     String pkg = (String) XposedHelpers.callMethod(
                                             key, "getPackageName");
                                     if (pkg == null || pkg.isEmpty()) continue;
-                                    all.add(pkg);
-                                    if (isLockedTaskView(tv, lpparam)) keep.add(pkg);
+                                    String target = XposedHelpers.getIntField(key, "userId") + ":" + pkg;
+                                    all.add(target);
+                                    if (isLockedTaskView(tv, lpparam)) keep.add(target);
                                 }
                                 // 附属任务与主任务同包, 只要该包有未锁定的卡片, 全部清除就会
                                 // 把它们一起划掉, 清完之后整包一个不剩 -> 杀。
-                                for (String pkg : all) {
-                                    if (!keep.contains(pkg)) requestForceStop(ctx, pkg);
+                                for (String target : all) {
+                                    if (keep.contains(target)) continue;
+                                    int separator = target.indexOf(':');
+                                    requestForceStop(ctx, target.substring(separator + 1),
+                                            Integer.parseInt(target.substring(0, separator)));
                                 }
                             } catch (Throwable ignored) { }
                         }
@@ -2084,7 +2097,7 @@ public final class LauncherHooks {
 
     // RecentsView 里该包还剩下几张卡片(getTaskViewCount/getTaskViewAt 均为 OplusRecentsViewImpl
     // 的公开方法, 已 dexdump 核对)。
-    private static int countTaskViewsOfPkg(Object recentsView, String pkg) {
+    private static int countTaskViewsOfPkg(Object recentsView, String pkg, int userId) {
         int count = 0;
         try {
             int n = (Integer) XposedHelpers.callMethod(recentsView, "getTaskViewCount");
@@ -2095,14 +2108,15 @@ public final class LauncherHooks {
                 if (task == null) continue;
                 Object key = XposedHelpers.getObjectField(task, "key");
                 if (key == null) continue;
-                if (pkg.equals(XposedHelpers.callMethod(key, "getPackageName"))) count++;
+                if (XposedHelpers.getIntField(key, "userId") == userId
+                        && pkg.equals(XposedHelpers.callMethod(key, "getPackageName"))) count++;
             }
         } catch (Throwable ignored) { }
         return count;
     }
 
     // 收集 RecentsView 里该包其它任务(排除 excludeId)的任务 id。
-    private static void collectTaskIdsOfPkg(Object recentsView, String pkg,
+    private static void collectTaskIdsOfPkg(Object recentsView, String pkg, int userId,
             java.util.List<Integer> out, int excludeId) {
         try {
             int n = (Integer) XposedHelpers.callMethod(recentsView, "getTaskViewCount");
@@ -2113,7 +2127,8 @@ public final class LauncherHooks {
                 if (task == null) continue;
                 Object key = XposedHelpers.getObjectField(task, "key");
                 if (key == null) continue;
-                if (!pkg.equals(XposedHelpers.callMethod(key, "getPackageName"))) continue;
+                if (XposedHelpers.getIntField(key, "userId") != userId
+                        || !pkg.equals(XposedHelpers.callMethod(key, "getPackageName"))) continue;
                 int id = (Integer) XposedHelpers.getObjectField(key, "id");
                 if (id != excludeId) out.add(id);
             }
@@ -2145,7 +2160,8 @@ public final class LauncherHooks {
                             Context.LAUNCHER_APPS_SERVICE);
             if (la == null) return null;
             java.util.List<android.content.pm.LauncherActivityInfo> list =
-                    la.getActivityList(pkg, android.os.Process.myUserHandle());
+                    la.getActivityList(pkg, (android.os.UserHandle) XposedHelpers.callStaticMethod(
+                            android.os.UserHandle.class, "of", XposedHelpers.getIntField(key, "userId")));
             if (list == null || list.isEmpty()) return null;
             for (android.content.pm.LauncherActivityInfo info : list) {
                 if (base.equals(info.getComponentName())) return Boolean.TRUE;
@@ -2173,12 +2189,12 @@ public final class LauncherHooks {
     // ActivityManager#forceStopPackage 必被 SecurityException 拒(KernelSU 也不给 app root),
     // 所以借道 ActivityManager#killBackgroundProcesses 把包名送进 system_server ——
     // 那边的 hook 会拦下这次调用并升级成 AMS#forceStopPackage(见 SystemServerHooks)。
-    private static void requestForceStop(Context ctx, String pkg) {
-        if (ctx == null || pkg == null) return;
+    private static void requestForceStop(Context ctx, String pkg, int userId) {
+        if (ctx == null || pkg == null || userId < 0) return;
         try {
             android.app.ActivityManager am =
                     (android.app.ActivityManager) ctx.getSystemService(Context.ACTIVITY_SERVICE);
-            if (am != null) am.killBackgroundProcesses(pkg);
+            if (am != null) am.killBackgroundProcesses("cmpkg:" + userId + ":" + pkg);
         } catch (Throwable ignored) { }
     }
 
@@ -2276,7 +2292,8 @@ public final class LauncherHooks {
     }
 
     static boolean drawerLetterScroll() {
-        return readBool(KEY_DRAWER_LETTER_SCROLL_ENABLED, false);
+        return !DrawerInstallTimeHooks.enabled()
+                && readBool(KEY_DRAWER_LETTER_SCROLL_ENABLED, false);
     }
 
     // 图标间左右间隔保留比例: 缩小八分之一即保留 7/8。

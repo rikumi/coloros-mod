@@ -38,6 +38,7 @@ public final class SystemUiHooks {
         // 通知图标区仓库(状态栏歌词显示时切"显示数字"要用): 由 NotificationHooks 统一下发显示模式,
         // 两处各写一份会互相拉扯(图标 <-> 数字来回跳)。
         NotificationHooks.hookNotificationIconAreaRepository(lpparam);
+        MonochromeNotificationHooks.hook(lpparam);
 
         // Feature 10 — 合并控制中心背景压暗(半透明黑): 始终注入, 运行时按 KEY_QS_SCRIM_TRANSLUCENT_ENABLED 门控。
         QsHooks.hookQsBackgroundDim(lpparam);
@@ -47,7 +48,7 @@ public final class SystemUiHooks {
         QsHooks.hookQsBackgroundScale(lpparam);
         // Feature 13 — 控制中心 WLAN/蓝牙 名称单行省略: 始终注入, 运行时按 KEY_QS_TILE_NAME_ELLIPSIS_ENABLED 门控。
         QsHooks.hookQsTileNameEllipsis(lpparam);
-        // 控制中心 Wi-Fi/蓝牙/音量/亮度 圆角: 始终注入, 运行时按 KEY_QS_NORMAL_CORNER_RADIUS_ENABLED 门控。
+        // 控制中心 Wi-Fi/蓝牙/音量/亮度 圆角: 始终注入, 运行时按 KEY_QS_CORNER_RADIUS_ENABLED 及滑条值选择。
         QsHooks.hookQsNormalCornerRadius(lpparam);
         // Feature 19 — 分离版控制中心左右切换取消切入效果: 始终注入, 运行时按 KEY_QS_PANEL_SWITCH_NO_CUT_ENABLED 门控。
         QsHooks.hookQsPanelSwitchNoCut(lpparam);

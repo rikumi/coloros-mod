@@ -28,6 +28,15 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
  */
 public final class QsHooks {
     private static final java.util.WeakHashMap<Object, Boolean> nameHosts = new java.util.WeakHashMap<>();
+    private static final android.os.Handler radiusHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private static final java.util.Map<Object, Object[]> radiusSliders = java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+    private static final java.util.Map<Class<?>, Object[]> radiusOutlines = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.WeakHashMap<View, View.OnLayoutChangeListener> radiusSizeListeners = new java.util.WeakHashMap<>();
+    private static final ThreadLocal<Boolean> replayingRadius = new ThreadLocal<>();
+    private static Integer appliedRadius;
+    private static boolean radiusApplied;
+    private static final Runnable radiusRefresh = () -> refreshCornerRadiusOnMain();
+
     public static void hookQsHideCarrier(final XC_LoadPackage.LoadPackageParam lpparam) {
         StatusBarExtrasHooks.hookCarrier(lpparam);
     }
@@ -587,8 +596,27 @@ public final class QsHooks {
 
     }
 
-    public static Object captureHotReloadNames() { return new java.util.ArrayList<>(nameHosts.keySet()); }
+    public static Object captureHotReloadNames() {
+        java.util.List<Object[]> sliders = new java.util.ArrayList<>();
+        synchronized (radiusSliders) {
+            for (java.util.Map.Entry<Object, Object[]> entry : radiusSliders.entrySet())
+                sliders.add(new Object[]{entry.getKey(), entry.getValue()});
+        }
+        java.util.List<Object[]> outlines = new java.util.ArrayList<>();
+        for (java.util.Map.Entry<Class<?>, Object[]> entry : radiusOutlines.entrySet())
+            outlines.add(new Object[]{entry.getKey(), entry.getValue()});
+        return new Object[]{new java.util.ArrayList<>(nameHosts.keySet()), sliders, outlines};
+    }
     public static void restoreHotReloadNames(Object state) {
+        if (state instanceof Object[] saved && saved.length == 3) {
+            if (saved[1] instanceof Iterable<?> rows) for (Object row : rows) if (row instanceof Object[] pair)
+                { radiusSliders.put(pair[0], (Object[]) pair[1]);
+                  if (pair[0] instanceof View view) watchRadiusSize(view); }
+            if (saved[2] instanceof Iterable<?> rows) for (Object row : rows) if (row instanceof Object[] pair)
+                radiusOutlines.put((Class<?>) pair[0], (Object[]) pair[1]);
+            state = saved[0];
+            onCornerRadiusSettingsChanged();
+        }
         if (state instanceof Iterable<?> tiles) for (Object tile : tiles) if (tile != null) {
             nameHosts.put(tile, true);
             applyExistingNameTile(tile);
@@ -634,7 +662,7 @@ public final class QsHooks {
     // 控制中心 Wi-Fi / 蓝牙 / 音量 / 亮度 的圆角。
     // 系统判定: FlavorTwoFeatureOption.isFlavorTwoDeviceExp() = (一加品牌) && (海外 exp 区域)。
     // 命中(OxygenOS)时高亮磁贴(Wi-Fi/蓝牙)与滑条(音量/亮度)用 60dp 大圆角, 否则用 16dp。
-    // 开关开启后统一强制到 QS_CORNER_RADIUS_DIMEN 那一档, 合并式与分离式都生效。
+    // 关闭不覆盖，开启按短边的 0–50% 设置半径。
     public static void hookQsNormalCornerRadius(final XC_LoadPackage.LoadPackageParam lpparam) {
         // 音量 / 亮度滑条: 合并式(com.oplus.systemui.qs.widget.OplusQsToggleSliderLayout)与分离式
         // (com.oplus.systemui.plugins.qs.widget.OplusQsToggleSliderLayout)共同继承
@@ -648,11 +676,12 @@ public final class QsHooks {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
-                                if (readBool(KEY_QS_NORMAL_CORNER_RADIUS_ENABLED, false)) {
-                                    Float px = resolveQsCornerRadiusPx(param.thisObject);
-                                    if (px != null) param.args[0] = px;
-                                }
-                                if (param.thisObject instanceof View view)
+                                if (!Boolean.TRUE.equals(replayingRadius.get()))
+                                    radiusSliders.put(param.thisObject, new Object[]{"setCornerRadius", param.args[0], null});
+                                if (param.thisObject instanceof View view) watchRadiusSize(view);
+                                Float px = resolveQsCornerRadiusPx(param.thisObject);
+                                if (px != null) param.args[0] = px;
+                                else if (param.thisObject instanceof View view)
                                     param.args[0] = MergedCardRatioHooks.scaleRadius(view, (Float) param.args[0]);
                             } catch (Throwable t) {
                                 log("qs_radius slider fail: " + t);
@@ -676,7 +705,10 @@ public final class QsHooks {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
-                                if (!readBool(KEY_QS_NORMAL_CORNER_RADIUS_ENABLED, false)) return;
+                                if (!Boolean.TRUE.equals(replayingRadius.get()))
+                                    radiusSliders.put(param.thisObject, new Object[]{"updateRadius", param.args[1],
+                                            new java.lang.ref.WeakReference<>(param.args[0])});
+                                if (qsCornerRadiusPercent() == null) return;
                                 Float px = resolveQsCornerRadiusPx(param.thisObject);
                                 if (px == null) return;
                                 param.args[1] = px;
@@ -714,13 +746,11 @@ public final class QsHooks {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             try {
-                                if (!readBool(KEY_QS_NORMAL_CORNER_RADIUS_ENABLED, false)) return;
+                                if (qsCornerRadiusPercent() == null) return;
                                 Context context = (Context) param.args[0];
                                 if (context == null) return;
-                                int dimenId = context.getResources()
-                                        .getIdentifier(QS_CORNER_RADIUS_DIMEN, "dimen", "com.android.systemui");
-                                if (dimenId == 0) return;
-                                param.setResult(Float.valueOf(context.getResources().getDimension(dimenId)));
+                                Float radius = resolveQsCornerRadiusPx(context.getResources());
+                                if (radius != null) param.setResult(radius);
                             } catch (Throwable t) {
                                 log("qs_radius outline fail: " + t);
                             }
@@ -741,16 +771,17 @@ public final class QsHooks {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             try {
-                                if (!readBool(KEY_QS_NORMAL_CORNER_RADIUS_ENABLED, false)) return;
                                 Object result = param.getResult();
                                 if (result == null) return;
                                 if (!QS_OUTLINE_PROVIDER_CLASS.equals(result.getClass().getName())) return;
                                 Object interactor = XposedHelpers.getObjectField(param.thisObject, "this$0");
                                 Context context = (Context) XposedHelpers.getObjectField(interactor, "context");
-                                int dimenId = context.getResources()
-                                        .getIdentifier(QS_CORNER_RADIUS_DIMEN, "dimen", "com.android.systemui");
-                                if (dimenId == 0) return;
-                                float radius = context.getResources().getDimension(dimenId);
+                                Class<?> pool = XposedHelpers.findClass("com.oplus.systemui.qs.base.res."
+                                        + (clsName.contains("StdQSTileResInteractor") ? "StdQSResPool" : "SepQSResPool"), lpparam.classLoader);
+                                Class<?> constant = XposedHelpers.findClass(QS_CONSTANT_CLASS, lpparam.classLoader);
+                                radiusOutlines.put(pool, new Object[]{new java.lang.ref.WeakReference<>(context), result, constant});
+                                Float radius = resolveQsCornerRadiusPx(context.getResources());
+                                if (radius == null) return;
                                 // 与系统同口径构造, 保留"平滑圆角"权重, 避免 60dp 这类大半径被降级成方角。
                                 param.setResult(XposedHelpers.callStaticMethod(
                                         XposedHelpers.findClass(QS_CONSTANT_CLASS, lpparam.classLoader),
@@ -787,13 +818,120 @@ public final class QsHooks {
         return null;
     }
 
-    // 解析要强制的圆角(px); 资源不存在时返回 null, 保持系统原值。
-    static Float resolveQsCornerRadiusPx(Object view) {
-        if (!(view instanceof View)) return null;
-        Resources res = ((View) view).getResources();
-        int dimenId = res.getIdentifier(QS_CORNER_RADIUS_DIMEN, "dimen", "com.android.systemui");
-        if (dimenId == 0) return null;
-        return Float.valueOf(res.getDimension(dimenId));
+    // The merged layout's local override must retain the actual native provider,
+    // not the customized provider currently published in the resource pool.
+    static Object nativeMergedHighlightOutline() {
+        for (java.util.Map.Entry<Class<?>, Object[]> entry : radiusOutlines.entrySet())
+            if (entry.getKey().getName().equals("com.oplus.systemui.qs.base.res.StdQSResPool"))
+                return entry.getValue()[1];
+        return null;
+    }
+
+    private static void watchRadiusSize(View view) {
+        if (radiusSizeListeners.containsKey(view)) return;
+        View.OnLayoutChangeListener listener = (v, l, t, r, b, ol, ot, or, ob) -> {
+            if (r - l != or - ol || b - t != ob - ot) {
+                radiusApplied = false;
+                onCornerRadiusSettingsChanged();
+            }
+        };
+        radiusSizeListeners.put(view, listener);
+        view.addOnLayoutChangeListener(listener);
+    }
+
+    public static void onCornerRadiusSettingsChanged() {
+        radiusHandler.removeCallbacks(radiusRefresh);
+        radiusHandler.post(radiusRefresh);
+    }
+
+    private static void refreshCornerRadiusOnMain() {
+        Integer radius = qsCornerRadiusPercent();
+        if (radiusApplied && java.util.Objects.equals(appliedRadius, radius)) return;
+        appliedRadius = radius;
+        radiusApplied = true;
+        // Publish through the native StateFlow so every bound tile redraws its path.
+        for (java.util.Map.Entry<Class<?>, Object[]> entry : radiusOutlines.entrySet()) {
+            Object[] saved = entry.getValue();
+            Context context = (Context) ((java.lang.ref.WeakReference<?>) saved[0]).get();
+            if (context == null) continue;
+            try {
+                Object outline = radius == null ? saved[1] : XposedHelpers.callStaticMethod((Class<?>) saved[2],
+                        "getSmoothRoundRectOutlineProvider", context, resolveQsCornerRadiusPx(context.getResources()));
+                XposedHelpers.callStaticMethod(entry.getKey(), "updateHighLightTileOutline", outline);
+            } catch (Throwable t) { log("qs_radius live outline fail: " + t); }
+        }
+        java.util.List<Object[]> sliders = new java.util.ArrayList<>();
+        synchronized (radiusSliders) {
+            for (java.util.Map.Entry<Object, Object[]> entry : radiusSliders.entrySet())
+                sliders.add(new Object[]{entry.getKey(), entry.getValue()});
+        }
+        replayingRadius.set(true);
+        try {
+            for (Object[] pair : sliders) {
+                Object[] saved = (Object[]) pair[1];
+                try {
+                    if ("setCornerRadius".equals(saved[0]))
+                        XposedHelpers.callMethod(pair[0], "setCornerRadius", saved[1]);
+                    else {
+                        Object seekbar = ((java.lang.ref.WeakReference<?>) saved[2]).get();
+                        if (seekbar != null) XposedHelpers.callMethod(pair[0], "updateRadius", seekbar, saved[1]);
+                    }
+                } catch (Throwable t) { log("qs_radius live slider fail: " + t); }
+            }
+        } finally { replayingRadius.remove(); }
+    }
+
+    public static void cleanupCornerRadiusForHotReload() {
+        radiusHandler.removeCallbacksAndMessages(null);
+        for (java.util.Map.Entry<View, View.OnLayoutChangeListener> entry : radiusSizeListeners.entrySet())
+            entry.getKey().removeOnLayoutChangeListener(entry.getValue());
+        radiusSizeListeners.clear();
+        radiusSliders.clear();
+        radiusOutlines.clear();
+        radiusApplied = false;
+    }
+
+    // 旧 16dp / 32dp 分别迁移到 25% / 50%；已有百分比优先。
+    static Integer qsCornerRadiusPercent() {
+        int mode = readInt(KEY_QS_CORNER_RADIUS_MODE,
+                readBool(KEY_QS_NORMAL_CORNER_RADIUS_ENABLED, false) ? 2 : 0);
+        if (!readBool(KEY_QS_CORNER_RADIUS_ENABLED, mode == 1 || mode == 2)) return null;
+        int oldDp = readInt(KEY_QS_CORNER_RADIUS_DP, -1);
+        int fallback = oldDp >= 0 ? Math.round(Math.min(32, oldDp) * 50f / 32f) : mode == 1 ? 50 : 25;
+        return Math.max(0, Math.min(50, readInt(KEY_QS_CORNER_RADIUS_PERCENT, fallback)));
+    }
+
+    static Float resolveQsCornerRadiusPx(Object object) {
+        if (!(object instanceof View view)) return null;
+        Integer percent = qsCornerRadiusPercent();
+        if (percent == null) return null;
+        View target = view;
+        // Vertical sliders render inside their slider child; highlight tiles
+        // render in mBgDrawable, whose bounds reflect the actual card size.
+        try {
+            Object slider = XposedHelpers.getObjectField(view, "slider");
+            if (slider instanceof View child) target = child;
+        } catch (Throwable ignored) { }
+        try {
+            Object frame = XposedHelpers.getObjectField(view, "mIconFrame");
+            if (frame instanceof View child) target = child;
+        } catch (Throwable ignored) { }
+        int shortSide = Math.min(target.getWidth(), target.getHeight());
+        try {
+            Object background = XposedHelpers.getObjectField(view, "mBgDrawable");
+            if (background instanceof android.graphics.drawable.Drawable drawable) {
+                android.graphics.Rect bounds = drawable.getBounds();
+                if (shortSide <= 0 && bounds.width() > 0 && bounds.height() > 0) shortSide = Math.min(bounds.width(), bounds.height());
+            }
+        } catch (Throwable ignored) { }
+        return shortSide > 0 ? shortSide * percent / 100f : resolveQsCornerRadiusPx(view.getResources());
+    }
+
+    private static Float resolveQsCornerRadiusPx(Resources resources) {
+        Integer percent = qsCornerRadiusPercent();
+        if (percent == null) return null;
+        int height = resources.getIdentifier("qs_highlight_tile_height", "dimen", "com.android.systemui");
+        return height == 0 ? null : resources.getDimension(height) * percent / 100f;
     }
 
     // 对任意 View(TextSwitcher / ViewGroup / TextView) 递归对其下所有 TextView 强制单行省略。

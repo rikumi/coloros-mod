@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_scope_missing">有作用域未勾选，请前往勾选</string>
+</resources>

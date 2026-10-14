@@ -660,7 +660,7 @@ public final class NotificationHooks {
         }
         return new Object[] { padded.toArray(), translated.toArray(),
                 Boolean.valueOf(sNotifPadEnabled), Integer.valueOf(sNotifPadPx),
-                subtitles.toArray() };
+                subtitles.toArray(), MonochromeNotificationHooks.capture() };
     }
 
     public static void restoreHotReloadViews(Object saved) {
@@ -671,6 +671,7 @@ public final class NotificationHooks {
         }
         sNotifPadEnabled = (Boolean) state[2];
         sNotifPadPx = (Integer) state[3];
+        if (state.length > 5) MonochromeNotificationHooks.restore(state[5]);
         if (state.length > 4 && state[4] instanceof Object[]) {
             for (Object object : (Object[]) state[4]) {
                 if (!(object instanceof Object[])) continue;
@@ -737,6 +738,7 @@ public final class NotificationHooks {
     }
 
     public static void cleanupForHotReload() {
+        MonochromeNotificationHooks.cleanup();
         sShowModeLoopActive = false;
         Handler handler = sShowModeHandler;
         if (handler != null) handler.removeCallbacksAndMessages(null);

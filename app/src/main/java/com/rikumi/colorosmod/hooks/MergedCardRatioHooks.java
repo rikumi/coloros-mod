@@ -138,11 +138,11 @@ public final class MergedCardRatioHooks {
                     Object drawable = XposedHelpers.getObjectField(owner,
                             (highlightClass.isInstance(owner) || normalTileClass.isInstance(owner)) ? "mBgDrawable" : "transitionDrawable");
                     if (drawable != p.thisObject) return;
-                    Object source = p.args[0];
+                    Object source = nativeOutlineSource(owner, p.args[0]);
                     RadiusState state = radii.get(owner);
                     if (state != null && state.drawable.get() == drawable && source == state.installed) return;
                     if (source == null || !roundRectClass.isInstance(source)) return;
-                    float scaled = scaleRadius(owner, ((Number) XposedHelpers.callMethod(source, "getCornerRadius")).floatValue());
+                    float scaled = outlineRadius(owner, source);
                     Object provider;
                     if (state != null && state.drawable.get() == drawable && source == state.source && state.radius == scaled) {
                         provider = state.installed;
@@ -162,13 +162,14 @@ public final class MergedCardRatioHooks {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     p.setObjectExtra("previousOutlineOwner", outlineOwner.get());
                     View view = (View) p.thisObject;
-                    if (ratioEnabled(view) && mergedRoot(view) != null) outlineOwner.set(view);
+                    if (mergedRoot(view) != null && (ratioEnabled(view) || customHighlightRadius(view) != null)) outlineOwner.set(view);
                 }
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     View previous = (View) p.getObjectExtra("previousOutlineOwner");
                     if (previous != null) outlineOwner.set(previous); else outlineOwner.remove();
                     View view = (View) p.thisObject;
-                    if (!p.hasThrowable() && ratioEnabled(view) && mergedRoot(view) != null) applyOutline(view);
+                    if (!p.hasThrowable() && mergedRoot(view) != null
+                            && (ratioEnabled(view) || customHighlightRadius(view) != null)) applyOutline(view);
                 }
             };
             XposedHelpers.findAndHookDeclaredMethod(highlightClass, "onOutlineUpdate", java.util.List.class, outlineChanged);
@@ -550,9 +551,9 @@ public final class MergedCardRatioHooks {
     private static void applyRadii(View view) {
         if (highlightClass.isInstance(view) || normalTileClass.isInstance(view) || mediaClass.isInstance(view)) applyOutline(view);
         if (view.getClass().getName().equals("com.oplus.systemui.qs.widget.OplusQsToggleSliderLayout")) {
-            Float normal = readBool(KEY_QS_NORMAL_CORNER_RADIUS_ENABLED, false) ? QsHooks.resolveQsCornerRadiusPx(view) : null;
+            Float normal = QsHooks.resolveQsCornerRadiusPx(view);
             float nativeRadius = normal != null ? normal : ((Number) XposedHelpers.callMethod(view, "getRadius")).floatValue();
-            float scaled = scaleRadius(view, nativeRadius);
+            float scaled = normal != null ? normal : scaleRadius(view, nativeRadius);
             Float previous = sliderRadii.get(view);
             if (previous == null || Float.compare(previous, scaled) != 0) {
                 XposedHelpers.callMethod(view, "updateCornerRadius");
@@ -562,14 +563,39 @@ public final class MergedCardRatioHooks {
         if (view instanceof ViewGroup group) for (int i = 0; i < group.getChildCount(); i++) applyRadii(group.getChildAt(i));
     }
 
+    private static Object nativeOutlineSource(View view, Object source) {
+        if (highlightClass.isInstance(view) && mergedRoot(view) != null) {
+            Object nativeOutline = QsHooks.nativeMergedHighlightOutline();
+            if (nativeOutline != null && roundRectClass.isInstance(nativeOutline)) return nativeOutline;
+        }
+        return source;
+    }
+
+    private static Float customHighlightRadius(View view) {
+        return highlightClass.isInstance(view) && mergedRoot(view) != null
+                ? QsHooks.resolveQsCornerRadiusPx(view) : null;
+    }
+
+    private static float outlineRadius(View view, Object source) {
+        Float custom = customHighlightRadius(view);
+        if (custom != null) return custom; // Percentage already uses the final card bounds.
+        return scaleRadius(view, ((Number) XposedHelpers.callMethod(source, "getCornerRadius")).floatValue());
+    }
+
+    private static void refreshHighlightRadii(View view) {
+        if (highlightClass.isInstance(view) && customHighlightRadius(view) != null) applyOutline(view);
+        if (view instanceof ViewGroup group)
+            for (int i = 0; i < group.getChildCount(); i++) refreshHighlightRadii(group.getChildAt(i));
+    }
+
     private static void applyOutline(View view) {
         Object drawable = XposedHelpers.getObjectField(view, (highlightClass.isInstance(view) || normalTileClass.isInstance(view)) ? "mBgDrawable" : "transitionDrawable");
         Object current = XposedHelpers.callMethod(drawable, "getPathProvider");
         RadiusState state = radii.get(view);
         Object source = state != null && state.drawable.get() == drawable && current == state.installed ? state.source : current;
+        source = nativeOutlineSource(view, source);
         if (source == null || !roundRectClass.isInstance(source)) return;
-        float nativeRadius = ((Number) XposedHelpers.callMethod(source, "getCornerRadius")).floatValue();
-        float scaled = scaleRadius(view, nativeRadius);
+        float scaled = outlineRadius(view, source);
         if (state != null && state.drawable.get() == drawable && current == state.installed
                 && source == state.source && Float.compare(state.radius, scaled) == 0) return;
         Object weight = XposedHelpers.callMethod(source, "getCornerWeight");
@@ -644,6 +670,8 @@ public final class MergedCardRatioHooks {
         refreshChangedPaths(root);
     }
     private static void refreshChangedPaths(View view) {
+        // Percentages must follow the final laid-out short edge, not old bounds.
+        if (customHighlightRadius(view) != null) applyOutline(view);
         RadiusState state = radii.get(view);
         Object drawable = state != null ? state.drawable.get() : null;
         if (drawable instanceof Drawable background) {
@@ -699,6 +727,9 @@ public final class MergedCardRatioHooks {
                 if (!ratioEnabled(root)) restore(root);
                 cardScales.remove(root);
                 geometryPasses.remove(root);
+                // A radius-only change must update paths even if geometry is unchanged.
+                if (ratioEnabled(root)) applyRadii(root);
+                else refreshHighlightRadii(root);
                 root.requestLayout();
             }
         });

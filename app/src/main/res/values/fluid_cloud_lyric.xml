@@ -1,0 +1,5 @@
+<resources>
+    <string name="fluid_cloud_lyric">流体云歌词（试验性）</string>
+    <string name="ui_lyric_mode_off">关闭</string>
+    <string name="ui_lyric_mode_notification">显示在通知区域</string>
+</resources>

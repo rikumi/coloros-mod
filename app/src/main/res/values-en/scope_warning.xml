@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_scope_missing">Some scopes are not selected. Tap to select them.</string>
+</resources>
