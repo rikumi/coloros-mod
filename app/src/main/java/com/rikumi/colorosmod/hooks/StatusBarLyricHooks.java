@@ -1649,21 +1649,6 @@ public final class StatusBarLyricHooks {
             return;
         }
 
-        // Fluid Cloud lyrics stay on the capsule centerline; only horizontal overflow may scroll.
-        if (FluidCloudLyricHooks.isHosting(container)) {
-            cancelSwitchAnimator();
-            cancelScrollAnimator();
-            resetTv(incoming);
-            applyTextWidth(outgoing, text);
-            outgoing.setText(text);
-            resetTvTransform(outgoing);
-            outgoing.setVisibility(View.VISIBLE);
-            container.setTranslationY(0f);
-            container.setVisibility(View.VISIBLE);
-            startSinglePassScroll(outgoing, text);
-            return;
-        }
-
         // 首次显示(容器还不可见): 不做切换动画, 直接放上。
         boolean firstShow = container.getVisibility() != View.VISIBLE;
         if (firstShow) {
