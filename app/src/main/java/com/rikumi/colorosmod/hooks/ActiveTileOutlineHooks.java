@@ -20,6 +20,9 @@ import java.util.WeakHashMap;
 public final class ActiveTileOutlineHooks {
     private static Class<?> strokeUniforms;
     private static int activeAttr, inoperableAttr;
+    private static Class<?> separateTileClass, separateSliderClass, nativeBlurClass;
+    private static final ThreadLocal<DrawFrame> drawing = new ThreadLocal<>();
+
     private static final WeakHashMap<Drawable, Overlay> overlays = new WeakHashMap<>();
     private static final WeakHashMap<View, Boolean> views = new WeakHashMap<>();
     private static final WeakHashMap<Drawable, Boolean> tracked = new WeakHashMap<>();
@@ -29,6 +32,20 @@ public final class ActiveTileOutlineHooks {
         try {
             ContourLightShader.init(pkg.classLoader);
             strokeUniforms = XposedHelpers.findClass("com.oplus.posteffect.GradientStrokeLineParamsKt", pkg.classLoader);
+            separateTileClass = XposedHelpers.findClassIfExists(
+                    "com.oplus.systemui.plugins.qs.customize.view.tile.OplusQSResizeableTileView", pkg.classLoader);
+            separateSliderClass = XposedHelpers.findClassIfExists(
+                    "com.oplus.systemui.plugins.qs.widget.OplusQsToggleSliderLayout", pkg.classLoader);
+            nativeBlurClass = XposedHelpers.findClass("com.android.internal.graphics.drawable.BackgroundBlurDrawable", pkg.classLoader);
+            XposedHelpers.findAndHookDeclaredMethod("com.oplusos.systemui.common.blurability.ViewBlurProxy",
+                    pkg.classLoader, "getBlurDrawable", Drawable.class, new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            DrawFrame frame = drawing.get();
+                            if (frame != null && frame.proxy == p.thisObject && !p.hasThrowable()
+                                    && nativeBlurClass.isInstance(p.getResult()) && frame.canvas.isHardwareAccelerated())
+                                frame.nativeBlurDrawn = true;
+                        }
+                    });
             Class<?> flags = XposedHelpers.findClass("com.oplus.systemui.qs.base.res.model.TileViewFlag", pkg.classLoader);
             activeAttr = (Integer) XposedHelpers.callMethod(XposedHelpers.getStaticObjectField(flags, "Active"), "getAttr");
             inoperableAttr = (Integer) XposedHelpers.callMethod(XposedHelpers.getStaticObjectField(flags, "Inoperable"), "getAttr");
@@ -46,23 +63,47 @@ public final class ActiveTileOutlineHooks {
                                 View owner = (View) XposedHelpers.callMethod(proxy, "getView");
                                 if (owner != null) { views.put(owner, true); tracked.put(drawable, true); }
                             }
-                            if ((radiantColor == null && !customColor) || !isActive(drawable)) return;
-                            int original = XposedHelpers.getIntField(drawable, "maskColor");
-                            p.setObjectExtra("originalMaskColor", original);
-                            XposedHelpers.setIntField(drawable, "maskColor", radiantColor != null ? radiantColor : readInt(KEY_QS_ACTIVE_COLOR, 0xff00b4d8));
+                            if ((radiantColor != null || customColor) && isActive(drawable)) {
+                                int original = XposedHelpers.getIntField(drawable, "maskColor");
+                                p.setObjectExtra("originalMaskColor", original);
+                                XposedHelpers.setIntField(drawable, "maskColor", radiantColor != null ? radiantColor : readInt(KEY_QS_ACTIVE_COLOR, 0xff00b4d8));
+                            }
+                            if (readBool(KEY_QS_ACTIVE_OUTLINE_ENABLED, false)) {
+                                Object autoBlur = XposedHelpers.getObjectField(drawable, "autoBlurDrawable");
+                                Object proxy = XposedHelpers.callMethod(autoBlur, "getViewBlurProxy");
+                                View owner = (View) XposedHelpers.callMethod(proxy, "getView");
+                                int mask = XposedHelpers.getIntField(drawable, "maskColor");
+                                int alpha = drawable.getAlpha();
+                                // Match MixColorTileDrawable.draw's effective mask alpha.
+                                int maskAlpha = ((mask >>> 24) * (alpha + (alpha >> 7))) >> 8;
+                                DrawFrame frame = new DrawFrame(drawing.get(), proxy, (Canvas) p.args[0],
+                                        isSeparate(owner), maskAlpha);
+                                p.setObjectExtra("contourDrawFrame", frame);
+                                drawing.set(frame);
+                            }
                         }
                         @Override protected void afterHookedMethod(MethodHookParam p) {
-                            Object original = p.getObjectExtra("originalMaskColor");
-                            if (original instanceof Integer color) XposedHelpers.setIntField(p.thisObject, "maskColor", color);
-                            if (p.hasThrowable() || !readBool(KEY_QS_ACTIVE_OUTLINE_ENABLED, false)) return;
-                            Drawable drawable = (Drawable) p.thisObject;
-                            if (MergedRadiantHooks.iconOnlyBackground(drawable) || !isActive(drawable) || drawable.getAlpha() == 0) return;
-                            try { drawOverlay(drawable, (Canvas) p.args[0]); }
-                            catch (Throwable t) {
-                                // 出错的实例停止尝试，避免绘制循环中反复创建着色器或输出日志。
-                                if (!overlays.containsKey(drawable) || overlays.get(drawable) != null)
-                                    log("active tile outline draw failed: " + t);
-                                overlays.put(drawable, null);
+                            DrawFrame frame = (DrawFrame) p.getObjectExtra("contourDrawFrame");
+                            try {
+                                Object original = p.getObjectExtra("originalMaskColor");
+                                if (original instanceof Integer color) XposedHelpers.setIntField(p.thisObject, "maskColor", color);
+                                if (p.hasThrowable() || !readBool(KEY_QS_ACTIVE_OUTLINE_ENABLED, false)) return;
+                                Drawable drawable = (Drawable) p.thisObject;
+                                if (MergedRadiantHooks.iconOnlyBackground(drawable) || !isActive(drawable) || drawable.getAlpha() == 0) return;
+                                // Separate QS already renders the system stroke through AutoBlurDrawable.
+                                // Only supplement when it was absent or hidden by an opaque mask.
+                                if (!shouldSupplement(frame)) return;
+                                try { drawOverlay(drawable, (Canvas) p.args[0]); }
+                                catch (Throwable t) {
+                                    if (!overlays.containsKey(drawable) || overlays.get(drawable) != null)
+                                        log("active tile outline draw failed: " + t);
+                                    overlays.put(drawable, null);
+                                }
+                            } finally {
+                                if (frame != null) {
+                                    if (frame.previous == null) drawing.remove();
+                                    else drawing.set(frame.previous);
+                                }
                             }
                         }
                     });
@@ -91,6 +132,30 @@ public final class ActiveTileOutlineHooks {
                         }
                     });
         } catch (Throwable t) { log("active tile outline hook failed: " + t); }
+    }
+
+    private static boolean isSeparate(View owner) {
+        for (View view = owner; view != null; view = view.getParent() instanceof View parent ? parent : null)
+            if ((separateTileClass != null && separateTileClass.isInstance(view))
+                    || (separateSliderClass != null && separateSliderClass.isInstance(view))) return true;
+        return false;
+    }
+
+    private static boolean shouldSupplement(DrawFrame frame) {
+        return frame == null || !frame.separate || !frame.nativeBlurDrawn || frame.maskAlpha == 255;
+    }
+
+    private static final class DrawFrame {
+        final DrawFrame previous;
+        final Object proxy;
+        final Canvas canvas;
+        final boolean separate;
+        final int maskAlpha;
+        boolean nativeBlurDrawn;
+        DrawFrame(DrawFrame previous, Object proxy, Canvas canvas, boolean separate, int maskAlpha) {
+            this.previous = previous; this.proxy = proxy; this.canvas = canvas;
+            this.separate = separate; this.maskAlpha = maskAlpha;
+        }
     }
 
     private static boolean isActive(Drawable drawable) {

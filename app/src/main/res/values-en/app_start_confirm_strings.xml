@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_start_confirm_permission_group">Permission management</string>
+    <string name="app_start_confirm_always_allow">Restore Always allow dialog for cross-app launches</string>
+</resources>

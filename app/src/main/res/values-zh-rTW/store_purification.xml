@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="store_group">軟體商店淨化</string>
+    <string name="store_block_splash">封鎖啟動畫面廣告</string>
+    <string name="store_hide_featured">移除首頁分頁</string>
+    <string name="store_hide_games">移除遊戲分頁</string>
+    <string name="store_empty_home">移除首頁推薦內容</string>
+    <string name="store_hide_mine_recommendations">移除我的頁應用程式推薦</string>
+    <string name="store_hide_mine_booking">移除我的預約入口</string>
+    <string name="store_hide_mine_welfare_quick">移除我的頁福利及快應用程式入口</string>
+    <string name="store_hide_mine_clean">移除儲存空間清理入口</string>
+    <string name="store_hide_detail_recommendations">移除應用程式詳細資訊頁推薦</string>
+    <string name="store_hide_download_recommendations">移除下載管理頁推薦</string>
+    <string name="store_hide_update_recommendations">移除應用程式更新頁推薦</string>
+    <string name="store_clean_search">移除搜尋框熱門詞及搜尋頁推薦</string>
+    <string name="store_hide_rank">移除榜單 Tab</string>
+    <string name="store_empty_software">移除軟體頁所有內容</string>
+    <string name="store_disable_dynamic_icons">停用動態圖示</string>
+    <string name="store_disable_special_styles">停用特殊應用程式樣式</string>
+</resources>

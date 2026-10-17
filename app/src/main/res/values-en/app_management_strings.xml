@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_management_select_system">Select system apps</string>
+    <string name="app_management_system_apps">System apps</string>
+    <string name="app_management_ignore_warning">Ignore warning and add apps to disable</string>
+    <string name="app_management_disable">Disable</string>
+    <string name="app_management_uninstall">Uninstall for user</string>
+    <string name="app_management_restore">Restore app</string>
+    <string name="app_management_success">Succeeded</string>
+    <string name="app_management_progress">%1$s…</string>
+    <string name="app_management_error">%1$s: %2$s</string>
+    <string name="app_management_action_failed">%1$s failed: %2$s</string>
+    <string name="app_management_read_disabled_failed">Failed to load disabled apps</string>
+    <string name="app_management_read_system_failed">Failed to load system apps</string>
+    <string name="app_management_refresh_failed">Failed to refresh app list</string>
+    <string name="app_management_exit_error">Command failed with exit code %1$d</string>
+    <string name="app_management_invalid_list">Invalid app list output: %1$s</string>
+    <string name="app_management_no_success">System did not confirm success</string>
+</resources>

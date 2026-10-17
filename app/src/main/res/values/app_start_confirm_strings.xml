@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_start_confirm_permission_group">权限管理</string>
+    <string name="app_start_confirm_always_allow">恢复始终允许应用间跳转对话框</string>
+</resources>

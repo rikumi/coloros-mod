@@ -197,5 +197,4 @@
     <string name="ui_reload_query_failed">"查詢失敗 %1$d"</string>
     <string name="ui_reload_timed_out">"超時 %1$d"</string>
     <string name="ui_drawer_install_time_sort">抽屜按安裝時間排序</string>
-    <string name="ui_edge_hang">貼邊掛機中</string>
 </resources>

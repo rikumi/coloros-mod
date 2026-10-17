@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="store_group">软件商店净化</string>
+    <string name="store_block_splash">屏蔽开屏广告</string>
+    <string name="store_hide_featured">去除首页 Tab</string>
+    <string name="store_hide_games">去除游戏 Tab</string>
+    <string name="store_empty_home">去除首页推荐内容</string>
+    <string name="store_hide_mine_recommendations">去除我的页应用推荐</string>
+    <string name="store_hide_mine_booking">去除我的预约入口</string>
+    <string name="store_hide_mine_welfare_quick">去除我的页福利及快应用入口</string>
+    <string name="store_hide_mine_clean">去除存储空间清理入口</string>
+    <string name="store_hide_detail_recommendations">去除应用详情页推荐</string>
+    <string name="store_hide_download_recommendations">去除下载管理页推荐</string>
+    <string name="store_hide_update_recommendations">去除应用更新页推荐</string>
+    <string name="store_clean_search">去除搜索框热词及搜索页推荐</string>
+    <string name="store_hide_rank">去除榜单 Tab</string>
+    <string name="store_empty_software">去除软件页所有内容</string>
+    <string name="store_disable_dynamic_icons">禁用动态图标</string>
+    <string name="store_disable_special_styles">禁用特殊应用样式</string>
+</resources>

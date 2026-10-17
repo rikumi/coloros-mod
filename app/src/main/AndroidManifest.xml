@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <queries>
+        <package android:name="com.heytap.market" />
         <package android:name="com.android.launcher" />
         <package android:name="com.android.systemui" />
         <package android:name="com.oplus.pscanvas" />

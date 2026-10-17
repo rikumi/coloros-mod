@@ -196,6 +196,5 @@
     <string name="ui_reload_query_failed">"Query failed: %1$d"</string>
     <string name="ui_reload_timed_out">"Timed out: %1$d"</string>
     <string name="ui_drawer_install_time_sort">Sort drawer by install time</string>
-    <string name="ui_edge_hang">App running while docked to edge</string>
     <string name="ui_recents_hide_closed_freeform">Hide closed floating window from Recents</string>
 </resources>

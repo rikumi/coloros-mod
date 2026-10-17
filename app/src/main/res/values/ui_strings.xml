@@ -201,5 +201,4 @@
     <string name="ui_font_rubik" translatable="false">"Rubik"</string>
     <string name="ui_font_lato" translatable="false">"Lato"</string>
     <string name="ui_drawer_install_time_sort">抽屉按安装时间排序</string>
-    <string name="ui_edge_hang">贴边挂机中</string>
 </resources>

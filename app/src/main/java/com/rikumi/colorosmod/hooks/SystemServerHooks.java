@@ -39,7 +39,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
 import android.widget.TextSwitcher;
-import android.widget.Toast;
 
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedBridge;
@@ -526,7 +525,6 @@ public final class SystemServerHooks {
                                 // 跳过 Task.moveTaskToBack: 任务保持在台前, 应用继续挂机。
                                 param.setResult(null);
                                 log(">>> edge_hang: skip moveTaskToBack, taskId=" + taskId);
-                                showEdgeHangToast();
                             } catch (Throwable t) {
                                 log("!!! edge_hang error: " + t);
                             }
@@ -1062,7 +1060,6 @@ public final class SystemServerHooks {
     private static final Map<Integer, WeakReference<Object>> sHungTasks =
             Collections.synchronizedMap(new HashMap<Integer, WeakReference<Object>>());
 
-    // 贴边挂机中弹出的提示文案。
     // prepareSurfaces 的 before/after 之间传递 Task.mLastSurfaceShowing 的附加字段键。
     private static final String LAST_SHOWING = "colorosModLastSurfaceShowing";
     private static final String EDGE_EXIT_TASK = "colorosModEdgeExitTask";
@@ -1346,28 +1343,6 @@ public final class SystemServerHooks {
         } catch (Throwable t) {
             log("!!! edge_hang_mute postDelayed failed: " + t);
         }
-    }
-
-    // 贴边挂机提示: system_server 内没有 Activity 上下文, 用 system_server 自己的 system context
-    // (package="android") 弹 Toast, 系统 uid 的 toast 不受"通知权限"与速率限制影响。
-    // 必须抛到主线程执行: Toast 的 TN 在构造时取 Looper.myLooper(), 无 Looper 的线程会直接抛异常。
-    private static void showEdgeHangToast() {
-        postAsync(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    Context ctx = systemContext();
-                    if (ctx == null) return;
-                    Context moduleContext = ctx.createPackageContext(
-                            "com.rikumi.colorosmod", Context.CONTEXT_IGNORE_SECURITY)
-                            .createConfigurationContext(ctx.getResources().getConfiguration());
-                    Toast.makeText(ctx, moduleContext.getString(
-                            com.rikumi.colorosmod.R.string.ui_edge_hang), Toast.LENGTH_SHORT).show();
-                } catch (Throwable t) {
-                    log("!!! edge_hang toast failed: " + t);
-                }
-            }
-        });
     }
 
     // system_server 的 system context: ActivityThread#currentActivityThread()#getSystemContext()。

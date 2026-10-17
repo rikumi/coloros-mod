@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="store_group">App Market purification</string>
+    <string name="store_block_splash">Block splash ads</string>
+    <string name="store_hide_featured">Hide Home tab</string>
+    <string name="store_hide_games">Hide Games tab</string>
+    <string name="store_empty_home">Remove Home recommendations</string>
+    <string name="store_hide_mine_recommendations">Hide app recommendations in Me</string>
+    <string name="store_hide_mine_booking">Hide My pre-orders entry</string>
+    <string name="store_hide_mine_welfare_quick">Hide rewards and Quick App entries in Me</string>
+    <string name="store_hide_mine_clean">Hide storage cleanup entry</string>
+    <string name="store_hide_detail_recommendations">Hide app detail recommendations</string>
+    <string name="store_hide_download_recommendations">Hide download manager recommendations</string>
+    <string name="store_hide_update_recommendations">Hide app update recommendations</string>
+    <string name="store_clean_search">Hide search hot words and landing page recommendations</string>
+    <string name="store_hide_rank">Hide Rankings tab</string>
+    <string name="store_empty_software">Remove all content from Software</string>
+    <string name="store_disable_dynamic_icons">Disable animated app icons</string>
+    <string name="store_disable_special_styles">Disable special app styles</string>
+</resources>

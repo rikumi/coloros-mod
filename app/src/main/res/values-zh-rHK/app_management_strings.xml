@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_management_select_system">選擇系統應用程式</string>
+    <string name="app_management_system_apps">系統應用程式</string>
+    <string name="app_management_ignore_warning">忽略警告並新增停用應用程式</string>
+    <string name="app_management_disable">停用</string>
+    <string name="app_management_uninstall">用戶級卸載</string>
+    <string name="app_management_restore">取消停用</string>
+    <string name="app_management_success">成功</string>
+    <string name="app_management_progress">%1$s…</string>
+    <string name="app_management_error">%1$s：%2$s</string>
+    <string name="app_management_action_failed">%1$s失敗：%2$s</string>
+    <string name="app_management_read_disabled_failed">讀取已停用應用程式失敗</string>
+    <string name="app_management_read_system_failed">讀取系統應用程式失敗</string>
+    <string name="app_management_refresh_failed">重新整理清單失敗</string>
+    <string name="app_management_exit_error">命令執行失敗，退出碼：%1$d</string>
+    <string name="app_management_invalid_list">應用程式清單輸出無效：%1$s</string>
+    <string name="app_management_no_success">系統未傳回操作成功結果</string>
+</resources>

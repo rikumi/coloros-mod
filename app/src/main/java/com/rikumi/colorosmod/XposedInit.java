@@ -7,6 +7,7 @@ import android.util.Log;
 
 import com.rikumi.colorosmod.hooks.QsHooks;
 import com.rikumi.colorosmod.hooks.WeatherHooks;
+import com.rikumi.colorosmod.hooks.StorePurificationHooks;
 import com.rikumi.colorosmod.hooks.GestureHooks;
 import com.rikumi.colorosmod.hooks.AncTileHooks;
 import com.rikumi.colorosmod.hooks.NotificationHooks;
@@ -26,6 +27,7 @@ import com.rikumi.colorosmod.hooks.KeyguardHooks;
 import com.rikumi.colorosmod.hooks.MediaProviderHooks;
 import com.rikumi.colorosmod.hooks.MultiWindowHooks;
 import com.rikumi.colorosmod.hooks.SafecenterHooks;
+import com.rikumi.colorosmod.hooks.AppStartConfirmHooks;
 import com.rikumi.colorosmod.hooks.SettingsHooks;
 import com.rikumi.colorosmod.hooks.SystemServerHooks;
 import com.rikumi.colorosmod.hooks.SystemUiHooks;
@@ -214,6 +216,9 @@ public class XposedInit extends XposedModule {
     public static final String KEY_SIGNAL_NETWORK_TYPE_MODE = "signal_network_type_mode";
     public static final String KEY_STATUS_BAR_FONT = "status_bar_clock_font";
     public static final String KEY_STATUS_BAR_FONT_WEIGHT = "status_bar_clock_weight";
+    // 恢复原生带“始终允许”复选框的应用间跳转确认对话框。
+    public static final String KEY_APP_START_CONFIRM_ALWAYS_ALLOW_ENABLED =
+            "app_start_confirm_always_allow_enabled";
     // 悬浮小窗贴边挂机: 拖到边缘松手时系统把窗口缩成边缘竖条并把任务切后台, 这里在 to-float 结束后
     // moveToFront 拉回前台; 不能在提交中途拦截 —— 会触发 "Input dispatching timed out" ANR。
     // 需把模块作用域加入 "android"(system_server), 旧版 SystemUI 内 hook 路径已废弃。
@@ -1213,10 +1218,12 @@ public class XposedInit extends XposedModule {
                 || "com.android.systemui".equals(packageName)
                 || "com.oplus.pscanvas".equals(packageName)
                 || "com.oplus.safecenter".equals(packageName)
+                || "com.oplus.securitypermission".equals(packageName)
                 || "com.android.settings".equals(packageName)
                 || "com.oplus.wallpapers".equals(packageName)
                 || "com.coloros.weather2".equals(packageName)
                 || "net.oneplus.weather".equals(packageName)
+                || "com.heytap.market".equals(packageName)
                 || "com.android.providers.media.module".equals(packageName);
     }
 
@@ -1249,10 +1256,14 @@ public class XposedInit extends XposedModule {
         } else if ("com.coloros.weather2".equals(lpparam.packageName)
                 || "net.oneplus.weather".equals(lpparam.packageName)) {
             WeatherHooks.hookWeather(lpparam);
+        } else if ("com.heytap.market".equals(lpparam.packageName)) {
+            StorePurificationHooks.hookStore(lpparam);
         } else if ("com.oplus.pscanvas".equals(lpparam.packageName)) {
             MultiWindowHooks.hookCanvasControlBar(lpparam);
         } else if ("com.oplus.safecenter".equals(lpparam.packageName)) {
             SafecenterHooks.hookSafecenter(lpparam);
+        } else if ("com.oplus.securitypermission".equals(lpparam.packageName)) {
+            AppStartConfirmHooks.hook(lpparam);
         } else if ("com.android.settings".equals(lpparam.packageName)) {
             SettingsHooks.hookSettings(lpparam);
         } else if ("com.oplus.wallpapers".equals(lpparam.packageName)) {

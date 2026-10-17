@@ -327,6 +327,23 @@ private val LOCKSCREEN: List<SettingsItem> = listOf(
 )
 
 private val PURIFICATION: List<SettingsItem> = listOf(
+    GroupTitleItem(R.string.store_group),
+    SwitchItem("store_block_splash", R.string.store_block_splash),
+    SwitchItem("store_hide_featured", R.string.store_hide_featured),
+    SwitchItem("store_hide_games", R.string.store_hide_games),
+    SwitchItem("store_hide_rank", R.string.store_hide_rank),
+    SwitchItem("store_empty_software", R.string.store_empty_software),
+    SwitchItem("store_disable_dynamic_icons", R.string.store_disable_dynamic_icons),
+    SwitchItem("store_disable_special_styles", R.string.store_disable_special_styles),
+    SwitchItem("store_empty_home", R.string.store_empty_home),
+    SwitchItem("store_hide_mine_recommendations", R.string.store_hide_mine_recommendations),
+    SwitchItem("store_hide_mine_booking", R.string.store_hide_mine_booking),
+    SwitchItem("store_hide_mine_welfare_quick", R.string.store_hide_mine_welfare_quick),
+    SwitchItem("store_hide_mine_clean", R.string.store_hide_mine_clean),
+    SwitchItem("store_hide_detail_recommendations", R.string.store_hide_detail_recommendations),
+    SwitchItem("store_hide_download_recommendations", R.string.store_hide_download_recommendations),
+    SwitchItem("store_hide_update_recommendations", R.string.store_hide_update_recommendations),
+    SwitchItem("store_clean_search", R.string.store_clean_search),
     GroupTitleItem(R.string.weather_group_weather),
     SwitchItem("weather_hide_air_quality", R.string.weather_hide_air_quality),
     SwitchItem("weather_hide_sun", R.string.weather_hide_sun),
@@ -345,6 +362,8 @@ private val PURIFICATION: List<SettingsItem> = listOf(
     SwitchItem("weather_hide_theme", R.string.weather_hide_theme),
     SwitchItem("weather_legacy_background", R.string.weather_legacy_background),
     SelectItem("weather_api_region", R.string.weather_api_region, listOf(R.string.weather_api_default, R.string.weather_api_china, R.string.weather_api_overseas)),
+    GroupTitleItem(R.string.app_start_confirm_permission_group),
+    SwitchItem("app_start_confirm_always_allow_enabled", R.string.app_start_confirm_always_allow),
 )
 
 private val STORAGE: List<SettingsItem> = listOf(
