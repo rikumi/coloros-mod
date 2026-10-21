@@ -1289,6 +1289,26 @@ private fun CouixSelectRow(
     var selected by remember(item.key, version) {
         mutableStateOf(prefs.getInt(item.key, item.defaultValue).coerceIn(0, item.options.lastIndex))
     }
+    val scope = rememberCoroutineScope()
+    var importing by remember { mutableStateOf(false) }
+    val fontPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            importing = true
+            scope.launch {
+                try {
+                    withContext(Dispatchers.IO) { SystemFontStore.import(ctx, item.key, uri) }
+                    selected = SystemFontStore.customIndex(item.key)
+                    onItemChanged()
+                } catch (error: Exception) {
+                    android.widget.Toast.makeText(ctx, if (error is SystemFontStore.NotMonospaceFontException) ctx.getString(R.string.ui_font_not_monospace)
+                        else ctx.getString(R.string.ui_font_import_failed), android.widget.Toast.LENGTH_LONG).show()
+                    XposedInit.log("font import failed: $error")
+                } finally { importing = false }
+            }
+        }
+    }
     var expanded by remember { mutableStateOf(false) }
     var popupVisible by remember { mutableStateOf(false) }
     LaunchedEffect(expanded) {
@@ -1368,7 +1388,23 @@ private fun CouixSelectRow(
                             selected = index == selected,
                         ) {
                             expanded = false
-                            if (index != selected) {
+                            if (SystemFontStore.isFont(item.key)) {
+                                if (!importing && index == SystemFontStore.customIndex(item.key)) {
+                                    fontPicker.launch(arrayOf("*/*"))
+                                } else if (!importing && index != selected) {
+                                    importing = true
+                                    scope.launch {
+                                        try {
+                                            withContext(Dispatchers.IO) { SystemFontStore.select(ctx, item.key, index) }
+                                            selected = index
+                                            onItemChanged()
+                                        } catch (error: Exception) {
+                                            android.widget.Toast.makeText(ctx, ctx.getString(R.string.ui_font_import_failed), android.widget.Toast.LENGTH_LONG).show()
+                                            XposedInit.log("font selection failed: $error")
+                                        } finally { importing = false }
+                                    }
+                                }
+                            } else if (index != selected) {
                                 selected = index
                                 setInt(ctx, item.key, index)
                                 onItemChanged()

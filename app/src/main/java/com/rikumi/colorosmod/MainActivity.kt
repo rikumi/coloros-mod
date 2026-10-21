@@ -64,6 +64,7 @@ import top.yukonga.miuix.kmp.icon.extended.Hide
 import top.yukonga.miuix.kmp.icon.extended.Lock
 import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.icon.extended.Update
+import top.yukonga.miuix.kmp.icon.extended.Translate
 import top.yukonga.miuix.kmp.icon.extended.Tune
 import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -110,6 +111,11 @@ class MainActivity : ComponentActivity() {
             XposedServiceHelper.registerListener(object : XposedServiceHelper.OnServiceListener {
                 override fun onServiceBind(service: XposedService) {
                     xposedServices.add(service)
+                    val context = applicationContext
+                    Thread {
+                        runCatching { SystemFontStore.sync(context, service) }
+                            .onFailure { XposedInit.log("font settings sync failed: $it") }
+                    }.start()
                     scopeObservers.forEach { it.run() }
                 }
                 override fun onServiceDied(service: XposedService) {
@@ -232,7 +238,7 @@ private val QS: List<SettingsItem> = listOf(
     SwitchItem("qs_tile_name_ellipsis_enabled", R.string.ui_qs_tile_ellipsis),
     SwitchItem("fold_idle_media", R.string.ui_fold_idle_media),
     SwitchItem("qs_fill_empty", R.string.ui_qs_fill_empty),
-    SwitchItem("qs_corner_radius_enabled", R.string.ui_qs_normal_corner, subtitle = R.string.ui_qs_corner_hint, sliderKey = "qs_corner_radius_percent", sliderMin = 25, sliderMax = 50, sliderDefault = 25, sliderUnit = "%"),
+    SwitchItem("qs_corner_radius_enabled", R.string.ui_qs_normal_corner, subtitle = R.string.ui_qs_corner_hint, sliderKey = "qs_corner_radius_percent", sliderMin = 20, sliderMax = 50, sliderDefault = 25, sliderUnit = "%"),
     SwitchItem("qs_clock_no_expand_anim_enabled", R.string.ui_qs_clock_single_line),
     SwitchItem("anc_tile_enabled", R.string.ui_anc_tile),
     GroupTitleItem(R.string.qs_merged_modernization),
@@ -367,6 +373,12 @@ private val PURIFICATION: List<SettingsItem> = listOf(
     SwitchItem("app_start_confirm_always_allow_enabled", R.string.app_start_confirm_always_allow),
 )
 
+private val SYSTEM_FONTS: List<SettingsItem> = listOf(
+    SelectItem("system_font_zh", R.string.ui_system_font_zh, listOf(R.string.ui_font_default, R.string.ui_font_source_han, R.string.ui_font_custom)),
+    SelectItem("system_font_latin", R.string.ui_system_font_latin, listOf(R.string.ui_font_default, R.string.ui_font_inter, R.string.ui_font_manrope, R.string.ui_font_custom)),
+    SelectItem("system_font_mono", R.string.ui_system_font_mono, listOf(R.string.ui_font_maple, R.string.ui_font_jetbrains, R.string.ui_font_fira, R.string.ui_font_cascadia, R.string.ui_font_custom)),
+)
+
 private val STORAGE: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_storage_folders),
     FolderBlockItem("media_folder_block_alarms", "Alarms", "Alarms"),
@@ -401,6 +413,7 @@ private val CATEGORY_GROUPS: List<List<Category>> = listOf(
         Category("hidden_apps", R.string.ui_category_hidden, MiuixIcons.Hide, HIDDEN),
         Category("float_window", R.string.ui_category_float, MiuixIcons.Copy, FLOATWINDOW, hint = R.string.ui_float_zygote_hint),
         Category("navigation", R.string.ui_category_navigation, MiuixIcons.Backup, NAV),
+        Category("system_fonts", R.string.ui_category_system_fonts, MiuixIcons.Translate, SYSTEM_FONTS, hint = R.string.ui_system_font_zygote_hint),
     ),
     listOf(
         Category("purification", R.string.weather_category_purification, MiuixIcons.Tune, PURIFICATION),
@@ -750,7 +763,9 @@ private fun CategoryScreen(
                 .couixOverscroll(listState, overscrollOffset),
         ) {
             // 第一个 group 的 header: 说明滑块两端值的含义。
-            item { CouixSmallTitle(text = ctx.getString(SLIDER_GROUP_HINT)) }
+            if (category.id != "system_fonts") {
+                item { CouixSmallTitle(text = ctx.getString(SLIDER_GROUP_HINT)) }
+            }
             if (category.items.masterItems.isNotEmpty()) {
                 item {
                     CategoryMasterToggle(

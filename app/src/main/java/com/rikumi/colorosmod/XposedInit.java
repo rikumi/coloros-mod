@@ -899,8 +899,11 @@ public class XposedInit extends XposedModule {
     public void onModuleLoaded(@NonNull ModuleLoadedParam param) {
         // 必须先拿到框架接口, 否则兼容层无法挂钩(见 XposedBridge#attachFramework)。
         XposedBridge.attachFramework(this);
+        com.rikumi.colorosmod.hooks.SystemFontHooks.attach(this);
         sProcessName = param.getProcessName();
         sIsSystemServer = param.isSystemServer();
+        com.rikumi.colorosmod.hooks.MonospaceHooks.hook(ClassLoader.getSystemClassLoader());
+        if (!sIsSystemServer) com.rikumi.colorosmod.hooks.NativeFontHooks.hook(this);
         // 尽早启动设置预热, 使 Launcher 首次加载应用列表时已能读取隐藏图标开关。
         if (!sIsSystemServer) {
             sAppContext = currentApplication();
@@ -918,6 +921,9 @@ public class XposedInit extends XposedModule {
     // 所有可能拒绝的检查都在无破坏 preflight 中完成；commit 一旦开始便只前进。
     @Override
     public boolean onHotReloading(@NonNull HotReloadingParam param) {
+        // Native libc hooks and Chromium's font manager survive Java generation changes.
+        if (com.rikumi.colorosmod.hooks.NativeFontHooks.isActive()) return false;
+
         log("onHotReloading: quiescing process=" + sProcessName);
         // Close the hook admission gate first, then inspect subsystem state. This makes the
         // preflight snapshot stable instead of racing callbacks that start after canHotReload().
@@ -1001,6 +1007,7 @@ public class XposedInit extends XposedModule {
         super.onHotReloaded(param);
 
         XposedBridge.attachFramework(this);
+        com.rikumi.colorosmod.hooks.SystemFontHooks.attach(this);
         XposedHelpers.cancelQuiescing();
         sAppProcessHooked = false;
         sSystemServerHooked = false;
@@ -1030,6 +1037,8 @@ public class XposedInit extends XposedModule {
         if (sIsSystemServer) {
             SystemServerHooks.hookFloatWindowEdgeHangSystemServer(systemServerLpparam());
             SystemServerHooks.hookFloatWindowEdgeHangMute(systemServerLpparam());
+            com.rikumi.colorosmod.hooks.MonospaceHooks.hook(sSystemServerClassLoader);
+            com.rikumi.colorosmod.hooks.SystemFontHooks.hook(systemServerLpparam());
             SystemServerHooks.hookFloatWindowLandscapeKeepRatio(systemServerLpparam());
             SystemServerHooks.hookFloatWindowSizeLimits(systemServerLpparam());
             SystemServerHooks.hookFloatWindowCount(systemServerLpparam());
@@ -1251,6 +1260,7 @@ public class XposedInit extends XposedModule {
         }
         // 先取得 Application Context 再启动预热, 避免 worker 在 Context 尚未创建时进入退避重试。
         startSettingsLoader();
+        com.rikumi.colorosmod.hooks.MonospaceHooks.hook(lpparam.classLoader);
         if ("com.android.launcher".equals(lpparam.packageName)) {
             LauncherHooks.hookLauncher(lpparam);
         } else if ("com.android.systemui".equals(lpparam.packageName)) {
@@ -1273,6 +1283,7 @@ public class XposedInit extends XposedModule {
         } else if ("com.android.providers.media.module".equals(lpparam.packageName)) {
             MediaProviderHooks.hookMediaProvider(lpparam);
         } else if ("android".equals(lpparam.packageName)) {
+            com.rikumi.colorosmod.hooks.SystemFontHooks.hook(lpparam);
             // system_server: 承载"贴边最小化"的真正提交逻辑(com.android.server.wm.FlexibleTaskController)
             SystemServerHooks.hookFloatWindowEdgeHangSystemServer(lpparam);
             // system_server: 贴边挂机静音, 走系统多应用音量通道

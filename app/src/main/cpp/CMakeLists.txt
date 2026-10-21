@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.22)
+project(coloros_font_bridge LANGUAGES CXX)
+add_library(coloros_font_bridge SHARED font_bridge.cpp)
+target_compile_features(coloros_font_bridge PRIVATE cxx_std_17)
+target_compile_options(coloros_font_bridge PRIVATE -Wall -Wextra -fvisibility=hidden)
+target_link_libraries(coloros_font_bridge PRIVATE log dl)
+target_link_options(coloros_font_bridge PRIVATE -Wl,-z,max-page-size=16384)

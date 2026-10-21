@@ -183,9 +183,6 @@ public final class LauncherHooks {
     // 混色, 是背景发灰/提亮的来源; 仅在进入/处于最近任务的那次 setBlur 里清零, 调用后恢复。
     private static final String EXTRA_RECENTS_BLEND = "recentsBlendColor";
     private static final float[] RECENTS_CLEAR_BLEND = new float[]{0f, 0f, 0f, 0f};
-    // 手势进入最近任务期间保存的原始混色: doBackGroundAnim(true) 清零, doBackGroundAnim(false) 恢复。
-    private static volatile float[] sRecentsSavedBlend;
-    private static volatile Object sRecentsSavedDepthController;
 
     private static final class DrawerIconState {
         int paddingLeft;
@@ -536,10 +533,6 @@ public final class LauncherHooks {
                         Integer.valueOf(entry.getKey().getPaddingLeft()) });
             }
         }
-        if (sRecentsSavedBlend != null && sRecentsSavedDepthController != null) {
-            saved.add(new Object[] { "recentsBlend", sRecentsSavedDepthController,
-                    sRecentsSavedBlend.clone() });
-        }
         XposedHelpers.forEachTrackedOwner("colorosmod_launcher_predraw",
                 new XposedHelpers.TrackedOwnerConsumer() {
                     @Override public void accept(Object owner) {
@@ -582,10 +575,10 @@ public final class LauncherHooks {
                     float[] savedBlend = ((float[]) state[2]).clone();
                     float[] blend = (float[]) XposedHelpers.getObjectField(
                             depthController, "mBlurBlendColor");
-                    System.arraycopy(RECENTS_CLEAR_BLEND, 0, blend, 0,
-                            Math.min(blend.length, RECENTS_CLEAR_BLEND.length));
-                    sRecentsSavedDepthController = depthController;
-                    sRecentsSavedBlend = savedBlend;
+                    // Older generations kept this array cleared for the entire gesture.
+                    // Restore the original; the new hooks clear it only during setBlur.
+                    System.arraycopy(savedBlend, 0, blend, 0,
+                            Math.min(blend.length, savedBlend.length));
                 } catch (Throwable t) {
                     log("launcher recents blend restore failed: " + t);
                 }
@@ -691,18 +684,6 @@ public final class LauncherHooks {
         sModelReloadActive = false;
         new android.os.Handler(android.os.Looper.getMainLooper())
                 .removeCallbacksAndMessages(sModelReloadToken);
-        if (sRecentsSavedBlend != null && sRecentsSavedDepthController != null) {
-            try {
-                float[] blend = (float[]) XposedHelpers.getObjectField(
-                        sRecentsSavedDepthController, "mBlurBlendColor");
-                System.arraycopy(sRecentsSavedBlend, 0, blend, 0,
-                        Math.min(blend.length, sRecentsSavedBlend.length));
-            } catch (Throwable t) {
-                log("launcher recents blend cleanup failed: " + t);
-            }
-        }
-        sRecentsSavedBlend = null;
-        sRecentsSavedDepthController = null;
         synchronized (sDrawerIconStates) {
             for (java.util.Map.Entry<Object, DrawerIconState> entry :
                     new java.util.ArrayList<>(sDrawerIconStates.entrySet())) {
@@ -1271,7 +1252,7 @@ public final class LauncherHooks {
     }
 
     // 桌面是否停在/正在前往最近任务(OVERVIEW)。上滑手势进入最近任务的过渡期间,
-    // target 已由 StateManager#goToState(OVERVIEW) 写入, 手势驱动 setBlur 前一刻即生效。
+    // target 在 goToState(OVERVIEW) 后生效；尚未提交状态的手势需另读 RecentsView 的原生标记。
     static boolean isLauncherInOverview(Object launcher, ClassLoader cl) {
         Object state = launcherTargetState(cl);
         if (state == null) state = launcherCurrentState(launcher);
@@ -1615,6 +1596,20 @@ public final class LauncherHooks {
             XposedHelpers.findAndHookMethod(overviewScrimClass, "setScrimProgress", float.class,
                     int.class, clearScrim);
 
+            // Scrim.draw reads cached mScrimAlpha directly. Suppress drawing as well so a
+            // previously nonzero progress cannot survive a guarded or skipped setter call.
+            XposedHelpers.findAndHookMethod(
+                    "com.android.launcher3.graphics.Scrim", lpparam.classLoader,
+                    "draw", Canvas.class, new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (overviewScrimClass.isInstance(param.thisObject)
+                                    && readBool(KEY_RECENTS_BG_TRANSPARENT_ENABLED, false)) {
+                                param.setResult(null);
+                            }
+                        }
+                    });
+
             // 保留模糊本身(blur 半径), 只把模糊附带的混色清零: setBlur 内部用
             // mBlurBlendColor * blur 构造 COLORMIX 混色, 是背景发灰/提亮的根源。
             Class<?> depthClass = XposedHelpers.findClass(
@@ -1628,7 +1623,8 @@ public final class LauncherHooks {
                                 Object launcher = XposedHelpers.getObjectField(
                                         param.thisObject, "mLauncher");
                                 if (launcher == null
-                                        || !isLauncherInOverview(launcher, lpparam.classLoader)) {
+                                        || !(isLauncherInOverview(launcher, lpparam.classLoader)
+                                        || isLauncherRecentsGestureActive(launcher))) {
                                     return;
                                 }
                                 float[] blend = (float[]) XposedHelpers.getObjectField(
@@ -1653,38 +1649,22 @@ public final class LauncherHooks {
                         }
                     });
 
-            // 手势进入最近任务时(doBackGroundAnim(true)), blur 动画在 goToState(OVERVIEW) 之前
-            // 就已启动, setBlur 的状态判定来不及生效; 直接在 blur 驱动入口把混色清零, 返回桌面
-            // (doBackGroundAnim(false)) 再恢复, 覆盖手势停顿与松手后的整个过渡阶段。
-            Class<?> swipeHelperClass = XposedHelpers.findClass(
-                    "com.android.quickstep.touch.SwipeToRecentAnimationHelper", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(swipeHelperClass, "doBackGroundAnim", boolean.class,
-                    new XC_MethodHook() {
+            // Gesture cancellation may leave the blur value unchanged, so the native state
+            // switch skips setBlur. Reapply its current value after the native flags clear.
+            XposedHelpers.findAndHookMethod(
+                    "com.android.quickstep.touch.SwipeToRecentAnimationHelper", lpparam.classLoader,
+                    "clearState", new XC_MethodHook() {
                         @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
-                            if (!readBool(KEY_RECENTS_BG_TRANSPARENT_ENABLED, false)) return;
-                            try {
-                                Object depthController = XposedHelpers.getObjectField(
-                                        param.thisObject, "mDepthController");
-                                if (depthController == null) return;
-                                float[] blend = (float[]) XposedHelpers.getObjectField(
-                                        depthController, "mBlurBlendColor");
-                                if ((Boolean) param.args[0]) {
-                                    if (sRecentsSavedBlend == null) {
-                                        sRecentsSavedBlend = blend.clone();
-                                        sRecentsSavedDepthController = depthController;
-                                    }
-                                    System.arraycopy(RECENTS_CLEAR_BLEND, 0, blend, 0,
-                                            blend.length);
-                                } else if (sRecentsSavedBlend != null) {
-                                    System.arraycopy(sRecentsSavedBlend, 0, blend, 0,
-                                            blend.length);
-                                    sRecentsSavedBlend = null;
-                                    sRecentsSavedDepthController = null;
-                                }
-                            } catch (Throwable t) {
-                                log("recents swipe blend hook error: " + t);
-                            }
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            refreshRecentsGestureBlend(param.thisObject, "mLauncher");
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(
+                    "com.android.quickstep.views.OplusRecentsViewImpl", lpparam.classLoader,
+                    "onGestureAnimationEnd", new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            refreshRecentsGestureBlend(param.thisObject, "mActivity");
                         }
                     });
 
@@ -1699,10 +1679,37 @@ public final class LauncherHooks {
                                     (Canvas) param.args[0]);
                         }
                     });
-            log("HOOK OK launcher OplusDepthController/SwipeToRecentAnimationHelper/"
+            log("HOOK OK launcher OplusDepthController/"
                     + "OplusOverviewScrim/OplusTaskThumbnailViewImpl (transparent recents bg)");
         } catch (Throwable t) {
             log("HOOK FAIL launcher transparent recents bg: " + Log.getStackTraceString(t));
+        }
+    }
+
+    // Launcher-side swipes mark recentAnimateDragging in initState and clear it in clearState.
+    // App-side Quickstep gestures set mGestureActive before the finger is released, and clear
+    // it in onGestureAnimationEnd. Neither depends on pause detection or the OVERVIEW target.
+    private static boolean isLauncherRecentsGestureActive(Object launcher) {
+        try {
+            Object recents = XposedHelpers.callMethod(launcher, "getOverviewPanel");
+            if (recents == null) return false;
+            if (XposedHelpers.getBooleanField(recents, "mGestureActive")) return true;
+            return Boolean.TRUE.equals(XposedHelpers.callMethod(recents, "getRecentAnimateDragging"));
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static void refreshRecentsGestureBlend(Object owner, String launcherField) {
+        if (!readBool(KEY_RECENTS_BG_TRANSPARENT_ENABLED, false)) return;
+        try {
+            Object launcher = XposedHelpers.getObjectField(owner, launcherField);
+            Object depth = XposedHelpers.callMethod(launcher, "getDepthController");
+            if (depth == null) return;
+            float blur = ((Number) XposedHelpers.callMethod(depth, "getCurrentBlur")).floatValue();
+            if (blur >= 0f) XposedHelpers.callMethod(depth, "setBlur", blur, false);
+        } catch (Throwable error) {
+            log("recents gesture blend refresh failed: " + error);
         }
     }
 

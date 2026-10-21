@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_category_system_fonts">System fonts</string>
+    <string name="ui_system_font_zh">System Chinese font</string>
+    <string name="ui_system_font_latin">System Latin font</string>
+    <string name="ui_system_font_mono">System monospace font</string>
+    <string name="ui_font_default">Default</string>
+    <string name="ui_font_source_han">Source Han Sans</string>
+    <string name="ui_font_custom">Custom</string>
+    <string name="ui_font_import_failed">Failed to import or save font</string>
+    <string name="ui_font_maple">Maple Mono</string>
+    <string name="ui_font_jetbrains">JetBrains Mono</string>
+    <string name="ui_font_fira">Fira Code</string>
+    <string name="ui_font_cascadia">Cascadia Code</string>
+    <string name="ui_system_font_zygote_hint">Restart Zygote for font changes to take effect</string>
+    <string name="ui_font_not_monospace">Selected font contains no monospace face</string>
+</resources>

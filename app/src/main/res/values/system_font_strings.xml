@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_category_system_fonts">系统字体</string>
+    <string name="ui_system_font_zh">系统中文字体</string>
+    <string name="ui_system_font_latin">系统西文字体</string>
+    <string name="ui_system_font_mono">系统等宽字体</string>
+    <string name="ui_font_default">默认</string>
+    <string name="ui_font_source_han">思源黑体</string>
+    <string name="ui_font_custom">自定义</string>
+    <string name="ui_font_import_failed">字体导入或保存失败</string>
+    <string name="ui_font_maple">Maple Mono</string>
+    <string name="ui_font_jetbrains">JetBrains Mono</string>
+    <string name="ui_font_fira">Fira Code</string>
+    <string name="ui_font_cascadia">Cascadia Code</string>
+    <string name="ui_system_font_zygote_hint">修改字体需重启 Zygote 生效</string>
+    <string name="ui_font_not_monospace">所选字体不包含等宽字体</string>
+</resources>

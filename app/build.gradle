@@ -27,11 +27,21 @@ if (!signingStoreFile.isFile()) {
 android {
     namespace 'com.rikumi.colorosmod'
     compileSdk 37
+    ndkVersion '21.4.7075529'
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
 
     defaultConfig {
         applicationId 'com.rikumi.colorosmod'
         minSdk 26
         targetSdk 37
+        externalNativeBuild {
+            cmake { arguments '-DANDROID_STL=c++_static' }
+        }
         versionCode 10203
         versionName '1.2.3'
     }

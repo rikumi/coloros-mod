@@ -96,21 +96,10 @@ public final class MergedCardRatioHooks {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             View icon = (View) p.thisObject;
                             if (!ratioEnabled(icon) || mergedRoot(icon) == null) return;
-                            String sizeField = "iconSizePx";
-                            int current;
-                            try { current = XposedHelpers.getIntField(icon, sizeField); }
-                            catch (Throwable oldSystemUi) {
-                                sizeField = "mIconSizePx";
-                                current = XposedHelpers.getIntField(icon, sizeField);
-                            }
-                            if (!iconSizes.containsKey(icon)) iconSizes.put(icon, current);
-                            int id = icon.getResources().getIdentifier("qs_tile_icon_size", "dimen", "com.android.systemui");
-                            int base = id != 0 ? icon.getResources().getDimensionPixelSize(id) : iconSizes.get(icon);
-                            int size = Math.max(1, Math.round(areaScale(icon) * iconFactor(icon) * base));
-                            XposedHelpers.setIntField(icon, sizeField, size);
-                            // 测量和图形统一尺寸，消除系统小空间模式另行施加的缩小倍率。
-                            rememberIconTransform(icon);
-                            icon.setScaleX(1f); icon.setScaleY(1f);
+                            int size = updateIconSize(icon);
+                            // 普通磁贴也使用方形的实际图形尺寸。展开态父 Frame 的旧宽度或
+                            // AT_MOST 约束不能再次将已放大的图标压窄。
+                            p.args[0] = View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY);
                             if (icon.getParent() instanceof View frame && frame.getParent() instanceof View tile
                                     && highlightClass.isInstance(tile)) {
                                 // 图形本身放大，仍在原来的宽容器内居中，避免挤到卡片左边缘。
@@ -127,6 +116,52 @@ public final class MergedCardRatioHooks {
                 XposedHelpers.findAndHookDeclaredMethod("com.android.systemui.qs.tileimpl.QSIconViewImpl", pkg.classLoader,
                         "onMeasure", int.class, int.class, iconMeasure);
             }
+            Class<?> concreteIcon = XposedHelpers.findClassIfExists(
+                    "com.oplus.systemui.qs.tileimpl.OplusQSIconViewImpl", pkg.classLoader);
+            if (concreteIcon == null) concreteIcon = XposedHelpers.findClass(
+                    "com.android.systemui.qs.tileimpl.QSIconViewImpl", pkg.classLoader);
+            XposedHelpers.findAndHookDeclaredMethod(concreteIcon, "onConfigurationChanged", Configuration.class,
+                    new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            View icon = (View) p.thisObject;
+                            // 原生回调刚写入本次配置的基准像素值；关闭功能时应恢复这个值。
+                            if (iconSizes.containsKey(icon)) iconSizes.put(icon, nativeIconSize(icon));
+                            if (!ratioEnabled(icon) || mergedRoot(icon) == null) return;
+                            updateIconSize(icon);
+                            icon.requestLayout();
+                        }
+                    });
+            XposedHelpers.findAndHookDeclaredMethod(concreteIcon, "onLayout", boolean.class, int.class, int.class,
+                    int.class, int.class, new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            View icon = (View) p.thisObject;
+                            if (ratioEnabled(icon) && mergedRoot(icon) != null) normalizeIconScale(icon);
+                        }
+                    });
+            XC_MethodHook nativeTileResources = new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    View tile = (View) p.thisObject;
+                    ViewGroup root = mergedRoot(tile);
+                    if (root == null) return;
+                    View icon = (View) XposedHelpers.callMethod(tile, "getIcon");
+                    // 记录原生刚更新的缩放，关闭功能或切到横屏时恢复当前配置。
+                    if (icon != null && iconTransforms.containsKey(icon))
+                        iconTransforms.put(icon, new IconTransform(icon));
+                    if (!ratioEnabled(tile)) return;
+                    // 原生资源刷新会重置 mIconFrame/mBg 的 LayoutParams 和图标 scale。
+                    // 根节点宽度、子节点身份没有变化，旧 GeometryPass 会错误地跳过修复。
+                    geometryPasses.remove(root);
+                    if (containerClass.isInstance(root)) cardScales.remove(root);
+                    if (icon != null) {
+                        updateIconSize(icon);
+                        icon.requestLayout();
+                    }
+                    root.requestLayout();
+                }
+            };
+            XposedHelpers.findAndHookDeclaredMethod(normalTileClass, "updateIconResource", nativeTileResources);
+            XposedHelpers.findAndHookDeclaredMethod(highlightClass, "onConfigurationChanged", Configuration.class,
+                    nativeTileResources);
             XC_MethodHook labelPadding = new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             View tile = (View) p.thisObject;
@@ -340,6 +375,31 @@ public final class MergedCardRatioHooks {
         if (Boolean.TRUE.equals(restoringRadius.get()) || !ratioEnabled(view)) return radius;
         Float surfaceScale = MergedTileGridHooks.surfaceScale(view);
         return radius * (surfaceScale != null ? surfaceScale : areaScale(view));
+    }
+
+    private static String iconSizeField(View icon) {
+        return icon.getClass().getName().equals("com.oplus.systemui.qs.tileimpl.OplusQSIconViewImpl")
+                ? "iconSizePx" : "mIconSizePx";
+    }
+
+    private static int nativeIconSize(View icon) {
+        return XposedHelpers.getIntField(icon, iconSizeField(icon));
+    }
+
+    private static void normalizeIconScale(View icon) {
+        rememberIconTransform(icon);
+        if (icon.getScaleX() != 1f) icon.setScaleX(1f);
+        if (icon.getScaleY() != 1f) icon.setScaleY(1f);
+    }
+
+    private static int updateIconSize(View icon) {
+        if (!iconSizes.containsKey(icon)) iconSizes.put(icon, nativeIconSize(icon));
+        int id = icon.getResources().getIdentifier("qs_tile_icon_size", "dimen", "com.android.systemui");
+        int base = id != 0 ? icon.getResources().getDimensionPixelSize(id) : iconSizes.get(icon);
+        int size = Math.max(1, Math.round(areaScale(icon) * iconFactor(icon) * base));
+        XposedHelpers.setIntField(icon, iconSizeField(icon), size);
+        normalizeIconScale(icon);
+        return size;
     }
 
     private static IconTransform rememberIconTransform(View view) {
