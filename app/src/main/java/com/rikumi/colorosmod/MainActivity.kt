@@ -254,6 +254,7 @@ private val NOTIF: List<SettingsItem> = listOf(
     SwitchItem("notification_pull_expand_enabled", R.string.ui_notification_pull),
     SwitchItem("notification_subtitle_enabled", R.string.ui_notification_subtitle, sliderKey = "notification_subtitle_sp", sliderMax = 16, sliderDefault = 8, sliderUnit = "sp"),
     SwitchItem("notification_padding_enabled", R.string.ui_notification_padding, sliderKey = "notification_padding_dp", sliderMax = 8, sliderDefault = 4),
+    SwitchItem("notification_legacy_layout_enabled", R.string.ui_notification_legacy_layout),
     GroupTitleItem(R.string.ui_statusbar_settings),
     SwitchItem("statusbar_monochrome_notification_icons_enabled", R.string.ui_statusbar_monochrome_notification_icons),
     SwitchItem("merge_dual_sim_signal", R.string.ui_merge_dual_sim),

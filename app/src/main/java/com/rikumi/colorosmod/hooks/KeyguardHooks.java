@@ -135,6 +135,8 @@ public final class KeyguardHooks {
     private static final String CLS_LOCKSCREEN_SHADE_TRANSITION_EX_IMPL =
             "com.oplus.systemui.notification.lockscreen.stack."
                     + "OplusLockscreenShadeTransitionControllerExImpl";
+    private static final String CLS_LEGACY_LOCKSCREEN_SHADE_TRANSITION_EX_IMPL =
+            "com.android.systemui.statusbar.OplusLockscreenShadeTransitionControllerExImpl";
 
     public static void hookKeyguardNotificationOffset(final XC_LoadPackage.LoadPackageParam lpparam,
                                                       final float density) {
@@ -169,8 +171,14 @@ public final class KeyguardHooks {
         };
         for (String methodName : ntfPaddingMethods) {
             try {
+                Class<?> transitionClass = XposedHelpers.findClassIfExists(
+                        CLS_LOCKSCREEN_SHADE_TRANSITION_EX_IMPL, lpparam.classLoader);
+                if (transitionClass == null) {
+                    transitionClass = XposedHelpers.findClass(
+                            CLS_LEGACY_LOCKSCREEN_SHADE_TRANSITION_EX_IMPL, lpparam.classLoader);
+                }
                 XposedHelpers.findAndHookMethod(
-                        CLS_LOCKSCREEN_SHADE_TRANSITION_EX_IMPL, lpparam.classLoader, methodName,
+                        transitionClass, methodName,
                         new XC_MethodHook() {
                             @Override
                             protected void afterHookedMethod(MethodHookParam param) {

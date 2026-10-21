@@ -30,6 +30,7 @@ public final class SystemUiHooks {
         // Feature 3b — 通知内边距: 始终注入, 运行时按 KEY_NOTIFICATION_PADDING_ENABLED 门控,
         // 内边距由 KEY_NOTIFICATION_PADDING_DP(0-8dp, 默认 4dp) 运行时读取。
         NotificationHooks.hookNotificationPadding(lpparam, density);
+        LegacyNotificationLayoutHooks.hook(lpparam);
 
         // 通知左滑直接清除: 始终注入, 运行时按 KEY_NOTIFICATION_SWIPE_TO_DISMISS_ENABLED 门控。
         NotificationHooks.hookNotificationSwipeToDismiss(lpparam);

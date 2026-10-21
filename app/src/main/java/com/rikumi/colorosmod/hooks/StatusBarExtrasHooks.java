@@ -70,8 +70,9 @@ public final class StatusBarExtrasHooks {
                     "com.oplus.systemui.statusbar.pipeline.battery.ui.binder.BatteryViewBinder", lp.classLoader);
             XposedBridge.hookAllMethods(binder, "bind$updatePercentOutView", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
-                    if (!(p.args[0] instanceof TextView) || p.args[2] == null) return;
-                    if (!XposedHelpers.getBooleanField(p.args[2], "isVisible")) return;
+                    if (p.args.length == 0 || !(p.args[0] instanceof TextView)) return;
+                    Object percentOutIcon = findPercentOutIcon(p.args);
+                    if (percentOutIcon == null || !XposedHelpers.getBooleanField(percentOutIcon, "isVisible")) return;
                     TextView view = (TextView) p.args[0];
                     CharSequence original = view.getText();
                     synchronized (percents) { percents.put(view, original); }
@@ -79,6 +80,17 @@ public final class StatusBarExtrasHooks {
                 }
             });
         } catch (Throwable t) { log("battery percent sign hook failed: " + t); }
+    }
+
+    private static Object findPercentOutIcon(Object[] args) {
+        for (Object arg : args) {
+            if (arg == null) continue;
+            try {
+                XposedHelpers.getBooleanField(arg, "isVisible");
+                return arg;
+            } catch (Throwable ignored) { }
+        }
+        return null;
     }
 
     private static void applyPercent(TextView view, CharSequence original, boolean hide) {

@@ -22,6 +22,7 @@ import android.widget.ProgressBar;
 
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
+import com.rikumi.colorosmod.xposed.XposedBridge;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
 import java.util.ArrayList;
@@ -328,24 +329,21 @@ public final class StatusBarFontHooks {
         try {
             Class<?> binder = XposedHelpers.findClass(
                     "com.oplus.systemui.statusbar.pipeline.battery.ui.binder.BatteryViewBinder", pkg.classLoader);
-            Class<?> battery = XposedHelpers.findClass(
-                    "com.oplus.systemui.statusbar.pipeline.battery.ui.view.StatBatteryMeterView", pkg.classLoader);
-            Class<?> percent = XposedHelpers.findClass(
-                    "com.oplus.systemui.statusbar.pipeline.battery.ui.model.PercentOutIcon", pkg.classLoader);
-            XposedHelpers.findAndHookMethod(binder, "bind$updatePercentOutView", TextView.class, battery, percent,
-                    new XC_MethodHook() {
-                        @Override protected void afterHookedMethod(MethodHookParam p) {
-                            if (p.args[0] instanceof TextView view) applyStatusBarFont(view);
-                        }
-                    });
-            XposedHelpers.findAndHookMethod(binder, "bind$updateOldHorizontalViewContent", ProgressBar.class,
-                    TextView.class, XposedHelpers.findClass(
-                            "com.oplus.systemui.statusbar.pipeline.battery.ui.model.OldHorizontal", pkg.classLoader),
-                    new XC_MethodHook() {
-                        @Override protected void afterHookedMethod(MethodHookParam p) {
-                            if (p.args[1] instanceof TextView view) applyStatusBarFont(view);
-                        }
-                    });
+            XposedBridge.hookAllMethods(binder, "bind$updatePercentOutView", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (p.args.length > 0 && p.args[0] instanceof TextView view) applyStatusBarFont(view);
+                }
+            });
+            try {
+                XposedHelpers.findAndHookMethod(binder, "bind$updateOldHorizontalViewContent", ProgressBar.class,
+                        TextView.class, XposedHelpers.findClass(
+                                "com.oplus.systemui.statusbar.pipeline.battery.ui.model.OldHorizontal", pkg.classLoader),
+                        new XC_MethodHook() {
+                            @Override protected void afterHookedMethod(MethodHookParam p) {
+                                if (p.args[1] instanceof TextView view) applyStatusBarFont(view);
+                            }
+                        });
+            } catch (Throwable ignored) { }
             Class<?> drawable = XposedHelpers.findClass(
                     "com.oplus.systemui.statusbar.pipeline.battery.ui.drawable.HorizontalBatteryContentDrawable", pkg.classLoader);
             XposedHelpers.findAndHookMethod(drawable, "drawContent", Canvas.class, RectF.class, new XC_MethodHook() {

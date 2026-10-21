@@ -254,9 +254,7 @@ public final class NotificationHooks {
                             }
                         });
 
-                XposedHelpers.findAndHookMethod(
-                        groupContainerClass, lpparam.classLoader, "applyState",
-                        new XC_MethodHook() {
+                XC_MethodHook applyGroupState = new XC_MethodHook() {
                             @Override
                             protected void afterHookedMethod(MethodHookParam param) {
                                 boolean enabled = sNotifPadEnabled && !isMinimizedGroup(param.thisObject);
@@ -266,7 +264,15 @@ public final class NotificationHooks {
                                 applyGroupHeaderOffset(container, "mGroupHeader", enabled, padPx);
                                 applyGroupHeaderOffset(container, "mMinimizedGroupHeader", enabled, padPx);
                             }
-                        });
+                        };
+                try {
+                    XposedHelpers.findAndHookMethod(groupContainerClass, lpparam.classLoader,
+                            "applyState", applyGroupState);
+                } catch (Throwable missingCurrentApplyState) {
+                    // SystemUI 15 的 Kotlin 重命名保留了 $1 后缀。
+                    XposedHelpers.findAndHookMethod(groupContainerClass, lpparam.classLoader,
+                            "applyState$1", applyGroupState);
+                }
 
                 try {
                     XposedHelpers.findAndHookMethod(
@@ -556,6 +562,8 @@ public final class NotificationHooks {
     // 调用方见 StatusBarLyricHooks#setNotificationNumberMode。
     private static final String CLS_ICON_AREA_REPOSITORY =
             "com.oplus.systemui.statusbar.icon.data.OplusNotificationIconAreaRepository";
+    private static final String CLS_LEGACY_ICON_AREA_CONTROLLER =
+            "com.oplus.systemui.statusbar.phone.OplusNotificationIconAreaController";
 
     /** 通知图标区仓库实例(构造时抓取), 用于下发"显示数字"及其还原值。 */
     private static volatile Object sIconAreaRepository = null;
@@ -570,24 +578,37 @@ public final class NotificationHooks {
     public static void hookNotificationIconAreaRepository(
             final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            Class<?> repoCls =
-                    XposedHelpers.findClass(CLS_ICON_AREA_REPOSITORY, lpparam.classLoader);
-            XposedHelpers.findAndHookConstructor(repoCls,
-                    Context.class,
-                    XposedHelpers.findClass(
-                            "kotlinx.coroutines.CoroutineScope", lpparam.classLoader),
-                    XposedHelpers.findClass(
-                            "com.android.systemui.dump.DumpManager", lpparam.classLoader),
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            sIconAreaRepository = param.thisObject;
-                            startShowModeLoop();
-                        }
-                    });
-            log("HOOK OK OplusNotificationIconAreaRepository#<init> (notification show mode)");
+            Class<?> repoCls = XposedHelpers.findClassIfExists(
+                    CLS_ICON_AREA_REPOSITORY, lpparam.classLoader);
+            if (repoCls != null) {
+                XposedHelpers.findAndHookConstructor(repoCls,
+                        Context.class,
+                        XposedHelpers.findClass(
+                                "kotlinx.coroutines.CoroutineScope", lpparam.classLoader),
+                        XposedHelpers.findClass(
+                                "com.android.systemui.dump.DumpManager", lpparam.classLoader),
+                        new XC_MethodHook() {
+                            @Override
+                            protected void afterHookedMethod(MethodHookParam param) {
+                                sIconAreaRepository = param.thisObject;
+                                startShowModeLoop();
+                            }
+                        });
+                log("HOOK OK OplusNotificationIconAreaRepository#<init> (notification show mode)");
+            } else {
+                Class<?> legacyController = XposedHelpers.findClass(
+                        CLS_LEGACY_ICON_AREA_CONTROLLER, lpparam.classLoader);
+                XposedBridge.hookAllConstructors(legacyController, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        sIconAreaRepository = param.thisObject;
+                        startShowModeLoop();
+                    }
+                });
+                log("HOOK OK OplusNotificationIconAreaController#<init> (notification show mode)");
+            }
         } catch (Throwable t) {
-            log("HOOK FAIL OplusNotificationIconAreaRepository#<init> :: "
+            log("HOOK FAIL notification icon area show mode :: "
                     + Log.getStackTraceString(t));
         }
     }
@@ -732,7 +753,8 @@ public final class NotificationHooks {
     }
 
     public static void restoreHotReloadHost(Object host) {
-        if (host == null || !CLS_ICON_AREA_REPOSITORY.equals(host.getClass().getName())) return;
+        if (host == null || (!CLS_ICON_AREA_REPOSITORY.equals(host.getClass().getName())
+                && !CLS_LEGACY_ICON_AREA_CONTROLLER.equals(host.getClass().getName()))) return;
         sIconAreaRepository = host;
         startShowModeLoop();
     }
@@ -796,11 +818,20 @@ public final class NotificationHooks {
     static void applyNotificationShowMode() {
         Object repo = sIconAreaRepository;
         if (repo == null) return;
-        Object flow = XposedHelpers.getObjectField(repo, "notificationShowMode");
-        if (flow == null) return;
         // 歌词显示期间强制"显示数字", 否则还原成系统设置里的值。
         int desired = sLyricNumberMode
                 ? NOTIFICATION_PROMPT_SHOW_NUMBER : readNotificationPromptMode();
+        Object mode = XposedHelpers.getObjectField(repo, "notificationShowMode");
+        if (mode instanceof Number) {
+            if (((Number) mode).intValue() != desired) {
+                XposedHelpers.setIntField(repo, "notificationShowMode", desired);
+                XposedHelpers.callMethod(repo, "updateStatusBarIcons");
+                log("notification show mode -> " + desired);
+            }
+            return;
+        }
+        Object flow = mode;
+        if (flow == null) return;
         Object current = XposedHelpers.callMethod(flow, "getValue");
         if (current instanceof Integer && ((Integer) current).intValue() == desired) return;
         XposedHelpers.callMethod(flow, "setValue", Integer.valueOf(desired));

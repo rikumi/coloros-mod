@@ -11,6 +11,9 @@ import android.graphics.LinearGradient;
 import android.graphics.Shader;
 import android.view.View;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.DrawableWrapper;
+import android.graphics.drawable.GradientDrawable;
+import android.content.res.ColorStateList;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
@@ -27,8 +30,22 @@ public final class ActiveTileOutlineHooks {
     private static final WeakHashMap<View, Boolean> views = new WeakHashMap<>();
     private static final WeakHashMap<Drawable, Boolean> tracked = new WeakHashMap<>();
     private static final WeakHashMap<Drawable, Paint> colorPaints = new WeakHashMap<>();
+    private static final WeakHashMap<View, Boolean> legacyTiles = new WeakHashMap<>();
+    private static final WeakHashMap<GradientDrawable, Stroke> legacyStrokes = new WeakHashMap<>();
+    private static boolean legacySystemUi;
+
+    private static final class Stroke {
+        final int width;
+        final ColorStateList color;
+        Stroke(int width, ColorStateList color) { this.width = width; this.color = color; }
+    }
 
     static void hook(XC_LoadPackage.LoadPackageParam pkg) {
+        if (XposedHelpers.findClassIfExists("com.oplus.posteffect.GradientStrokeLineParamsKt",
+                pkg.classLoader) == null) {
+            hookLegacy(pkg);
+            return;
+        }
         try {
             ContourLightShader.init(pkg.classLoader);
             strokeUniforms = XposedHelpers.findClass("com.oplus.posteffect.GradientStrokeLineParamsKt", pkg.classLoader);
@@ -134,6 +151,95 @@ public final class ActiveTileOutlineHooks {
         } catch (Throwable t) { log("active tile outline hook failed: " + t); }
     }
 
+    /** SystemUI 15 has no gradient-stroke shader API; use its native tile background drawables. */
+    private static void hookLegacy(XC_LoadPackage.LoadPackageParam pkg) {
+        try {
+            separateTileClass = XposedHelpers.findClassIfExists(
+                    "com.oplus.systemui.qs.base.tile.OplusQSHighlightTileView", pkg.classLoader);
+            if (separateTileClass == null) return;
+            legacySystemUi = true;
+            Class<?> tileState = XposedHelpers.findClass("com.android.systemui.plugins.qs.QSTile$State",
+                    pkg.classLoader);
+            XposedHelpers.findAndHookDeclaredMethod(separateTileClass, "handleStateChanged", tileState,
+                    new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            View tile = (View) p.thisObject;
+                            if (!legacyMerged(tile)) return;
+                            legacyTiles.put(tile, true);
+                        }
+                    });
+            for (String method : new String[]{"updateBackground", "updateBackgroundMask"}) {
+                XposedHelpers.findAndHookMethod(separateTileClass, method, Drawable.class,
+                        new XC_MethodHook() {
+                            @Override protected void afterHookedMethod(MethodHookParam p) {
+                                View tile = (View) p.thisObject;
+                                if (!legacyMerged(tile)) return;
+                                legacyTiles.put(tile, true);
+                                applyLegacyStroke((Drawable) p.args[0], tile);
+                            }
+                        });
+            }
+            XposedHelpers.findAndHookMethod(separateTileClass, "getActiveColorWithDarkMode",
+                    android.content.Context.class, new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            View tile = (View) p.thisObject;
+                            if (legacyMerged(tile) && readBool(KEY_QS_ACTIVE_COLOR_ENABLED, false))
+                                p.setResult(readInt(KEY_QS_ACTIVE_COLOR, 0xff00b4d8));
+                        }
+                    });
+            log("HOOK OK legacy QS active color and contour");
+        } catch (Throwable t) { log("legacy active tile contour hook failed: " + t); }
+    }
+
+    private static boolean legacyMerged(View tile) {
+        for (View current = tile; current != null;
+                current = current.getParent() instanceof View parent ? parent : null) {
+            String name = current.getClass().getName();
+            if (name.equals("com.oplus.systemui.qs.OplusQSTileMediaContainer")
+                    || name.equals("com.oplus.systemui.qs.widget.OplusHeaderTileLayout")
+                    || name.equals("com.android.systemui.qs.TileLayout")
+                    || name.equals("com.android.systemui.qs.SideLabelTileLayout")) return true;
+        }
+        return false;
+    }
+
+    private static void applyLegacyStroke(Drawable drawable, View tile) {
+        if (drawable == null) return;
+        while (drawable instanceof DrawableWrapper wrapper && wrapper.getDrawable() != null)
+            drawable = wrapper.getDrawable();
+        if (!(drawable instanceof GradientDrawable gradient)) return;
+        int state;
+        try { state = XposedHelpers.getIntField(tile, "mTileIconState"); }
+        catch (Throwable ignored) { state = 0; }
+        boolean active = state == 2 || state == 101;
+        boolean enabled = active && readBool(KEY_QS_ACTIVE_OUTLINE_ENABLED, false);
+        Stroke original = legacyStrokes.get(gradient);
+        if (original == null) {
+            original = readLegacyStroke(gradient);
+            legacyStrokes.put(gradient, original);
+        }
+        if (enabled) {
+            int px = Math.max(1, Math.round(1.5f * tile.getResources().getDisplayMetrics().density));
+            gradient.setStroke(px, readInt(KEY_QS_ACTIVE_COLOR, 0xff00b4d8));
+        } else {
+            gradient.setStroke(original.width, original.color == null ? ColorStateList.valueOf(0)
+                    : original.color);
+        }
+        gradient.invalidateSelf();
+    }
+
+    private static Stroke readLegacyStroke(GradientDrawable gradient) {
+        try {
+            Object state = XposedHelpers.getObjectField(gradient, "mGradientState");
+            int width = XposedHelpers.getIntField(state, "mStrokeWidth");
+            ColorStateList color = (ColorStateList) XposedHelpers.getObjectField(state, "mStrokeColor");
+            return new Stroke(width, color);
+        } catch (Throwable t) {
+            log("legacy tile background stroke state unavailable: " + t);
+            return new Stroke(0, ColorStateList.valueOf(0));
+        }
+    }
+
     private static boolean isSeparate(View owner) {
         for (View view = owner; view != null; view = view.getParent() instanceof View parent ? parent : null)
             if ((separateTileClass != null && separateTileClass.isInstance(view))
@@ -165,6 +271,16 @@ public final class ActiveTileOutlineHooks {
 
     public static void refresh() {
         new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+            if (legacySystemUi) {
+                for (View tile : legacyTiles.keySet().toArray(new View[0])) {
+                    if (tile == null) continue;
+                    try {
+                        Object backgroundProxy = XposedHelpers.getObjectField(tile, "mBackgroundProxy");
+                        XposedHelpers.callMethod(backgroundProxy, "refreshViewBackground");
+                    } catch (Throwable t) { tile.invalidate(); }
+                }
+                return;
+            }
             for (View view : views.keySet().toArray(new View[0])) if (view != null) view.invalidate();
         });
     }

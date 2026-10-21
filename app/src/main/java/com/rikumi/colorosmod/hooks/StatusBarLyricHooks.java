@@ -230,6 +230,20 @@ public final class StatusBarLyricHooks {
         } catch (Throwable t) {
             log("HOOK FAIL OplusQSFakeStatusController fraction listener (statusbar_lyric) :: "
                     + Log.getStackTraceString(t));
+            try {
+                XposedHelpers.findAndHookMethod(
+                        "com.oplus.systemui.qs.OplusQuickStatusBarHeader",
+                        lpparam.classLoader, "setExpansion", float.class,
+                        new XC_MethodHook() {
+                            @Override protected void beforeHookedMethod(MethodHookParam param) {
+                                setPanelExpanded((Float) param.args[0] > 0f);
+                            }
+                        });
+                log("HOOK OK OplusQuickStatusBarHeader#setExpansion (legacy statusbar lyric)");
+            } catch (Throwable legacyError) {
+                log("HOOK FAIL legacy statusbar lyric QS expansion :: "
+                        + Log.getStackTraceString(legacyError));
+            }
         }
     }
 

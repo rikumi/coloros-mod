@@ -76,11 +76,28 @@ public final class QsHooks {
             log("HOOK OK OplusQSFakeStatusController$qsPanelExpandFractionListener#onFractionChanged");
         } catch (Throwable t) {
             log("HOOK FAIL OplusQSFakeStatusController fraction listener :: " + Log.getStackTraceString(t));
+            // SystemUI 15 uses the header itself as the expansion listener host.
+            try {
+                XposedHelpers.findAndHookMethod(
+                        "com.oplus.systemui.qs.OplusQuickStatusBarHeader",
+                        lpparam.classLoader, "setExpansion", float.class,
+                        new XC_MethodHook() {
+                            @Override protected void beforeHookedMethod(MethodHookParam param) {
+                                applyLegacyQsStatusVisibility(param.thisObject, (Float) param.args[0]);
+                            }
+                            @Override protected void afterHookedMethod(MethodHookParam param) {
+                                applyLegacyQsStatusVisibility(param.thisObject, (Float) param.args[0]);
+                            }
+                        });
+                log("HOOK OK OplusQuickStatusBarHeader#setExpansion (legacy qs status cluster)");
+            } catch (Throwable legacyError) {
+                log("HOOK FAIL legacy QS status cluster :: " + Log.getStackTraceString(legacyError));
+            }
         }
         // 经典控制中心: 设置按钮/页脚日期 (仅 collapsed 时 updateResources$15 重置 padding 为 0 后再叠加 footerPx)
         try {
             boolean ok = false;
-            for (String m : new String[]{"updateResources$15", "updateResources"}) {
+            for (String m : new String[]{"updateResources$15", "updateResources$16", "updateResources"}) {
                 if (ok) break;
                 try {
                     XposedHelpers.findAndHookMethod(
@@ -200,6 +217,18 @@ public final class QsHooks {
         }
     }
 
+    private static void applyLegacyQsStatusVisibility(Object header, float fraction) {
+        try {
+            Object statusIcons = XposedHelpers.getObjectField(header, "mStatusIconsView");
+            if (statusIcons instanceof View view) {
+                boolean hide = readBool(KEY_QS_TOPMARGIN_ENABLED, false) && fraction > 0f;
+                view.setVisibility(hide ? View.INVISIBLE : View.VISIBLE);
+            }
+        } catch (Throwable t) {
+            log("legacy QS status cluster apply failed: " + t);
+        }
+    }
+
     // 展开回调中原生会同时移动两个不同节点: mStatusIconsView(状态栏) 与 quickStatus(QS 顶栏)。
     // 因此在 fraction 第一次大于 0 时直接 INVISIBLE, 在原生 translation 执行前阻止移动动画可见。
     static void applyQsStatusClusterFade(Object fractionListener, float expansionFraction) {
@@ -278,14 +307,13 @@ public final class QsHooks {
     // 合并控制中心时间日期取消展开动画(com.android.systemui)。
     // 页脚 OplusQSFooterImpl 承载时间(mClockView, R.id.qs_footer_clock)与日期(mQsDateView,
     // R.id.oplus_date)。createAndUpdateExpandAnimators 里建好的动画按 QS 展开进度 fraction 驱动:
-    //   mPortAndFoldAnimator       -> 时间 scaleX/scaleY: getFontScale() ~ min(2+fontScale-1, 2.2),
+    //   mPortAndFoldAnimator       -> 时间 scaleX/scaleY: 1 -> 2 (平板为 2.1),
     //                                 translationX: 0 ~ qs_footer_clock_expand_translation_x,
     //                                 translationY: 0 ~ (设置按钮半高 - mClockBaseline)(同一 builder 还带
     //                                 设置按钮/多用户/搜索按钮的位移, 不在本功能范围内);
     //   mDateX/YExpandTranslationAnimator -> 日期平移到放大后的时间下方。
     // fraction=0 即"一次下拉"的初始态(小字号、未位移), fraction=1 为完全展开态(放大并移动)。
-    // 开启动能后, 每次 updateExpand(float) 之后把时间/日期按 fraction=0 的取值复位即可:
-    // 时间 scaleX/scaleY = getFontScale()(动画起点, 随系统字体缩放变化故现取), 位移归零; 日期位移归零。
+    // 固定单行时每帧把时间缩放复位为 1, 并清除时间/日期位移, 不受系统字体倍率影响。
     public static void hookQsClockNoExpandAnim(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             XposedHelpers.findAndHookMethod(
@@ -308,34 +336,13 @@ public final class QsHooks {
         }
     }
 
-    // getFontScale() 是 OplusQSFooterImpl 的 private ()F, 反射结果缓存在静态字段,
-    // 避免展开过程中逐帧做方法查找。取不到时返回 null(跳过缩放复位, 只复位位移)。
-    private static volatile java.lang.reflect.Method sFooterFontScaleMethod;
-
-    static Float footerFontScale(Object footer) {
-        try {
-            java.lang.reflect.Method m = sFooterFontScaleMethod;
-            if (m == null) {
-                m = footer.getClass().getDeclaredMethod("getFontScale");
-                m.setAccessible(true);
-                sFooterFontScaleMethod = m;
-            }
-            return (Float) m.invoke(footer);
-        } catch (Throwable t) {
-            return null;
-        }
-    }
-
     static void resetFooterClockAndDate(Object footer) {
         Object clock = XposedHelpers.getObjectField(footer, "mClockView");
         Object date = XposedHelpers.getObjectField(footer, "mQsDateView");
-        Float scale = footerFontScale(footer);
         if (clock instanceof View) {
             View v = (View) clock;
-            if (scale != null) {
-                v.setScaleX(scale.floatValue());
-                v.setScaleY(scale.floatValue());
-            }
+            v.setScaleX(1f);
+            v.setScaleY(1f);
             v.setTranslationX(0f);
             v.setTranslationY(0f);
         }

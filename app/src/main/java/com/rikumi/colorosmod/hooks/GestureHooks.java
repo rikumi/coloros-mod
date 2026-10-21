@@ -299,10 +299,10 @@ public final class GestureHooks {
     // 「mBack 热区顶部 -> 窗口底部」这一段(设成整窗口会挡住底部整条), 并在同段内放全宽透明拦截层。
     public static void hookGestureTouchThrough(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            Class<?> navigationBarClass = XposedHelpers.findClass(
-                    "com.android.systemui.navigationbar.views.NavigationBar", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(navigationBarClass, "setImeWindowStatus",
-                    int.class, int.class, int.class, boolean.class, new XC_MethodHook() {
+            Class<?> navigationBarClass = findNavigationBarClass(lpparam.classLoader);
+            boolean legacyNavigationBar = navigationBarClass.getName().equals(
+                    "com.android.systemui.navigationbar.NavigationBar");
+            XC_MethodHook imeHook = new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam param) {
                             try {
                                 Object navView = XposedHelpers.getObjectField(param.thisObject, "mView");
@@ -315,10 +315,11 @@ public final class GestureHooks {
                                 }
                                 Object helper = XposedHelpers.getObjectField(
                                         param.thisObject, "mNavBarHelper");
-                                Object visible = XposedHelpers.callMethod(
-                                        helper, "isImeVisible", param.args[1]);
-                                sImeVisible = visible instanceof Boolean
-                                        && ((Boolean) visible).booleanValue();
+                                int imeVisibility = param.args.length >= 5
+                                        ? ((Number) param.args[2]).intValue()
+                                        : ((Number) param.args[1]).intValue();
+                                sImeVisible = callImeVisibility(helper, imeVisibility,
+                                        param.args.length >= 5);
                                 if (!sImeVisible) {
                                     sImeVisible = XposedHelpers.getBooleanField(
                                             param.thisObject, "mImeVisible");
@@ -328,7 +329,14 @@ public final class GestureHooks {
                                 }
                             } catch (Throwable ignored) { }
                         }
-                    });
+                    };
+            if (legacyNavigationBar) {
+                XposedHelpers.findAndHookMethod(navigationBarClass, "setImeWindowStatus",
+                        int.class, android.os.IBinder.class, int.class, int.class, boolean.class, imeHook);
+            } else {
+                XposedHelpers.findAndHookMethod(navigationBarClass, "setImeWindowStatus",
+                        int.class, int.class, int.class, boolean.class, imeHook);
+            }
         } catch (Throwable t) {
             dbg("gesture IME state hook failed: " + t);
         }
@@ -336,9 +344,14 @@ public final class GestureHooks {
             // InternalInsetsInfo 为 @hide 类, 编译期不可见, 用反射访问。
             Class<?> insetsInfoClass = XposedHelpers.findClass(
                     "android.view.ViewTreeObserver$InternalInsetsInfo", null);
-            Class<?> insetsListenerClass = XposedHelpers.findClass(
+            Class<?> insetsListenerClass = XposedHelpers.findClassIfExists(
                     "com.android.systemui.navigationbar.views.NavigationBar$$ExternalSyntheticLambda10",
                     lpparam.classLoader);
+            if (insetsListenerClass == null) {
+                insetsListenerClass = XposedHelpers.findClass(
+                        "com.android.systemui.navigationbar.NavigationBar$$ExternalSyntheticLambda13",
+                        lpparam.classLoader);
+            }
             XposedHelpers.findAndHookMethod(insetsListenerClass, "onComputeInternalInsets",
                     insetsInfoClass, new XC_MethodHook() {
                         @Override
@@ -467,6 +480,27 @@ public final class GestureHooks {
         } catch (Throwable t) {
             log("gesture block shade sync hook failed: " + t);
         }
+    }
+
+    private static Class<?> findNavigationBarClass(ClassLoader classLoader) {
+        Class<?> current = XposedHelpers.findClassIfExists(
+                "com.android.systemui.navigationbar.views.NavigationBar", classLoader);
+        return current != null ? current : XposedHelpers.findClass(
+                "com.android.systemui.navigationbar.NavigationBar", classLoader);
+    }
+
+    private static boolean callImeVisibility(Object helper, int imeVisibility, boolean legacy) {
+        String first = legacy ? "isImeShown" : "isImeVisible";
+        String second = legacy ? "isImeVisible" : "isImeShown";
+        try {
+            Object visible = XposedHelpers.callMethod(helper, first, imeVisibility);
+            if (visible instanceof Boolean) return (Boolean) visible;
+        } catch (Throwable ignored) { }
+        try {
+            Object visible = XposedHelpers.callMethod(helper, second, imeVisibility);
+            if (visible instanceof Boolean) return (Boolean) visible;
+        } catch (Throwable ignored) { }
+        return false;
     }
 
     // mBack 热区留白: 手势条高度设置值(KEY_GESTURE_BAR_HEIGHT_DP, 单位 dp)的一半加 4dp, 上限 10dp。
@@ -921,6 +955,7 @@ public final class GestureHooks {
     }
 
     static void triggerNavigation(android.view.View handle, boolean home) {
+        android.view.View navView = null;
         try {
             android.view.View parent = handle;
             Class<?> navViewClass = XposedHelpers.findClass(
@@ -930,29 +965,53 @@ public final class GestureHooks {
                 parent = parent.getParent() instanceof android.view.View
                         ? (android.view.View) parent.getParent() : null;
             }
-            if (parent == null) {
-                // 手势模式下可能找不到 NavigationBarView, 直接走 InputManager 注入兜底。
-                injectKey(home ? android.view.KeyEvent.KEYCODE_HOME : android.view.KeyEvent.KEYCODE_BACK);
-                return;
-            }
-            if (home) {
-                if (injectHomeKey()) return;
-                Object homeDispatcher = XposedHelpers.callMethod(parent, "getHomeButton");
-                Object homeView = XposedHelpers.callMethod(homeDispatcher, "getCurrentView");
-                if (homeView != null) XposedHelpers.callMethod(homeView, "performClick");
-                return;
-            }
-            Object dispatcher = XposedHelpers.callMethod(parent, "getBackButton");
-            Object keyView = XposedHelpers.callMethod(dispatcher, "getCurrentView");
-            if (keyView != null) {
-                long now = android.os.SystemClock.uptimeMillis();
-                XposedHelpers.callMethod(keyView, "sendEvent", 0, 0, now);
-                XposedHelpers.callMethod(keyView, "sendEvent", 1, 0);
-            } else {
-                injectKey(android.view.KeyEvent.KEYCODE_BACK);
-            }
+            navView = parent;
         } catch (Throwable t) {
-            log("mback navigation failed: " + t);
+            log("mback navigation view lookup failed: " + t);
+        }
+
+        // Android 15 的手势 Home 句柄不一定提供 NavigationBarView 父链，且 InputManager
+        // 可能拒绝注入。只有注入接口明确返回成功才停止，并保留系统按钮/原生句柄回退。
+        if (home) {
+            if (injectHomeKey()) return;
+            if (dispatchNavigationButton(navView, true)) return;
+            try {
+                Class<?> controllerClass = XposedHelpers.findClass(
+                        "com.oplus.systemui.navigationbar.gesture.otherbusiness.GestureHomeHandleEventController",
+                        handle.getContext().getClassLoader());
+                Object controller = XposedHelpers.getStaticObjectField(controllerClass, "INSTANCE");
+                XposedHelpers.callMethod(controller, "onLongClick");
+                return;
+            } catch (Throwable t) {
+                log("mback home dispatch failed: " + t);
+            }
+            return;
+        }
+
+        if (dispatchNavigationButton(navView, false)) return;
+        if (!injectKey(android.view.KeyEvent.KEYCODE_BACK)) {
+            log("mback back dispatch was rejected");
+        }
+    }
+
+    private static boolean dispatchNavigationButton(android.view.View navView, boolean home) {
+        if (navView == null) return false;
+        try {
+            Object dispatcher = XposedHelpers.callMethod(navView,
+                    home ? "getHomeButton" : "getBackButton");
+            Object buttonView = XposedHelpers.callMethod(dispatcher, "getCurrentView");
+            if (buttonView == null) return false;
+            if (home) {
+                Object clicked = XposedHelpers.callMethod(buttonView, "performClick");
+                return Boolean.TRUE.equals(clicked);
+            }
+            long now = android.os.SystemClock.uptimeMillis();
+            XposedHelpers.callMethod(buttonView, "sendEvent", 0, 0, now);
+            XposedHelpers.callMethod(buttonView, "sendEvent", 1, 0);
+            return true;
+        } catch (Throwable t) {
+            log("mback navigation button dispatch failed: " + t);
+            return false;
         }
     }
 
@@ -973,9 +1032,9 @@ public final class GestureHooks {
                     code, 0, 0,
                     android.view.KeyCharacterMap.VIRTUAL_KEYBOARD, 0, flags,
                     android.view.InputDevice.SOURCE_KEYBOARD);
-            XposedHelpers.callMethod(inputManager, "injectInputEvent", down, 0);
-            XposedHelpers.callMethod(inputManager, "injectInputEvent", up, 0);
-            return true;
+            Object downAccepted = XposedHelpers.callMethod(inputManager, "injectInputEvent", down, 0);
+            Object upAccepted = XposedHelpers.callMethod(inputManager, "injectInputEvent", up, 0);
+            return Boolean.TRUE.equals(downAccepted) && Boolean.TRUE.equals(upAccepted);
         } catch (Throwable t) {
             return false;
         }
@@ -1115,8 +1174,7 @@ public final class GestureHooks {
 
     public static void hookGestureBarHeight(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            Class<?> navBarClass = XposedHelpers.findClass(
-                    "com.android.systemui.navigationbar.views.NavigationBar", lpparam.classLoader);
+            Class<?> navBarClass = findNavigationBarClass(lpparam.classLoader);
             XposedHelpers.findAndHookMethod(navBarClass, "getBarLayoutParams", int.class,
                     new XC_MethodHook() {
                         @Override

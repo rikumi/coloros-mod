@@ -90,13 +90,25 @@ final class MergedTileGridHooks {
                                     && !readBool(KEY_QS_MERGED_TILE_SCALE_ANIMATION, false)) p.args[1] = 1f;
                         }
                     });
-            XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.OplusQSAnimator", pkg.classLoader,
-                    "updateAnimators$1", new XC_MethodHook() {
+            XC_MethodHook animatorUpdate = new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
-                            fixedAnimators.put(XposedHelpers.getObjectField(p.thisObject, "mQQSTileScaleAnimator"), 1);
+                            Object scaleAnimator = null;
+                            try { scaleAnimator = XposedHelpers.getObjectField(p.thisObject, "mQQSTileScaleAnimator"); }
+                            catch (Throwable oldSystemUi) {
+                                try { scaleAnimator = XposedHelpers.getObjectField(p.thisObject, "mQuickTileRowScaleAnimator"); }
+                                catch (Throwable ignored) { }
+                            }
+                            if (scaleAnimator != null) fixedAnimators.put(scaleAnimator, 1);
                             if (ratioAnimator(p.thisObject)) animatorGeometry.put(p.thisObject, animationGeometry(p.thisObject));
                         }
-                    });
+                    };
+            try {
+                XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.OplusQSAnimator", pkg.classLoader,
+                        "updateAnimators$1", animatorUpdate);
+            } catch (Throwable modernAnimatorNameMissing) {
+                XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.OplusQSAnimator", pkg.classLoader,
+                        "updateAnimators", animatorUpdate);
+            }
             XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.OplusQSAnimator", pkg.classLoader,
                     "onLayoutChange", View.class, int.class, int.class, int.class, int.class,
                     int.class, int.class, int.class, int.class, new XC_MethodHook() {

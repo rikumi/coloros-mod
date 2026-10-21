@@ -88,19 +88,26 @@ public final class MergedCardRatioHooks {
             MergedTileGridHooks.hook(pkg);
             normalTileClass = XposedHelpers.findClass("com.oplus.systemui.qs.base.tile.OplusQSTileBaseView", pkg.classLoader);
             iconClass = XposedHelpers.findClass("com.android.systemui.plugins.qs.QSIconView", pkg.classLoader);
-            mediaClass = XposedHelpers.findClass("com.oplus.systemui.qs.media.OplusQsBaseMediaPanelView", pkg.classLoader);
-            roundRectClass = XposedHelpers.findClass("com.oplusos.systemui.common.outline.RoundRectOutlineProvider", pkg.classLoader);
-            XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.tileimpl.OplusQSIconViewImpl", pkg.classLoader,
-                    "onMeasure", int.class, int.class, new XC_MethodHook() {
+            mediaClass = XposedHelpers.findClassIfExists("com.oplus.systemui.qs.media.OplusQsBaseMediaPanelView", pkg.classLoader);
+            if (mediaClass == null)
+                mediaClass = XposedHelpers.findClass("com.oplus.systemui.qs.media.OplusQsMediaPanelView", pkg.classLoader);
+            roundRectClass = XposedHelpers.findClassIfExists("com.oplusos.systemui.common.outline.RoundRectOutlineProvider", pkg.classLoader);
+            XC_MethodHook iconMeasure = new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             View icon = (View) p.thisObject;
                             if (!ratioEnabled(icon) || mergedRoot(icon) == null) return;
-                            int current = XposedHelpers.getIntField(icon, "iconSizePx");
+                            String sizeField = "iconSizePx";
+                            int current;
+                            try { current = XposedHelpers.getIntField(icon, sizeField); }
+                            catch (Throwable oldSystemUi) {
+                                sizeField = "mIconSizePx";
+                                current = XposedHelpers.getIntField(icon, sizeField);
+                            }
                             if (!iconSizes.containsKey(icon)) iconSizes.put(icon, current);
                             int id = icon.getResources().getIdentifier("qs_tile_icon_size", "dimen", "com.android.systemui");
                             int base = id != 0 ? icon.getResources().getDimensionPixelSize(id) : iconSizes.get(icon);
                             int size = Math.max(1, Math.round(areaScale(icon) * iconFactor(icon) * base));
-                            XposedHelpers.setIntField(icon, "iconSizePx", size);
+                            XposedHelpers.setIntField(icon, sizeField, size);
                             // 测量和图形统一尺寸，消除系统小空间模式另行施加的缩小倍率。
                             rememberIconTransform(icon);
                             icon.setScaleX(1f); icon.setScaleY(1f);
@@ -112,9 +119,15 @@ public final class MergedCardRatioHooks {
                                 p.args[0] = View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY);
                             }
                         }
-                    });
-            XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.tileimpl.OplusQSTileViewImpl", pkg.classLoader,
-                    "updateLabelPadding", new XC_MethodHook() {
+                    };
+            try {
+                XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.tileimpl.OplusQSIconViewImpl", pkg.classLoader,
+                        "onMeasure", int.class, int.class, iconMeasure);
+            } catch (Throwable inheritedOnMeasure) {
+                XposedHelpers.findAndHookDeclaredMethod("com.android.systemui.qs.tileimpl.QSIconViewImpl", pkg.classLoader,
+                        "onMeasure", int.class, int.class, iconMeasure);
+            }
+            XC_MethodHook labelPadding = new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             View tile = (View) p.thisObject;
                             if (!ratioEnabled(tile) || MergedTileGridHooks.root(tile) == null) return;
@@ -129,8 +142,17 @@ public final class MergedCardRatioHooks {
                             }
                             p.setResult(null);
                         }
-                    });
-            Class<?> cornerProvider = XposedHelpers.findClass("com.oplusos.systemui.common.outline.CornerOutlineProvider", pkg.classLoader);
+                    };
+            try {
+                XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.tileimpl.OplusQSTileViewImpl", pkg.classLoader,
+                        "updateLabelPadding", labelPadding);
+            } catch (Throwable oldLabelMethod) {
+                XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.tileimpl.OplusQSTileViewImpl", pkg.classLoader,
+                        "updateLabelPadding$1", labelPadding);
+            }
+            if (roundRectClass != null) {
+            Class<?> cornerProvider = XposedHelpers.findClassIfExists("com.oplusos.systemui.common.outline.CornerOutlineProvider", pkg.classLoader);
+            if (cornerProvider != null) {
             XC_MethodHook installOutline = new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     View owner = outlineOwner.get();
@@ -175,16 +197,23 @@ public final class MergedCardRatioHooks {
             XposedHelpers.findAndHookDeclaredMethod(highlightClass, "onOutlineUpdate", java.util.List.class, outlineChanged);
             XposedHelpers.findAndHookDeclaredMethod(mediaClass, "onOutlineUpdate", outlineChanged);
             XposedHelpers.findAndHookDeclaredMethod(normalTileClass, "onOutlineUpdate", java.util.List.class, outlineChanged);
+            }
+            }
             XposedHelpers.findAndHookDeclaredMethod(containerClass, "onFinishInflate", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     hosts.put((ViewGroup) p.thisObject, true);
                 }
             });
-            XposedHelpers.findAndHookDeclaredMethod(containerClass, "updateResources$4", new XC_MethodHook() {
+            XC_MethodHook containerResources = new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     restore((ViewGroup) p.thisObject);
                 }
-            });
+            };
+            try {
+                XposedHelpers.findAndHookDeclaredMethod(containerClass, "updateResources$4", containerResources);
+            } catch (Throwable legacyResourceMethod) {
+                XposedHelpers.findAndHookDeclaredMethod(containerClass, "updateResources$6", containerResources);
+            }
             Class<?> layout = XposedHelpers.findClass("androidx.constraintlayout.widget.ConstraintLayout", pkg.classLoader);
             XposedHelpers.findAndHookDeclaredMethod(layout, "onMeasure", int.class, int.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
@@ -589,6 +618,7 @@ public final class MergedCardRatioHooks {
     }
 
     private static void applyOutline(View view) {
+        if (roundRectClass == null) return;
         Object drawable = XposedHelpers.getObjectField(view, (highlightClass.isInstance(view) || normalTileClass.isInstance(view)) ? "mBgDrawable" : "transitionDrawable");
         Object current = XposedHelpers.callMethod(drawable, "getPathProvider");
         RadiusState state = radii.get(view);
@@ -698,7 +728,10 @@ public final class MergedCardRatioHooks {
         }
         for (View view : new ArrayList<>(iconSizes.keySet())) if (view != null && mergedRoot(view) == root) {
             Integer original = iconSizes.remove(view);
-            if (original != null) XposedHelpers.setIntField(view, "iconSizePx", original);
+            if (original != null) {
+                try { XposedHelpers.setIntField(view, "iconSizePx", original); }
+                catch (Throwable oldSystemUi) { XposedHelpers.setIntField(view, "mIconSizePx", original); }
+            }
             view.requestLayout();
         }
         for (View view : new ArrayList<>(geometry.keySet())) if (view != null && mergedRoot(view) == root) {

@@ -10,7 +10,7 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-/** Launcher 16.6.11: drawAppSort(2) 使用 firstInstallTime 降序及原生同时间排序。 */
+/** 按桌面抽屉的数据排序入口切换到安装时间顺序。 */
 public final class DrawerInstallTimeHooks {
     private static final String KEY = "drawer_install_time_sort_enabled";
     private static final Map<Object, Boolean> lists = Collections.synchronizedMap(new WeakHashMap<>());
@@ -63,13 +63,14 @@ public final class DrawerInstallTimeHooks {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             if (!isDrawer(p.thisObject)) return;
                             boolean enabled = readBool(KEY, false);
-                            Boolean previous = lists.put(p.thisObject, enabled);
-                            if (previous != null && previous != enabled) {
-                                XposedHelpers.setIntField(p.thisObject, "mAppSortRule", -1);
-                            }
+                            lists.put(p.thisObject, enabled);
                             if (enabled) p.args[0] = 2;
                         }
                     });
+            log("HOOK OK OplusAlphabeticalAppsList#drawAppSort (install-time sort)");
+        } catch (Throwable t) { log("HOOK FAIL drawer install-time sort: " + t); }
+
+        try {
             // 返回桌面时只在设置发生变化后刷新抽屉数据，原生 SharedPrefs 排序选择不变。
             XposedHelpers.findAndHookDeclaredMethod(
                     XposedHelpers.findClass("com.android.launcher.Launcher", lp.classLoader),
@@ -79,14 +80,24 @@ public final class DrawerInstallTimeHooks {
                             DrawerIndexHooks.refresh();
                         }
                     });
-            // 时间排序不能使用按字母分段的快速滚动定位。
-            XposedHelpers.findAndHookMethod("com.android.launcher3.allapps.LauncherAlphabeticalAppsList",
-                    lp.classLoader, "supportsFastScrolling", boolean.class, new XC_MethodHook() {
+            log("HOOK OK launcher onResume (install-time list refresh)");
+        } catch (Throwable t) { log("HOOK FAIL drawer install-time refresh: " + t); }
+
+        // 新旧桌面分别在这两个列表实现上计算字母条是否可用。
+        for (String listClass : new String[]{
+                "com.android.launcher3.allapps.OplusAlphabeticalAppsList",
+                "com.android.launcher3.allapps.LauncherAlphabeticalAppsList"}) {
+            try {
+                XposedHelpers.findAndHookMethod(listClass, lp.classLoader,
+                        "supportsFastScrolling", boolean.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             if (readBool(KEY, false) && isDrawer(p.thisObject)) p.setResult(false);
                         }
                     });
-        } catch (Throwable t) { log("HOOK FAIL drawer install time sort: " + t); }
+            } catch (Throwable t) {
+                log("drawer install-time fast-scroll hook unavailable on " + listClass + ": " + t);
+            }
+        }
     }
 
     private static boolean isDrawer(Object list) {
@@ -94,6 +105,16 @@ public final class DrawerInstallTimeHooks {
             return !XposedHelpers.getBooleanField(list, "mIsSearchPage")
                     && !XposedHelpers.getBooleanField(list, "mIsCategoryPage")
                     && !XposedHelpers.getBooleanField(list, "mIsColor");
-        } catch (Throwable t) { return false; }
+        } catch (Throwable ignored) {
+            // ColorOS 15.8.21's OplusAlphabeticalAppsList has no page flags; its activity
+            // context distinguishes the Launcher drawer from taskbar/search lists.
+            try {
+                Object context = XposedHelpers.getObjectField(list, "mActivityContext");
+                if (context == null) return false;
+                String name = context.getClass().getName();
+                return "com.android.launcher.Launcher".equals(name)
+                        || "com.android.launcher3.Launcher".equals(name);
+            } catch (Throwable ignoredAgain) { return false; }
+        }
     }
 }

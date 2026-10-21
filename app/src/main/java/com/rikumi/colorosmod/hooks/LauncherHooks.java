@@ -870,15 +870,23 @@ public final class LauncherHooks {
     }
 
     private static void hookUpdateDotAndSecondaryMenu(XC_LoadPackage.LoadPackageParam lp) {
+        XC_MethodHook hideUpdateDot = new XC_MethodHook() {
+            @Override protected void beforeHookedMethod(MethodHookParam p) {
+                if (readBoolCached(KEY_HIDE_LAUNCHER_UPDATE_DOT_ENABLED, false))
+                    p.setResult(Boolean.FALSE);
+            }
+        };
         try {
             XposedHelpers.findAndHookMethod("com.android.launcher3.BubbleTextView", lp.classLoader,
-                    "isShouldShowGreenDot", boolean.class, boolean.class, new XC_MethodHook() {
-                        @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (readBoolCached(KEY_HIDE_LAUNCHER_UPDATE_DOT_ENABLED, false))
-                                p.setResult(Boolean.FALSE);
-                        }
-                    });
-        } catch (Throwable t) { log("launcher update dot hook failed: " + t); }
+                    "isShouldShowGreenDot", boolean.class, boolean.class, hideUpdateDot);
+        } catch (Throwable currentSignatureMissing) {
+            // ColorOS 15.8.21 uses the original one-argument method.
+            try {
+                XposedHelpers.findAndHookMethod("com.android.launcher3.BubbleTextView", lp.classLoader,
+                        "isShouldShowGreenDot", boolean.class, hideUpdateDot);
+                log("HOOK OK launcher BubbleTextView#isShouldShowGreenDot(boolean)");
+            } catch (Throwable t) { log("launcher update dot hook failed: " + t); }
+        }
         try {
             Class<?> more = XposedHelpers.findClass(
                     "com.android.launcher3.popup.OplusBaseSystemShortcut$MordFunctions", lp.classLoader);
@@ -912,7 +920,11 @@ public final class LauncherHooks {
                             p.args[4] = flattened;
                         }
                     });
-        } catch (Throwable t) { log("launcher secondary menu hook failed: " + t); }
+        } catch (Throwable t) {
+            // ColorOS 15.8.21 constructs a flat SystemShortcut list and has no MoreFunctions
+            // wrapper or secondary popup. Its native menu already has no secondary layer.
+            log("launcher secondary menu wrapper unavailable on this Launcher: " + t);
+        }
     }
 
     public static void hookLauncher(final XC_LoadPackage.LoadPackageParam lpparam) {
@@ -1404,9 +1416,38 @@ public final class LauncherHooks {
                         }
                     });
             log("HOOK OK launcher RtSpringAnimatorWrapper (folder spring duration)");
-        } catch (Throwable t) {
-            log("HOOK FAIL launcher RtSpringAnimatorWrapper (folder spring duration): " + t);
+        } catch (Throwable newerPathMissing) {
+            // ColorOS 15.8.21 builds folder motion as ValueAnimator sets in
+            // OplusFolderAnimationManager instead of RtSpringAnimatorWrapper springs.
+            try {
+                Class<?> managerClass = XposedHelpers.findClass(
+                        "com.android.launcher3.folder.OplusFolderAnimationManager",
+                        lpparam.classLoader);
+                XposedBridge.hookAllMethods(managerClass, "getAnimator", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        int ms = folderAnimMs();
+                        Object animator = param.getResult();
+                        if (ms > 0 && animator instanceof android.animation.Animator) {
+                            setFolderAnimatorDuration((android.animation.Animator) animator, ms);
+                        }
+                    }
+                });
+                log("HOOK OK OplusFolderAnimationManager#getAnimator (folder duration fallback)");
+            } catch (Throwable t) {
+                log("HOOK FAIL launcher folder animation duration fallback: " + t);
+            }
         }
+    }
+
+    private static void setFolderAnimatorDuration(android.animation.Animator animator, long ms) {
+        if (animator instanceof android.animation.AnimatorSet) {
+            for (android.animation.Animator child :
+                    ((android.animation.AnimatorSet) animator).getChildAnimations()) {
+                setFolderAnimatorDuration(child, ms);
+            }
+        }
+        animator.setDuration(ms);
     }
 
     // light 路径: 文件夹本体动画(ObjectAnimator+setDuration 常量)与 launcher 内容动画时长。
@@ -1418,8 +1459,16 @@ public final class LauncherHooks {
                     "com.android.launcher3.folder.Folder", lpparam.classLoader);
             final Class<?> folderIconClass = XposedHelpers.findClass(
                     "com.android.launcher3.folder.FolderIcon", lpparam.classLoader);
-            final Class<?> propsHolderClass = XposedHelpers.findClass(
-                    "com.android.launcher3.anim.light.FolderAnimPropsHolder", lpparam.classLoader);
+            Class<?> propsHolderClass;
+            try {
+                propsHolderClass = XposedHelpers.findClass(
+                        "com.android.launcher3.anim.light.FolderAnimPropsHolder",
+                        lpparam.classLoader);
+            } catch (Throwable ignored) {
+                propsHolderClass = XposedHelpers.findClass(
+                        "com.android.launcher3.anim.light.animparams.FolderAnimPropsHolder",
+                        lpparam.classLoader);
+            }
             // light 模式下 launcher 内容(hotseat/workspace/pageIndicator)动画时长。
             XposedHelpers.findAndHookMethod(animUtilClass, "getAnimDuration",
                     boolean.class, boolean.class, new XC_MethodHook() {
@@ -1487,12 +1536,12 @@ public final class LauncherHooks {
     // workspace 背景动画(WallpaperUtil 用 folder_*_duration 资源) + 基类 FolderAnimationManager 时长。
     public static void hookFolderResDuration(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            final int[] folderAnimResIds = {
-                    0x7f0b0028, // config_materialFolderExpandDuration (FolderAnimationManager.mDuration)
-                    0x7f0b0072, // folder_close_duration
-                    0x7f0b0073, // folder_light_close_duration
-                    0x7f0b0074, // folder_light_open_duration
-                    0x7f0b0075, // folder_open_duration
+            final String[] folderAnimResNames = {
+                    "config_materialFolderExpandDuration",
+                    "folder_close_duration",
+                    "folder_light_close_duration",
+                    "folder_light_open_duration",
+                    "folder_open_duration",
             };
             XposedHelpers.findAndHookMethod(android.content.res.Resources.class, "getInteger",
                     int.class, new XC_MethodHook() {
@@ -1500,9 +1549,16 @@ public final class LauncherHooks {
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
                                 int id = (Integer) param.args[0];
+                                String name;
+                                try {
+                                    name = ((android.content.res.Resources) param.thisObject)
+                                            .getResourceEntryName(id);
+                                } catch (android.content.res.Resources.NotFoundException ignored) {
+                                    return;
+                                }
                                 boolean hit = false;
-                                for (int rid : folderAnimResIds) {
-                                    if (rid == id) {
+                                for (String resourceName : folderAnimResNames) {
+                                    if (resourceName.equals(name)) {
                                         hit = true;
                                         break;
                                     }
@@ -1812,13 +1868,14 @@ public final class LauncherHooks {
     // 应用本身仍在前台运行, 不受影响。
     public static void hookRecentsHideFreeform(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
+            Class<?> groupedTaskInfo = findLauncherGroupedTaskInfo(lpparam.classLoader);
             final String flag = KEY_RECENTS_HIDE_FREEFORM_ENABLED;
             XposedHelpers.findAndHookMethod(
                     "com.oplus.quickstep.data.OplusRecentTasksFilter",
                     lpparam.classLoader, "filterTaskInfo",
                     int.class, int.class,
-                    "com.android.wm.shell.shared.GroupedTaskInfo",
-                    "java.util.ArrayList",
+                    groupedTaskInfo,
+                    java.util.ArrayList.class,
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
@@ -1847,13 +1904,14 @@ public final class LauncherHooks {
     // 分屏任务(taskInfo2 != null)要求两个任务都不在运行才隐藏, 避免误杀掉一半的组合。
     public static void hookRecentsHideNotRunning(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
+            Class<?> groupedTaskInfo = findLauncherGroupedTaskInfo(lpparam.classLoader);
             final String flag = KEY_RECENTS_HIDE_NOT_RUNNING_ENABLED;
             XposedHelpers.findAndHookMethod(
                     "com.oplus.quickstep.data.OplusRecentTasksFilter",
                     lpparam.classLoader, "filterTaskInfo",
                     int.class, int.class,
-                    "com.android.wm.shell.shared.GroupedTaskInfo",
-                    "java.util.ArrayList",
+                    groupedTaskInfo,
+                    java.util.ArrayList.class,
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
@@ -1872,6 +1930,17 @@ public final class LauncherHooks {
         } catch (Throwable t) {
             log("HOOK FAIL OplusRecentTasksFilter#filterTaskInfo (hide not running) :: "
                     + Log.getStackTraceString(t));
+        }
+    }
+
+    private static Class<?> findLauncherGroupedTaskInfo(ClassLoader classLoader) throws Throwable {
+        try {
+            return XposedHelpers.findClass(
+                    "com.android.wm.shell.shared.GroupedTaskInfo", classLoader);
+        } catch (Throwable ignored) {
+            // ColorOS 15.8.21 still exposes shell's grouped tasks from the util package.
+            return XposedHelpers.findClass(
+                    "com.android.wm.shell.util.GroupedRecentTaskInfo", classLoader);
         }
     }
 

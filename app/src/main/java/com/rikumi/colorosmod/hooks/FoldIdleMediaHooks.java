@@ -12,6 +12,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
+import com.rikumi.colorosmod.xposed.XposedBridge;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -29,6 +30,8 @@ public final class FoldIdleMediaHooks {
     private static final WeakHashMap<ViewGroup, Host> hosts = new WeakHashMap<>();
     private static final WeakHashMap<Object, Boolean> compactHolders = new WeakHashMap<>();
     private static final WeakHashMap<View, Boolean> mediaPlaying = new WeakHashMap<>();
+    private static final WeakHashMap<View, Integer[]> legacyMediaVisibility = new WeakHashMap<>();
+    private static boolean legacyMediaControls;
     private static final View.OnAttachStateChangeListener attachListener = new View.OnAttachStateChangeListener() {
         @Override public void onViewAttachedToWindow(View view) { refresh(); }
         @Override public void onViewDetachedFromWindow(View view) { }
@@ -57,6 +60,10 @@ public final class FoldIdleMediaHooks {
         Object config() { return XposedHelpers.callMethod(manager.get(), "getLayoutConfig"); }
     }
     public static void hookFoldIdleMedia(XC_LoadPackage.LoadPackageParam pkg) {
+        if (XposedHelpers.findClassIfExists(LAYOUT, pkg.classLoader) == null) {
+            hookLegacyMediaControls(pkg);
+            return;
+        }
         try {
             locClass = XposedHelpers.findClass("com.oplusos.systemui.common.model.Loc", pkg.classLoader);
             Class<?> layout = XposedHelpers.findClass(LAYOUT, pkg.classLoader);
@@ -190,6 +197,73 @@ public final class FoldIdleMediaHooks {
             });
         } catch (Throwable t) { log("HOOK FAIL control center reflow: " + t); }
     }
+
+    /** SystemUI 15 keeps the classic media panel and its three controls in one view. */
+    private static void hookLegacyMediaControls(XC_LoadPackage.LoadPackageParam pkg) {
+        try {
+            Class<?> media = XposedHelpers.findClass("com.oplus.systemui.qs.media.OplusQsMediaPanelView",
+                    pkg.classLoader);
+            Class<?> data = XposedHelpers.findClass(
+                    "com.android.systemui.media.controls.shared.model.MediaData", pkg.classLoader);
+            legacyMediaControls = true;
+            XposedHelpers.findAndHookMethod(media, "bindMediaData", data, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    restoreLegacyMediaVisibility((View) p.thisObject);
+                }
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    boolean isPlaying = p.args[0] != null
+                            && Boolean.TRUE.equals(XposedHelpers.callMethod(p.args[0], "isPlaying"));
+                    View panel = (View) p.thisObject;
+                    mediaPlaying.put(panel, isPlaying);
+                    rememberLegacyMediaVisibility(panel);
+                    applyLegacyMediaVisibility(panel, isPlaying);
+                }
+            });
+            XposedBridge.hookAllMethods(media, "onDetachedFromWindow", new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    restoreLegacyMediaVisibility((View) p.thisObject);
+                    legacyMediaVisibility.remove((View) p.thisObject);
+                    mediaPlaying.remove((View) p.thisObject);
+                }
+            });
+            log("HOOK OK OplusQsMediaPanelView#bindMediaData (legacy fold idle media)");
+        } catch (Throwable t) { log("HOOK FAIL legacy fold idle media: " + t); }
+    }
+
+    private static void rememberLegacyMediaVisibility(View panel) {
+        Integer[] visibility = new Integer[3];
+        String[] fields = {"mPreBtn", "mPlayOrPauseBtn", "mNextBtn"};
+        for (int i = 0; i < fields.length; i++) {
+            Object control = XposedHelpers.getObjectField(panel, fields[i]);
+            visibility[i] = control instanceof View view ? view.getVisibility() : View.GONE;
+        }
+        legacyMediaVisibility.put(panel, visibility);
+    }
+
+    private static void applyLegacyMediaVisibility(View panel, boolean isPlaying) {
+        String[] fields = {"mPreBtn", "mPlayOrPauseBtn", "mNextBtn"};
+        Integer[] nativeVisibility = legacyMediaVisibility.get(panel);
+        if (nativeVisibility == null) return;
+        boolean hide = readBoolCached(KEY_FOLD_IDLE_MEDIA, false) && !isPlaying;
+        for (int i = 0; i < fields.length; i++) {
+            Object control = XposedHelpers.getObjectField(panel, fields[i]);
+            if (control instanceof View view) {
+                int visibility = hide ? View.GONE : nativeVisibility[i];
+                if (view.getVisibility() != visibility) view.setVisibility(visibility);
+            }
+        }
+    }
+
+    private static void restoreLegacyMediaVisibility(View panel) {
+        Integer[] nativeVisibility = legacyMediaVisibility.get(panel);
+        if (nativeVisibility == null) return;
+        String[] fields = {"mPreBtn", "mPlayOrPauseBtn", "mNextBtn"};
+        for (int i = 0; i < fields.length; i++) {
+            Object control = XposedHelpers.getObjectField(panel, fields[i]);
+            if (control instanceof View view && view.getVisibility() == View.GONE)
+                view.setVisibility(nativeVisibility[i]);
+        }
+    }
     private static void register(Object manager) {
         ViewGroup root = (ViewGroup) XposedHelpers.callMethod(manager, "getRecyclerView");
         register(manager, root);
@@ -258,6 +332,16 @@ public final class FoldIdleMediaHooks {
         }
     }
     public static void refresh() {
+        if (legacyMediaControls) {
+            handler.post(() -> {
+                for (View panel : new ArrayList<>(legacyMediaVisibility.keySet())) {
+                    if (panel == null) continue;
+                    if (!readBoolCached(KEY_FOLD_IDLE_MEDIA, false)) restoreLegacyMediaVisibility(panel);
+                    else applyLegacyMediaVisibility(panel, playing(panel));
+                }
+            });
+            return;
+        }
         if (queued) return;
         queued = true;
         handler.post(() -> {
@@ -353,5 +437,7 @@ public final class FoldIdleMediaHooks {
         handler.removeCallbacksAndMessages(null); queued = false; polling = false;
         for (ViewGroup root : new ArrayList<>(hosts.keySet())) root.removeOnAttachStateChangeListener(attachListener);
         restoreAll(); hosts.clear(); mediaPlaying.clear(); compactHolders.clear();
+        for (View panel : new ArrayList<>(legacyMediaVisibility.keySet())) restoreLegacyMediaVisibility(panel);
+        legacyMediaVisibility.clear(); legacyMediaControls = false;
     }
 }

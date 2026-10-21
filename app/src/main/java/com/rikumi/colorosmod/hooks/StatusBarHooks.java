@@ -35,21 +35,21 @@ public final class StatusBarHooks {
             Class<?> percentOutIconClass = XposedHelpers.findClass(
                     "com.oplus.systemui.statusbar.pipeline.battery.ui.model.PercentOutIcon",
                     lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(
+            Class<?> binder = XposedHelpers.findClass(
                     "com.oplus.systemui.statusbar.pipeline.battery.ui.binder.BatteryViewBinder",
-                    lpparam.classLoader,
-                    "bind$updatePercentOutView",
-                    TextView.class,
-                    XposedHelpers.findClass(
-                            "com.oplus.systemui.statusbar.pipeline.battery.ui.view.StatBatteryMeterView",
-                            lpparam.classLoader),
-                    percentOutIconClass,
-                    new XC_MethodHook() {
+                    lpparam.classLoader);
+            XposedBridge.hookAllMethods(binder, "bind$updatePercentOutView", new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             if (!readBool(KEY_FLUID_CLOUD_KEEP_PERCENT_ENABLED, false)) return;
                             try {
-                                Object percentOutIcon = param.args[2];
+                                Object percentOutIcon = null;
+                                for (Object arg : param.args) {
+                                    if (arg != null && percentOutIconClass.isInstance(arg)) {
+                                        percentOutIcon = arg;
+                                        break;
+                                    }
+                                }
                                 if (percentOutIcon == null) return;
                                 // 强制 isVisible = true, 使电量百分比不被流体云隐藏。
                                 XposedHelpers.setBooleanField(percentOutIcon, "isVisible", true);

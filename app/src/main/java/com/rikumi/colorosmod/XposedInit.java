@@ -94,6 +94,8 @@ public class XposedInit extends XposedModule {
     public static final String KEY_QS_TOPMARGIN_ENABLED = "qs_topmargin_enabled";
     public static final String KEY_NOTIFICATION_SUBTITLE_ENABLED = "notification_subtitle_enabled";
     public static final String KEY_NOTIFICATION_PADDING_ENABLED = "notification_padding_enabled";
+    public static final String KEY_NOTIFICATION_LEGACY_LAYOUT_ENABLED =
+            "notification_legacy_layout_enabled";
     // 通知左滑直接清除: ColorOS 国内版左滑通知会露出"设置/删除"侧边按钮(需滑到底才清除),
     // 海外版(exp)一个按钮都不生成、抬手即清除。区分点在 NotificationMenuRowExtImpl
     // #createMenuViewsExt 与 OplusSwipeHelperExImpl#shouldNotShowMenuExt 两处(见

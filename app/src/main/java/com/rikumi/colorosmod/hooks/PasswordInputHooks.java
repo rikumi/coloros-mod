@@ -44,8 +44,44 @@ public final class PasswordInputHooks {
 
     public static void hookKeyguardNoLightEffect(final XC_LoadPackage.LoadPackageParam lpparam) {
         hookNumericKeyboardNoLightEffect(lpparam);
+        hookLegacyNumericKeyboardNoBlurRipple(lpparam);
         hookSimpleLockNoGlowEffect(lpparam);
         hookPwdInputNoLightEffect(lpparam);
+    }
+
+    /** SystemUI 15 draws the keyboard's blur ripple from Cell#blurCircle in onDraw. */
+    private static void hookLegacyNumericKeyboardNoBlurRipple(
+            final XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> keyboard = XposedHelpers.findClass(CLS_NUMERIC_KEYBOARD, lpparam.classLoader);
+            try {
+                XposedHelpers.findMethodExact(keyboard, "drawLightEffect", Canvas.class, int.class, int.class);
+                return;
+            } catch (Throwable oldImplementation) { }
+            XposedHelpers.findAndHookDeclaredMethod(keyboard, "onDraw", Canvas.class,
+                    new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!readBool(KEY_KEYGUARD_NO_LIGHT_EFFECT_ENABLED, false)) return;
+                            try {
+                                Object cells = XposedHelpers.getObjectField(param.thisObject, "sCells");
+                                int rows = java.lang.reflect.Array.getLength(cells);
+                                for (int row = 0; row < rows; row++) {
+                                    Object columns = java.lang.reflect.Array.get(cells, row);
+                                    for (int col = 0; col < java.lang.reflect.Array.getLength(columns); col++) {
+                                        Object cell = java.lang.reflect.Array.get(columns, col);
+                                        if (cell == null) continue;
+                                        XposedHelpers.setFloatField(cell, "blurAlpha", -1f);
+                                    }
+                                }
+                            } catch (Throwable error) {
+                                log("legacy no_light_effect ripple update failed: " + error);
+                            }
+                        }
+                    });
+            log("HOOK OK COUINumericKeyboard#onDraw (legacy no_light_effect)");
+        } catch (Throwable t) {
+            log("HOOK FAIL legacy COUINumericKeyboard blur ripple :: " + Log.getStackTraceString(t));
+        }
     }
 
     /** PIN/密码键盘(含 SIM 卡界面键盘): 去光晕、去内阴影、去高光描边。 */
@@ -175,6 +211,60 @@ public final class PasswordInputHooks {
             log("HOOK OK NotifiAndQsPlatformBlurExKt#panelBouncerMixConfig (bouncer_brightness)");
         } catch (Throwable t) {
             log("HOOK FAIL bouncer_brightness :: " + Log.getStackTraceString(t));
+            // SystemUI 15 builds the bouncer mix inside ScrimControllerExImp rather than
+            // exposing panelBouncerMixConfig(boolean).
+            try {
+                XposedHelpers.findAndHookMethod(
+                        "com.oplus.systemui.statusbar.phone.ScrimControllerExImp",
+                        lpparam.classLoader, "getPanelPlatformMixConfig",
+                        new XC_MethodHook() {
+                            @Override protected void afterHookedMethod(MethodHookParam param) {
+                                try {
+                                    if (!readBool(KEY_KEYGUARD_BOUNCER_BRIGHTNESS_ENABLED, false)
+                                            || !isLegacyBouncerMix(param.thisObject)) return;
+                                    Object config = param.getResult();
+                                    if (config == null) return;
+                                    Object mixColor = XposedHelpers.callMethod(config, "getMixColor");
+                                    if (mixColor == null || XposedHelpers.getIntField(mixColor, "mode")
+                                            != MIX_MODE_LUMINOSITY) return;
+                                    int top = XposedHelpers.getIntField(mixColor, "topLayerColor");
+                                    int bottom = XposedHelpers.getIntField(mixColor, "bottomLayerColor");
+                                    int brightness = readInt(KEY_KEYGUARD_BOUNCER_BRIGHTNESS,
+                                            KEYGUARD_BOUNCER_BRIGHTNESS_DEFAULT);
+                                    brightness = Math.max(0, Math.min(KEYGUARD_BOUNCER_BRIGHTNESS_MAX, brightness));
+                                    int gray = Math.round(Color.red(top)
+                                            * (brightness / (float) KEYGUARD_BOUNCER_BRIGHTNESS_MAX));
+                                    Object replacementMix = XposedHelpers.newInstance(mixColor.getClass(),
+                                            MIX_MODE_LUMINOSITY,
+                                            Color.argb(Color.alpha(top), gray, gray, gray), bottom);
+                                    Object replacement = XposedHelpers.newInstance(config.getClass(), replacementMix);
+                                    XposedHelpers.callMethod(replacement, "setAlphaWithBlurAmount",
+                                            XposedHelpers.callMethod(config, "getAlphaWithBlurAmount"));
+                                    param.setResult(replacement);
+                                } catch (Throwable error) {
+                                    log("legacy bouncer_brightness mix update failed: " + error);
+                                }
+                            }
+                        });
+                log("HOOK OK ScrimControllerExImp#getPanelPlatformMixConfig (legacy bouncer_brightness)");
+            } catch (Throwable legacyError) {
+                log("HOOK FAIL legacy bouncer_brightness :: " + Log.getStackTraceString(legacyError));
+            }
+        }
+    }
+
+    private static boolean isLegacyBouncerMix(Object scrimExtension) {
+        try {
+            if (XposedHelpers.getBooleanField(scrimExtension, "isEnteringBouncer")) return true;
+        } catch (Throwable ignored) { }
+        try {
+            Object controller = XposedHelpers.callMethod(scrimExtension, "getScrimController");
+            Object state = XposedHelpers.callMethod(controller, "getState");
+            Class<?> scrimState = XposedHelpers.findClass("com.android.systemui.statusbar.phone.ScrimState",
+                    scrimExtension.getClass().getClassLoader());
+            return state == XposedHelpers.getStaticObjectField(scrimState, "BOUNCER");
+        } catch (Throwable ignored) {
+            return false;
         }
     }
 
