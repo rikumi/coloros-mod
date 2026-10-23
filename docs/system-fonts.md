@@ -48,7 +48,7 @@ Chromium 的常规路径：
 
 XML 保留原生回退链、emoji 和衬线字体，选中字体按真实字重、斜体、TTC 成员索引和变量字重轴生成；字体路径使用相对形式，兼容 Skia 将其与字体目录拼接的行为。系统及产品目录的配置均纳入快照。
 
-首次安装后先打开模块设置，连接 Xposed service 并完成字体同步。LSPosed 作用域已改为可配置，推荐项含 Chrome 和 WebView；其它使用 WebView 的应用也需加入作用域。更改字体后由用户重启目标应用；Java 共享映射仍需用户重启 Zygote。原生注入已激活的进程不支持模块热加载，需要重启该进程。
+首次安装后先打开模块设置，连接 Xposed service 并完成字体同步。LSPosed 作用域已改为可配置，推荐项含 Chrome 和 WebView；其它使用 WebView 的应用也需加入作用域。作用域只决定框架是否尝试向对应进程注入，不能保证网页渲染进程获得 Hook，实机结果见下文。更改字体后由用户重启目标应用；Java 共享映射仍需用户重启 Zygote。原生注入已激活的进程不支持模块热加载，需要重启该进程。
 
 原生 XML 后端可通过上述文件入口消费新配置；使用已注册 Minikin 集合的 NDK 路径则依赖系统框架生成的新字体映射，不能把两者视为同一调用路径。直接系统调用、应用自带字体管理器、网页下载字体及未被 LSPosed 注入的独立渲染进程不在文件入口 Hook 的保证范围内。隔离进程注入和沙箱内文件描述符重开仍需设备验证。
 
@@ -60,7 +60,39 @@ XML 保留原生回退链、emoji 和衬线字体，选中字体按真实字重�
 
 本地检查包含字体解析、XML 生成和原生路径规则，共 162 项。四种 ABI 的原生库均参与 APK 构建；这些检查不能替代设备上的 LSPosed Native Hook、Chrome/WebView 渲染及隔离进程验证。
 
-本段核对日期：2026-10-22。设备无线调试断开，尚未取得设备实际 WebView / Chrome 版本和原生后端证据；以上为上游源码分析，未将其表述为该设备已执行的调用栈。
+### 2026-10-22 实机读取结果
+
+设备为 OPPO PKT110，固件 `PKT110_16.0.10.500(CN01)`，LSPosed `2.2.1 (7912)`。当前 Chrome 为 `155.0.8059.84`，系统选用的 Google WebView 为 `138.0.7204.179`。
+
+只读检查已确认：
+
+- 模块本地已选思源黑体与 Inter；LSPosed 远程存储存在对应字体、改写后的 XML 和路径清单，清单分隔符按字节核对有效。
+- Chrome 主进程映射了本模块的原生代码，并持有七个 `ColorOSModFont` memfd。其 XML 描述符内容包含 Inter 对应的替换路径和真实字重轴。
+- Chrome 的 app Zygote、独立 `sandboxed_process`，以及从 `webview_zygote` 分叉的 WebView 独立渲染进程，均未观察到本模块的代码映射或字体桥描述符。
+- 两类独立渲染进程仍映射系统 Roboto、SysSans 等字体，未观察到替换字体的映射。
+
+结合用户反馈，当前进程内重定向没有覆盖这台设备上的独立网页渲染路径。主进程持有配置只能证明快照初始化，不能证明网页已使用替换字体；也不能凭这次映射检查确定每个字体的具体调用栈。仅增加宿主作用域或 Java Typeface Hook 不能作为已修复的依据。
+
+后续按用户要求优先检查 LSPosed 的隔离进程注入，不采用字体挂载方案。主进程继续增加文件入口 Hook 不能弥补缺失的渲染进程注入。本次检查没有执行挂载、重启、进程重载或设备界面操作。
+
+### LSPosed 2.2.1 隔离进程注入检查
+
+本段依据设备上实际安装的 `daemon.apk`、`framework.dex`、`zygisk/arm64-v8a.so` 以及 Chrome/WebView 的 APK Manifest；使用项目既有 JADX 与 Android SDK 工具只读分析，混淆类名只针对当前构建有效。
+
+1. **作用域展开明确排除隔离服务。** `daemon.apk` 的 `defpackage.e5.f(PackageInfo)` 遍历服务时，仅在 `(serviceInfo.flags & 2) == 0` 时加入 `processName`。SDK 的 `ServiceInfo.FLAG_ISOLATED_PROCESS` 常量为 2。Chrome 的 `SandboxedProcessService0` 同时声明 `isolatedProcess=true`、`useAppZygote=true`；WebView 的对应服务声明 `isolatedProcess=true`、`externalService=true`，因此不进入这条普通进程作用域列表。
+2. **进程身份不是宿主应用 UID。** 实机 ActivityManager 将 Chrome 渲染进程标为宿主 UID 10362、隔离 UID 90000；WebView 当前渲染进程 UID 为 99000。`defpackage.e5.g(String,int)` 给普通进程列表配对的是 `applicationInfo.uid`；`j7.s(...)` 生成 `g7(processName,uid)` 键，`j8.e()` 按这一精确键取得模块列表，未在这条路径发现把隔离 UID 反查到宿主 UID 的处理。单纯增加进程名称不能解决该身份差异。
+3. **没有找到 CLI 强制注入入口。** 设备 `lspctl --help` 与反编译的 `CliCommand` 包含状态、模块启停、包级作用域和 Hook 调试功能，没有向任意 PID 注入模块的命令。包级作用域仍经过上述筛选。
+4. **公开原生代码只能作为历史对照。** 公开提交 `df74d83eb03a44cc6ad268841ac2ada28d077c77` 的 `MagiskLoader::OnNativeForkAndSpecializePre` 明确跳过 child Zygote、90000～98999 与 99000～99999 隔离 UID；不能直接将其当作设备 2.2.1 原生库的对应源码。设备原生库已混淆，当前未完成其所有分支的还原。设备进程映射已直接确认 Chrome app Zygote、WebView Zygote 和所检查的渲染子进程均未加载本模块。
+
+沿 LSPosed 路线继续实现，需要框架层提供隔离进程支持：追踪宿主包与隔离 UID 的对应关系，在 Chrome app Zygote / WebView Zygote 的分叉路径保留或重新加载注入代码，并在 Chromium 字体管理器初始化之前提供原生字体快照。还需验证框架服务通信、文件描述符保留和 SELinux 权限。仅调整本模块的 `scope.list`、Native 入口或 Java Hook，不能绕过已确认的守护进程筛选。
+
+本次未修改、替换或重启设备上的 LSPosed，也未关闭 Chromium 隔离机制。当前结果是明确了框架需要支持的入口，不代表已实现渲染进程注入。
+
+提取文件的 SHA-256：
+
+- `daemon.apk`: `a43bb3554721d650356fa23783a4f3757b85e7c703b836a28eeba6e3cc7c960a`
+- `framework.dex`: `73cceb77d02950cf7f224900f23a896506a0164ab7008e1430e502ff985d0140`
+- `zygisk/arm64-v8a.so`: `2b188f7615b27773f2dadf7725a908d61e27a933cc01ecc353d1b60b439f3492`
 
 参考源码：
 
