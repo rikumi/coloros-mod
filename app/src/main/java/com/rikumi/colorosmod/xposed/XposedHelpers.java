@@ -55,6 +55,18 @@ public final class XposedHelpers {
 
     // ------------------------------------------------------------------ Hook
 
+    /** Chain-style hook with the same generation admission gate as the compatibility hooks. */
+    public static XposedInterface.HookHandle hookChainMethod(Method method, XposedInterface.Hooker hooker) {
+        XposedInterface framework = XposedBridge.framework();
+        method.setAccessible(true);
+        try { framework.deoptimize(method); } catch (Throwable ignored) {}
+        return framework.hook(method).intercept(chain -> {
+            if (!enterHook()) return chain.proceed();
+            try { return hooker.intercept(chain); }
+            finally { leaveHook(); }
+        });
+    }
+
     /** 只能 hook 方法或构造方法; 字段等 Member 会直接抛异常(与旧版一致)。 */
     static void hookMethod(Member hookMethod, XC_MethodHook callback) {
         if (!(hookMethod instanceof Executable)) {

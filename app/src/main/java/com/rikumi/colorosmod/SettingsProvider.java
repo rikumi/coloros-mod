@@ -94,6 +94,13 @@ public class SettingsProvider extends ContentProvider {
                         }
                     }
                 }
+                Object navigationPackages = all.get(AppNavigationSettings.PACKAGES);
+                if (navigationPackages instanceof java.util.Set<?>) {
+                    all2.addRow(new Object[]{AppNavigationSettings.CONFIGURED, 1});
+                    for (Object pkg : (java.util.Set<?>) navigationPackages) {
+                        if (pkg instanceof String) all2.addRow(new Object[]{AppNavigationSettings.PREFIX + pkg, 1});
+                    }
+                }
                 return all2;
             }
             Integer val = intValue(all.get(key));

@@ -37,11 +37,11 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 private data class HiddenAppEntry(val component: String, val name: String, val icon: Bitmap?, val safeHidden: Boolean = false)
 
-private fun appEntry(context: Context, component: String): HiddenAppEntry {
+private fun appEntry(context: Context, component: String, navigationApplications: Boolean = false): HiddenAppEntry {
     val pm = context.packageManager
     return runCatching {
-        val name = ComponentName.unflattenFromString(component) ?: error("Invalid component")
-        @Suppress("DEPRECATION") val info = pm.getActivityInfo(name, 0)
+        @Suppress("DEPRECATION") val info = if (navigationApplications) pm.getApplicationInfo(component, 0)
+            else pm.getActivityInfo(ComponentName.unflattenFromString(component) ?: error("Invalid component"), 0)
         val drawable = info.loadIcon(pm)
         val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
         drawable.setBounds(0, 0, 96, 96)
@@ -73,38 +73,52 @@ private fun readLauncherApps(context: Context): List<HiddenAppEntry> {
     }
 }
 
+private fun readNavigationApps(context: Context): List<HiddenAppEntry> {
+    val output = runRoot("cmd package list packages -3 --user current") ?: error(context.getString(R.string.ui_cannot_read_apps))
+    val collator = Collator.getInstance(context.resources.configuration.locales[0])
+    return output.lineSequence().map { it.trim() }.filter { it.startsWith("package:") }
+        .map { appEntry(context, it.removePrefix("package:"), true) }.distinctBy { it.component }
+        .sortedWith { a, b ->
+            val result = collator.compare(a.name, b.name)
+            if (result == 0) a.component.compareTo(b.component) else result
+        }.toList()
+}
+
 @Composable
-internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit) {
+internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit, navigationApplications: Boolean = false) {
     val preferences = remember(context) { context.settingsPrefs() }
-    var hidden by remember { mutableStateOf(preferences.getStringSet(HiddenLauncherApps.COMPONENTS, emptySet()).orEmpty().toSet()) }
+    val packagesKey = if (navigationApplications) AppNavigationSettings.PACKAGES else HiddenLauncherApps.COMPONENTS
+    var hidden by remember(packagesKey) { mutableStateOf(if (navigationApplications) AppNavigationSettings.applications(preferences).toSet()
+        else preferences.getStringSet(packagesKey, emptySet()).orEmpty().toSet()) }
     var picking by remember { mutableStateOf(false) }
     var choices by remember { mutableStateOf<List<HiddenAppEntry>?>(null) }
     var entries by remember { mutableStateOf<List<HiddenAppEntry>>(emptyList()) }
     val listState = rememberLazyListState()
     val overscroll = remember { mutableFloatStateOf(0f) }
     fun save(components: Set<String>) {
-        if (preferences.edit().putStringSet(HiddenLauncherApps.COMPONENTS, components)
-                .putBoolean(HiddenLauncherApps.ENABLED, true).commit()) {
+        val editor = preferences.edit().putStringSet(packagesKey, components)
+        if (!navigationApplications) editor.putBoolean(HiddenLauncherApps.ENABLED, true)
+        if (editor.commit()) {
             hidden = components
             SettingsProvider.notifySettingsChanged(context)
         } else Toast.makeText(context, context.getString(R.string.ui_save_failed), Toast.LENGTH_SHORT).show()
     }
     BackHandler(enabled = picking) { picking = false }
     LaunchedEffect(hidden) {
-        entries = withContext(Dispatchers.IO) { hidden.sorted().map { appEntry(context, it) } }
+        entries = withContext(Dispatchers.IO) { hidden.sorted().map { appEntry(context, it, navigationApplications) } }
     }
     LaunchedEffect(picking) {
         listState.scrollToItem(0)
         if (picking) {
             choices = null
-            val result = withContext(Dispatchers.IO) { runCatching { readLauncherApps(context) } }
+            val result = withContext(Dispatchers.IO) { runCatching { if (navigationApplications) readNavigationApps(context) else readLauncherApps(context) } }
             choices = result.getOrDefault(emptyList())
             if (result.isFailure) Toast.makeText(context, context.getString(R.string.ui_read_apps_failed), Toast.LENGTH_SHORT).show()
         }
     }
     Scaffold(topBar = {
         CouixTopAppBar(
-            title = if (picking) context.getString(R.string.ui_select_apps) else context.getString(R.string.ui_fully_hidden_apps),
+            title = if (picking) context.getString(R.string.ui_select_apps) else context.getString(if (navigationApplications) R.string.ui_navigation_apps else R.string.ui_fully_hidden_apps),
             dividerProgress = couixTopBarDividerProgress(listState, overscroll),
             navigationIcon = {
                 IconButton(onClick = { if (picking) picking = false else onBack() }) {
@@ -120,6 +134,7 @@ internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit) {
     }) { padding ->
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding).couixOverscroll(listState, overscroll)) {
             item { Spacer(Modifier.height(12.dp)) }
+            if (navigationApplications) item { CouixSmallTitle(context.getString(if (picking) R.string.ui_non_system_apps else R.string.ui_navigation_apps)) }
             val current = if (picking) choices?.filter { it.component !in hidden } else entries
             when {
                 current == null -> item { CouixSmallTitle(context.getString(R.string.ui_loading)) }
@@ -136,17 +151,19 @@ internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit) {
                                 CouixCardRow(first = index == 0, last = index == apps.lastIndex) {
                                     if (index > 0) CouixItemDivider()
                                     HiddenAppRow(app, picking,
+                                        removeLabel = context.getString(if (navigationApplications) R.string.ui_remove_app else R.string.ui_unhide),
                                         onAdd = { save(hidden + app.component); picking = false },
                                         onRemove = { save(hidden - app.component) },
                                         onOpen = {
-                                            val launch = ComponentName.unflattenFromString(app.component)?.let {
+                                            val launch = if (navigationApplications) context.packageManager.getLaunchIntentForPackage(app.component)
+                                            else ComponentName.unflattenFromString(app.component)?.let {
                                                 android.content.Intent(android.content.Intent.ACTION_MAIN)
                                                     .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
                                                     .setComponent(it).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                                             }
                                             if (launch == null || runCatching { context.startActivity(launch); true }.getOrDefault(false).not())
                                                 Toast.makeText(context, context.getString(R.string.ui_cannot_open_app), Toast.LENGTH_SHORT).show()
-                                        })
+                                        }, packageName = if (navigationApplications) app.component else ComponentName.unflattenFromString(app.component)?.packageName)
                                 }
                             }
                         }
@@ -159,7 +176,7 @@ internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit) {
 }
 
 @Composable
-private fun HiddenAppRow(app: HiddenAppEntry, picking: Boolean, onAdd: () -> Unit, onRemove: () -> Unit, onOpen: () -> Unit) {
+private fun HiddenAppRow(app: HiddenAppEntry, picking: Boolean, removeLabel: String, onAdd: () -> Unit, onRemove: () -> Unit, onOpen: () -> Unit, packageName: String?) {
     var expanded by remember { mutableStateOf(false) }
     var anchorHeight by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
@@ -178,14 +195,13 @@ private fun HiddenAppRow(app: HiddenAppEntry, picking: Boolean, onAdd: () -> Uni
             items = listOf(
                 ActionMenuItem(context.getString(R.string.ui_open), onOpen),
                 ActionMenuItem(context.getString(R.string.ui_app_info)) {
-                    val packageName = ComponentName.unflattenFromString(app.component)?.packageName
                     val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                         android.net.Uri.fromParts("package", packageName, null))
                         .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                     if (runCatching { context.startActivity(intent) }.isFailure)
                         Toast.makeText(context, context.getString(R.string.ui_cannot_open_app_info), Toast.LENGTH_SHORT).show()
                 },
-                ActionMenuItem(context.getString(R.string.ui_unhide), onRemove),
+                ActionMenuItem(removeLabel, onRemove),
             ))
     }
 }

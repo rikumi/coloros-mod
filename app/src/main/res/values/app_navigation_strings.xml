@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_app_immersive_navigation">应用导航栏强制沉浸</string>
+    <string name="ui_navigation_apps">强制沉浸应用列表</string>
+    <string name="ui_non_system_apps">非系统应用</string>
+    <string name="ui_remove_app">移除</string>
+    <string name="ui_navigation_apps_count">应用列表（%1$d 个应用）</string>
+</resources>

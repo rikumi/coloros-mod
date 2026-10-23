@@ -280,6 +280,19 @@ public class XposedInit extends XposedModule {
     public static final String KEY_RECENTS_SWIPE_UP_KILL_SUBSIDIARY_ENABLED =
             "recents_swipe_up_kill_subsidiary_enabled";
     public static final String KEY_HIDDEN_LAUNCHER_APPS_ENABLED = HiddenLauncherApps.ENABLED;
+    public static java.util.Set<String> navigationApplications() {
+        java.util.Map<String, Integer> snapshot = sSnapshot;
+        if (!snapshot.containsKey(AppNavigationSettings.CONFIGURED)) {
+            return java.util.Collections.singleton("com.tencent.mm");
+        }
+        java.util.Set<String> packages = new java.util.HashSet<>();
+        for (String key : snapshot.keySet()) {
+            if (key.startsWith(AppNavigationSettings.PREFIX) && Integer.valueOf(1).equals(snapshot.get(key))) {
+                packages.add(key.substring(AppNavigationSettings.PREFIX.length()));
+            }
+        }
+        return packages;
+    }
     private static volatile Object[] sHiddenLauncherSnapshot =
             new Object[]{null, java.util.Collections.emptySet()};
 
@@ -585,6 +598,7 @@ public class XposedInit extends XposedModule {
             LauncherHooks.onSettingsSnapshotPublished(all);
         }
         if ("com.android.systemui".equals(sHookedPackageName)) {
+            com.rikumi.colorosmod.hooks.AppNavigationHooks.onSettingsChanged();
             QsHooks.onCornerRadiusSettingsChanged();
             SignalHooks.onSettingsSnapshotPublished();
             StatusBarLyricHooks.onSettingsSnapshotPublished();
@@ -769,6 +783,9 @@ public class XposedInit extends XposedModule {
     private static boolean preflightProcessResources() {
         if (sIsSystemServer) return SystemServerHooks.canHotReload();
         if ("com.android.systemui".equals(sHookedPackageName)) {
+            if (!com.rikumi.colorosmod.hooks.AppNavigationHooks.prepareHotReload()) {
+                return false;
+            }
             if (!AncTileHooks.canHotReload()) return false;
             if (!StatusBarLyricHooks.prepareHotReloadListeners()) {
                 AncTileHooks.cancelHotReloadPreflight();
@@ -787,6 +804,7 @@ public class XposedInit extends XposedModule {
 
     private static void cancelProcessPreflight() {
         if ("com.android.systemui".equals(sHookedPackageName)) {
+            com.rikumi.colorosmod.hooks.AppNavigationHooks.cancelHotReload();
             StatusBarLyricHooks.cancelHotReloadPreflight();
             AncTileHooks.cancelHotReloadPreflight();
         } else if ("com.android.launcher".equals(sHookedPackageName)) {
@@ -797,6 +815,7 @@ public class XposedInit extends XposedModule {
     }
 
     private static void cleanupProcessResourcesOnMain() {
+        com.rikumi.colorosmod.hooks.AppNavigationHooks.cleanupForHotReload();
         if (sIsSystemServer) {
             try { SystemServerHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("system_server hot reload cleanup failed: " + t); }
@@ -937,7 +956,7 @@ public class XposedInit extends XposedModule {
             return false;
         }
         try {
-            Object[] state = new Object[18];
+            Object[] state = new Object[19];
             state[0] = StatusBarLyricHooks.captureHotReloadHost();
             state[1] = NotificationHooks.captureHotReloadHost();
             state[2] = SystemServerHooks.captureHotReloadHost();
@@ -956,6 +975,7 @@ public class XposedInit extends XposedModule {
             state[15] = StatusBarExtrasHooks.captureHotReloadHosts();
             state[16] = MergedRadiantHooks.captureHotReloadHosts();
             state[17] = MergedSettingsRotationHooks.capture();
+            state[18] = com.rikumi.colorosmod.hooks.AppNavigationHooks.captureHosts();
             param.setSavedInstanceState(state);
         } catch (Throwable t) {
             cancelProcessPreflight();
@@ -1068,6 +1088,7 @@ public class XposedInit extends XposedModule {
         try {
             if (savedState instanceof Object[]) {
                 final Object[] state = (Object[]) savedState;
+                if (state.length > 18) com.rikumi.colorosmod.hooks.AppNavigationHooks.restoreHosts(state[18]);
                 // These restorers only replace Java references and do not touch host Views.
                 try {
                     if (state.length > 1) NotificationHooks.restoreHotReloadHost(state[1]);

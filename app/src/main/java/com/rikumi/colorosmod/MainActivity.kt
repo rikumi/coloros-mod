@@ -310,6 +310,7 @@ private val NAV: List<SettingsItem> = listOf(
     SwitchItem("long_press_timeout_enabled", R.string.ui_long_press_timeout, sliderKey = "long_press_timeout_ms", sliderMax = 600, sliderDefault = 300, sliderUnit = "ms", sliderMin = 100, sliderStep = 50, rootBacked = true),
     SwitchItem("animation_duration_scale_enabled", R.string.ui_animation_scale, sliderKey = "animation_duration_scale", sliderMax = 20, sliderDefault = 15, sliderUnit = "", sliderUnitRes = R.string.ui_unit_multiplier, sliderDisplayScale = 0.05f, rootBacked = true),
     GroupTitleItem(R.string.ui_gesture_visual),
+    SwitchItem(AppNavigationSettings.ENABLED, R.string.ui_app_immersive_navigation, masterManaged = false),
     SwitchItem("gesture_bar_width_enabled", R.string.ui_gesture_bar_width, sliderKey = "gesture_bar_width_dp", sliderMax = 120, sliderDefault = 100, sliderUnit = "dp", sliderMin = 80),
     SwitchItem("gesture_bar_long_press_disable_enabled", R.string.ui_gesture_bar_animation, R.string.ui_gesture_bar_animation_hint),
     GroupTitleItem(R.string.ui_recents_switching),
@@ -426,6 +427,7 @@ private val CATEGORIES = CATEGORY_GROUPS.flatten()
 // "停用应用"分类 id: 该分类没有开关项, 子页面在路由里特判渲染为只读列表。
 private const val DISABLED_APPS_ID = "disabled_apps"
 private const val HIDDEN_LAUNCHER_APPS_ID = "hidden_launcher_apps"
+private const val NAVIGATION_APPS_ID = "navigation_apps"
 
 // 主开关切换后、落盘前的临时视觉覆盖。
 // scope = null 表示首页的全局主开关(覆盖所有分类), 否则只覆盖该 categoryId 的分类。
@@ -444,7 +446,7 @@ private val List<SettingsItem>.switches: List<SwitchItem> get() = filterIsInstan
 // 分类/全局顶部“一键启用”所管理的项目；目录屏蔽项也属于可启用功能。
 private val List<SettingsItem>.masterItems: List<SettingsItem>
     get() = filter {
-        (it is SwitchItem && it.masterManaged) || it is FolderBlockItem
+        (it is SwitchItem && (it.masterManaged || it.key == AppNavigationSettings.ENABLED)) || it is FolderBlockItem
                 || (it is SelectItem && it.masterManaged)
     }
 
@@ -521,7 +523,11 @@ fun SettingsScreen(resumeRequest: Int = 0) {
     // 当前打开的分类 id; null 表示停在首页。
     var openCategoryId by remember { mutableStateOf<String?>(null) }
     BackHandler(enabled = openCategoryId != null) {
-        openCategoryId = if (openCategoryId == HIDDEN_LAUNCHER_APPS_ID) "hidden_apps" else null
+        openCategoryId = when (openCategoryId) {
+            HIDDEN_LAUNCHER_APPS_ID -> "hidden_apps"
+            NAVIGATION_APPS_ID -> "navigation"
+            else -> null
+        }
     }
 
     // 主开关: scope = null 作用于全部功能(首页), 否则只作用于该分类的设置项。
@@ -537,6 +543,8 @@ fun SettingsScreen(resumeRequest: Int = 0) {
                     items.forEach { item ->
                     when (item) {
                         is SwitchItem -> {
+                            // 与 flyme-mod 一致：一键关闭包含按应用功能，一键开启不替用户启用它。
+                            if (target && item.key == AppNavigationSettings.ENABLED) return@forEach
                             if (item.rootBacked) {
                                 applySystemSetting(item.key, target, item.sliderDefault)
                             } else {
@@ -569,7 +577,7 @@ fun SettingsScreen(resumeRequest: Int = 0) {
             // 按层级判断 push/pop，二级列表返回所属分类也使用 pop。
             fun depth(id: String?) = when (id) {
                 null -> 0
-                HIDDEN_LAUNCHER_APPS_ID -> 2
+                HIDDEN_LAUNCHER_APPS_ID, NAVIGATION_APPS_ID -> 2
                 else -> 1
             }
             val enter = if (depth(targetState) < depth(initialState)) -1 else 1
@@ -586,6 +594,8 @@ fun SettingsScreen(resumeRequest: Int = 0) {
         val category = CATEGORIES.firstOrNull { it.id == targetId }
         if (targetId == HIDDEN_LAUNCHER_APPS_ID) {
             HiddenAppsScreen(context = ctx, onBack = { openCategoryId = "hidden_apps" })
+        } else if (targetId == NAVIGATION_APPS_ID) {
+            HiddenAppsScreen(context = ctx, onBack = { openCategoryId = "navigation" }, navigationApplications = true)
         } else if (targetId == DISABLED_APPS_ID) {
             // 只读列表页, 不走开关列表的 CategoryScreen。
             DisabledAppsScreen(ctx = ctx, onBack = { openCategoryId = null })
@@ -613,6 +623,7 @@ fun SettingsScreen(resumeRequest: Int = 0) {
                 onItemChanged = { version++ },
                 onBack = { openCategoryId = null },
                 onOpenHiddenApps = { openCategoryId = HIDDEN_LAUNCHER_APPS_ID },
+                onOpenNavigationApps = { openCategoryId = NAVIGATION_APPS_ID },
             )
         }
     }
@@ -725,6 +736,7 @@ private fun CategoryScreen(
     onItemChanged: () -> Unit,
     onBack: () -> Unit,
     onOpenHiddenApps: () -> Unit,
+    onOpenNavigationApps: () -> Unit,
 ) {
     val listState = rememberLazyListState()
     // 按 GroupTitleItem 切分: 每段一张卡片, 段与段之间自然留出 group 间距。
@@ -795,6 +807,10 @@ private fun CategoryScreen(
                         onItemChanged = onItemChanged,
                         footerContent = if (group.items.any { it is SwitchItem && it.key == "hidden_launcher_apps_enabled" }) {
                             { CouixCategoryRow(null, ctx.getString(R.string.ui_hidden_apps_list), onOpenHiddenApps) }
+                        } else if (group.items.any { it is SwitchItem && it.key == AppNavigationSettings.ENABLED }
+                            && prefs.getBoolean(AppNavigationSettings.ENABLED, false)) {
+                            { CouixCategoryRow(null, ctx.getString(R.string.ui_navigation_apps_count,
+                                AppNavigationSettings.applications(prefs).size), onOpenNavigationApps) }
                         } else null,
                     )
                 }

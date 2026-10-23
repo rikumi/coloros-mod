@@ -68,6 +68,7 @@ public final class SystemUiHooks {
         StatusBarFontHooks.hookStatusBarFont(lpparam);
         // Feature 18 — 悬浮小窗贴边挂机: 真正的提交逻辑在 system_server(android 作用域), 见 hookFloatWindowEdgeHangSystemServer。
         GestureHooks.hookGestureBarHeight(lpparam);
+        AppNavigationHooks.hook(lpparam);
         GestureHooks.hookGestureBarLongPressDisable(lpparam);
         GestureHooks.hookMBack(lpparam);
         // 旋转建议按钮恢复原生位置(当前屏幕底边与建议方向下屏幕底边的夹角): 运行时按独立开关门控。
