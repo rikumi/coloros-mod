@@ -109,6 +109,23 @@ final class MergedTileGridHooks {
                 XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.OplusQSAnimator", pkg.classLoader,
                         "updateAnimators", animatorUpdate);
             }
+            // OplusQSAnimator's TouchAnimators can finish after the final tile layout pass.
+            // Re-run ratio geometry once the panel reaches its expanded endpoint so native
+            // animation writes cannot leave the merged-card contents at their pre-expansion size.
+            XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.OplusQSAnimator", pkg.classLoader,
+                    "setPosition", float.class, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            p.setObjectExtra("ratioPreviousPosition", XposedHelpers.getFloatField(p.thisObject, "mLastPosition"));
+                        }
+
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            float previous = (Float) p.getObjectExtra("ratioPreviousPosition");
+                            float position = (Float) p.args[0];
+                            if (previous >= 1f || position < 1f || !ratioAnimator(p.thisObject)) return;
+                            View root = (View) XposedHelpers.getObjectField(p.thisObject, "mQsRootView");
+                            root.postOnAnimation(MergedCardRatioHooks::refresh);
+                        }
+                    });
             XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.OplusQSAnimator", pkg.classLoader,
                     "onLayoutChange", View.class, int.class, int.class, int.class, int.class,
                     int.class, int.class, int.class, int.class, new XC_MethodHook() {
