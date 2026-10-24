@@ -89,6 +89,20 @@ final class MergedTileGridHooks {
                             if (MergedCardRatioHooks.ratioEnabled((View) p.thisObject)
                                     && !readBool(KEY_QS_MERGED_TILE_SCALE_ANIMATION, false)) p.args[1] = 1f;
                         }
+
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            if (!MergedCardRatioHooks.ratioEnabled((View) p.thisObject)
+                                    || (Float) p.args[0] < 1f) return;
+                            // updateViewState writes the panel's scale directly. The animator's
+                            // endpoint refresh does not correct this value, so a missed final
+                            // frame can leave every expanded tile permanently undersized.
+                            Object quickPanel = XposedHelpers.getObjectField(p.thisObject, "mQQSPanel");
+                            Object fullPanel = XposedHelpers.getObjectField(p.thisObject, "mQSPanel");
+                            for (Object panel : new Object[]{quickPanel, fullPanel}) if (panel instanceof View view) {
+                                view.setScaleX(1f);
+                                view.setScaleY(1f);
+                            }
+                        }
                     });
             XC_MethodHook animatorUpdate = new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
