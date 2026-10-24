@@ -199,12 +199,13 @@ public final class MergedCardRatioHooks {
                     RadiusState state = radii.get(owner);
                     if (state != null && state.drawable.get() == drawable && source == state.installed) return;
                     if (source == null || !roundRectClass.isInstance(source)) return;
-                    float scaled = outlineRadius(owner, source);
+                    Object resolved = outlineProvider(owner, source);
+                    float scaled = ((Number) XposedHelpers.callMethod(resolved, "getCornerRadius")).floatValue();
                     Object provider;
                     if (state != null && state.drawable.get() == drawable && source == state.source && state.radius == scaled) {
                         provider = state.installed;
                     } else {
-                        provider = XposedHelpers.newInstance(roundRectClass, scaled, XposedHelpers.callMethod(source, "getCornerWeight"));
+                        provider = resolved;
                         radii.put(owner, new RadiusState(drawable, source, provider, scaled));
                     }
                     // 原生路径更新直接消费最终半径，不先应用原始路径再更新一次模糊配置。
@@ -665,10 +666,17 @@ public final class MergedCardRatioHooks {
                 ? QsHooks.resolveQsCornerRadiusPx(view) : null;
     }
 
-    private static float outlineRadius(View view, Object source) {
+    private static Object outlineProvider(View view, Object source) {
         Float custom = customHighlightRadius(view);
-        if (custom != null) return custom; // Percentage already uses the final card bounds.
-        return scaleRadius(view, ((Number) XposedHelpers.callMethod(source, "getCornerRadius")).floatValue());
+        if (custom != null) {
+            // Like the slider's setCornerRadius, convert the design radius to the native
+            // smooth radius AND weight. Using custom directly makes 2x1 tiles rounder.
+            Class<?> constant = XposedHelpers.findClass(
+                    "com.oplus.systemui.qs.base.res.util.QSConstant", view.getClass().getClassLoader());
+            return XposedHelpers.callStaticMethod(constant, "getSmoothRoundRectOutlineProvider", view.getContext(), custom);
+        }
+        float radius = scaleRadius(view, ((Number) XposedHelpers.callMethod(source, "getCornerRadius")).floatValue());
+        return XposedHelpers.newInstance(roundRectClass, radius, XposedHelpers.callMethod(source, "getCornerWeight"));
     }
 
     private static void refreshHighlightRadii(View view) {
@@ -685,11 +693,10 @@ public final class MergedCardRatioHooks {
         Object source = state != null && state.drawable.get() == drawable && current == state.installed ? state.source : current;
         source = nativeOutlineSource(view, source);
         if (source == null || !roundRectClass.isInstance(source)) return;
-        float scaled = outlineRadius(view, source);
+        Object provider = outlineProvider(view, source);
+        float scaled = ((Number) XposedHelpers.callMethod(provider, "getCornerRadius")).floatValue();
         if (state != null && state.drawable.get() == drawable && current == state.installed
                 && source == state.source && Float.compare(state.radius, scaled) == 0) return;
-        Object weight = XposedHelpers.callMethod(source, "getCornerWeight");
-        Object provider = XposedHelpers.newInstance(roundRectClass, scaled, weight);
         XposedHelpers.callMethod(drawable, "setPathProvider", provider);
         radii.put(view, new RadiusState(drawable, source, provider, scaled));
         view.invalidate();
