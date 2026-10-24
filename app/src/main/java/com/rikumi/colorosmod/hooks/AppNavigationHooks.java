@@ -10,7 +10,6 @@ import io.github.libxposed.api.XposedInterface;
 import java.util.ArrayList;
 import java.util.Set;
 import java.util.Collections;
-import java.util.concurrent.atomic.AtomicInteger;
 import android.graphics.Color;
 import android.graphics.ColorSpace;
 import android.view.InputEvent;
@@ -39,7 +38,7 @@ public final class AppNavigationHooks {
     private static volatile AppNavigationHooks instance;
     private final java.util.List<XposedInterface.HookHandle> hooks = new ArrayList<>();
     private volatile boolean paused, closed;
-    private final AtomicInteger captures = new AtomicInteger();
+    private final Set<NavigationCaptureCallback> captures = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private HandlerThread workerThread, captureThread;
     private Set<String> packages = Collections.emptySet();
     private boolean lastEnabled;
@@ -104,20 +103,18 @@ public final class AppNavigationHooks {
     public static boolean prepareHotReload() {
         AppNavigationHooks owner = instance;
         if (owner == null) return true;
-        synchronized (owner.captures) { owner.paused = true; }
+        synchronized (owner.captures) {
+            owner.paused = true;
+            for (NavigationCaptureCallback capture : owner.captures) capture.cancel();
+            owner.captures.clear();
+        }
         // Drain queued work before committing any destructive cleanup.
         java.util.concurrent.CountDownLatch idle = new java.util.concurrent.CountDownLatch(2);
         owner.worker.post(idle::countDown); owner.captureWorker.post(idle::countDown);
         try {
             if (!idle.await(1500, java.util.concurrent.TimeUnit.MILLISECONDS)) return false;
         } catch (InterruptedException error) { Thread.currentThread().interrupt(); return false; }
-        long deadline = android.os.SystemClock.uptimeMillis() + 1500;
-        while (owner.captures.get() != 0 && android.os.SystemClock.uptimeMillis() < deadline) {
-            try { Thread.sleep(5); } catch (InterruptedException error) {
-                Thread.currentThread().interrupt(); return false;
-            }
-        }
-        return owner.captures.get() == 0;
+        return true;
     }
 
     public static void cancelHotReload() {
@@ -135,6 +132,10 @@ public final class AppNavigationHooks {
 
     private void cleanup() {
         closed = true;
+        synchronized (captures) {
+            for (NavigationCaptureCallback capture : captures) capture.cancel();
+            captures.clear();
+        }
         main.removeCallbacksAndMessages(null);
         for (State state : states.values()) state.close();
         states.clear();
@@ -152,6 +153,19 @@ public final class AppNavigationHooks {
         workerThread.start(); worker = new Handler(workerThread.getLooper());
         captureThread = new HandlerThread("ColorOSMod-NavCapture", android.os.Process.THREAD_PRIORITY_BACKGROUND);
         captureThread.start(); captureWorker = new Handler(captureThread.getLooper());
+    }
+
+    private static java.util.function.Consumer<Object> discardCaptureBuffer(Method hardwareBuffer) {
+        // Capture only the framework Method, never an AppNavigationHooks/State instance.
+        return buffer -> {
+            if (buffer == null) return;
+            try {
+                HardwareBuffer allocation = (HardwareBuffer) hardwareBuffer.invoke(buffer);
+                if (allocation != null) allocation.close();
+            } catch (ReflectiveOperationException | RuntimeException error) {
+                XposedInit.log("navigation stale capture disposal failed: " + error);
+            }
+        };
     }
 
     private void reapply(Object transitions) throws ReflectiveOperationException {
@@ -368,6 +382,7 @@ public final class AppNavigationHooks {
         Runnable captureTimeout, taskTimeout;
         // Retain the native listener until its asynchronous capture completes.
         Object captureListener;
+        NavigationCaptureCallback captureRequest;
         ColorOsNavigationEffect effect;
         long effectVersion;
         Rect navigationArea;
@@ -481,18 +496,13 @@ public final class AppNavigationHooks {
 
         void sample(Rect navigation, Rect bounds, SurfaceControl root, SurfaceControl exclude,
                 ColorOsNavigationEffect currentEffect, int token, long request) {
-            java.util.concurrent.atomic.AtomicBoolean completed = new java.util.concurrent.atomic.AtomicBoolean();
-            boolean registered = false;
+            NavigationCaptureCallback callback = null;
             try {
                 if (paused || closed || !attached || token != generation || request != activeCapture || recentsCached) return;
                 Object builder = argsBuilder.newInstance(root);
                 setCrop.invoke(builder, new Rect(0, 0, bounds.width(), bounds.height()));
                 setExcludeLayers.invoke(builder, (Object) new SurfaceControl[]{exclude});
-                synchronized (captures) {
-                    if (paused || closed) return;
-                    captures.incrementAndGet(); registered = true;
-                }
-                ObjIntConsumer<Object> callback = (buffer, status) -> worker.post(() -> {
+                callback = new NavigationCaptureCallback((capture, buffer, status) -> worker.post(() -> {
                     HardwareBuffer allocation = null;
                     boolean submitted = false;
                     try {
@@ -510,26 +520,31 @@ public final class AppNavigationHooks {
                     } catch (ReflectiveOperationException | RuntimeException error) { report(error); }
                     finally {
                         if (allocation != null) allocation.close();
-                        if (completed.compareAndSet(false, true)) captures.decrementAndGet();
+                        captures.remove(capture);
                     }
                     boolean valid = submitted;
                     main.post(() -> {
                         if (request != activeCapture) return;
                         if (captureTimeout != null) main.removeCallbacks(captureTimeout);
-                        captureTimeout = null; captureListener = null; pending = false;
+                        captureTimeout = null; captureListener = null; captureRequest = null; pending = false;
                         if (paused || closed || !attached || token != generation || !enabled() || recentsCached) return;
                         Rect current;
                         try { current = navigationFrame(view); }
                         catch (ReflectiveOperationException error) { report(error); reset(); return; }
                         if (!valid || !current.equals(navigation)) reset();
                     });
-                });
+                }), discardCaptureBuffer(getHardwareBuffer));
+                synchronized (captures) {
+                    if (paused || closed || token != generation || request != activeCapture) { callback.cancel(); return; }
+                    captures.add(callback);
+                    captureRequest = callback;
+                }
                 captureListener = listenerConstructor.newInstance(callback);
                 int status = (Integer) captureLayers.invoke(null, build.invoke(builder), captureListener);
-                if (status != 0 && completed.compareAndSet(false, true)) captures.decrementAndGet();
+                if (status != 0) { callback.cancel(); captures.remove(callback); }
                 if (status != 0) main.post(() -> { if (!paused && !closed && request == activeCapture && !recentsCached) reset(); });
             } catch (ReflectiveOperationException | RuntimeException error) {
-                if (registered && completed.compareAndSet(false, true)) captures.decrementAndGet();
+                if (callback != null) { callback.cancel(); captures.remove(callback); }
                 report(error); main.post(() -> { if (!paused && !closed && request == activeCapture && !recentsCached) reset(); });
             } finally {
                 root.release(); exclude.release();
@@ -558,9 +573,16 @@ public final class AppNavigationHooks {
             }
         }
         void cancelRequests() {
-            generation++;
-            activeCapture++;
-            activeTask++;
+            synchronized (captures) {
+                generation++;
+                activeCapture++;
+                activeTask++;
+                if (captureRequest != null) {
+                    captureRequest.cancel();
+                    captures.remove(captureRequest);
+                    captureRequest = null;
+                }
+            }
             if (taskTimeout != null) main.removeCallbacks(taskTimeout);
             taskTimeout = null; checkingTask = false;
             if (captureTimeout != null) main.removeCallbacks(captureTimeout);

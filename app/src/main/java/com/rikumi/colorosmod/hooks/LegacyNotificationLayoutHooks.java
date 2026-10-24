@@ -18,9 +18,7 @@ import org.xmlpull.v1.XmlPullParser;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -35,6 +33,10 @@ public final class LegacyNotificationLayoutHooks {
     private static final Map<Integer, String[]> LEGACY_ANDROID_RESOURCES;
 
     private static volatile AssetManager sLegacyAssets;
+    private static Class<?> sRowClass;
+    private static Boolean sAppliedEnabled;
+    private static final android.os.Handler MAIN = new android.os.Handler(android.os.Looper.getMainLooper());
+    private static final Runnable REFRESH = LegacyNotificationLayoutHooks::refreshRows;
 
     static {
         Map<Integer, String[]> names = new HashMap<>();
@@ -54,6 +56,8 @@ public final class LegacyNotificationLayoutHooks {
 
     public static void hook(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
+            sRowClass = XposedHelpers.findClass(
+                    "com.android.systemui.statusbar.notification.row.ExpandableNotificationRow", lpparam.classLoader);
             XposedHelpers.findAndHookMethod(LayoutInflater.class, "inflate",
                     int.class, ViewGroup.class, boolean.class, new XC_MethodHook() {
                         @Override
@@ -80,14 +84,13 @@ public final class LegacyNotificationLayoutHooks {
                                         layoutName, "layout", SYSTEMUI_PACKAGE);
                                 if (legacyLayoutId == 0) return;
 
-                                XmlResourceParser legacyParser = legacyResources.getLayout(legacyLayoutId);
+                                XmlResourceParser legacyParser = mappedLayout(context, layoutName,
+                                        legacyResources, currentResources);
                                 try {
-                                    XmlResourceParser mappedParser = mapParserResources(
-                                            legacyParser, legacyResources, currentResources);
                                     ViewGroup root = (ViewGroup) param.args[1];
                                     boolean attachToRoot = (Boolean) param.args[2];
                                     Object view = inflater.inflate(
-                                            (XmlPullParser) mappedParser, root, attachToRoot);
+                                            (XmlPullParser) legacyParser, root, attachToRoot);
                                     param.setResult(view);
                                 } finally {
                                     legacyParser.close();
@@ -98,10 +101,59 @@ public final class LegacyNotificationLayoutHooks {
                         }
                     });
             log("HOOK OK android.view.LayoutInflater#inflate (legacy notification layouts)");
+            onSettingsSnapshotPublished();
         } catch (Throwable t) {
             log("HOOK FAIL LayoutInflater#inflate (legacy notification layouts) :: "
                     + android.util.Log.getStackTraceString(t));
         }
+    }
+
+    public static synchronized void onSettingsSnapshotPublished() {
+        if (sRowClass == null) return;
+        boolean enabled = readBoolCached(KEY_NOTIFICATION_LEGACY_LAYOUT_ENABLED, false);
+        if (java.util.Objects.equals(sAppliedEnabled, enabled)) return;
+        sAppliedEnabled = enabled;
+        MAIN.removeCallbacks(REFRESH);
+        MAIN.post(REFRESH);
+    }
+
+    private static void refreshRows() {
+        try {
+            Class<?> global = Class.forName("android.view.WindowManagerGlobal");
+            Object manager = XposedHelpers.callStaticMethod(global, "getInstance");
+            String[] names = (String[]) XposedHelpers.callMethod(manager, "getViewRootNames");
+            java.util.Set<android.view.View> visited = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+            for (String name : names) {
+                Object root = XposedHelpers.callMethod(manager, "getRootView", name);
+                if (root instanceof android.view.View view) rebindRows(view, visited);
+            }
+        } catch (Throwable error) { log("legacy notification rebind failed: " + error); }
+    }
+
+    private static void rebindRows(android.view.View view, java.util.Set<android.view.View> visited) {
+        if (!visited.add(view)) return;
+        if (sRowClass != null && sRowClass.isInstance(view)) {
+            try {
+                Object entry = XposedHelpers.getObjectField(view, "mEntry");
+                Object stage = XposedHelpers.getObjectField(view, "mRowContentBindStage");
+                if (entry != null && stage != null) {
+                    Object params = XposedHelpers.callMethod(stage, "getStageParams", entry);
+                    XposedHelpers.callMethod(params, "setNeedsReinflation", true);
+                    XposedHelpers.callMethod(stage, "requestRebind", entry, null);
+                }
+            } catch (Throwable error) { log("legacy notification row rebind failed: " + error); }
+        }
+        if (view instanceof ViewGroup group)
+            for (int i = 0; i < group.getChildCount(); i++) rebindRows(group.getChildAt(i), visited);
+    }
+
+    public static synchronized void cleanupForHotReload() {
+        MAIN.removeCallbacksAndMessages(null);
+        sRowClass = null;
+        sAppliedEnabled = null;
+        AssetManager assets = sLegacyAssets;
+        sLegacyAssets = null;
+        if (assets != null) assets.close();
     }
 
     private static AssetManager getLegacyAssets(Context systemUiContext) throws Exception {
@@ -140,29 +192,32 @@ public final class LegacyNotificationLayoutHooks {
         }
     }
 
-    private static XmlResourceParser mapParserResources(final XmlResourceParser parser,
-            final Resources legacyResources, final Resources currentResources) {
-        return (XmlResourceParser) Proxy.newProxyInstance(
-                LegacyNotificationLayoutHooks.class.getClassLoader(),
-                new Class<?>[] { XmlResourceParser.class }, new InvocationHandler() {
-                    @Override
-                    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                        String name = method.getName();
-                        Object result = method.invoke(parser, args);
-                        if (!(result instanceof Integer)) return result;
-                        int resourceId = (Integer) result;
-                        if (resourceId == 0) return result;
-
-                        if ("getAttributeResourceValue".equals(name)
-                                || "getAttributeNameResource".equals(name)
-                                || "getAttributeIdValue".equals(name)
-                                || "getIdAttributeResourceValue".equals(name)
-                                || "getStyleAttribute".equals(name)) {
-                            return mapResourceId(resourceId, legacyResources, currentResources);
-                        }
-                        return result;
-                    }
-                });
+    private static XmlResourceParser mappedLayout(Context context, String name,
+            Resources legacy, Resources current) throws Exception {
+        byte[] xml;
+        try (java.util.zip.ZipFile apk = new java.util.zip.ZipFile(
+                new File(context.getCodeCacheDir(), TEMPLATE_CACHE_FILE));
+             InputStream input = apk.getInputStream(apk.getEntry("res/layout/" + name + ".xml"))) {
+            java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            int length;
+            while ((length = input.read(buffer)) != -1) output.write(buffer, 0, length);
+            xml = LegacyNotificationXml.remap(output.toByteArray(), id -> mapResourceId(id, legacy, current));
+        }
+        Class<?> blockClass = Class.forName("android.content.res.XmlBlock");
+        java.lang.reflect.Constructor<?> constructor = blockClass.getDeclaredConstructor(byte[].class);
+        constructor.setAccessible(true);
+        Object block = constructor.newInstance((Object) xml);
+        try {
+            Method newParser = blockClass.getDeclaredMethod("newParser");
+            newParser.setAccessible(true);
+            return (XmlResourceParser) newParser.invoke(block);
+        } finally {
+            // The parser retains its own XmlBlock open count until parser.close().
+            Method close = blockClass.getDeclaredMethod("close");
+            close.setAccessible(true);
+            close.invoke(block);
+        }
     }
 
     private static int mapResourceId(int resourceId, Resources legacyResources,

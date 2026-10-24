@@ -599,6 +599,7 @@ public class XposedInit extends XposedModule {
         }
         if ("com.android.systemui".equals(sHookedPackageName)) {
             com.rikumi.colorosmod.hooks.AppNavigationHooks.onSettingsChanged();
+            com.rikumi.colorosmod.hooks.LegacyNotificationLayoutHooks.onSettingsSnapshotPublished();
             QsHooks.onCornerRadiusSettingsChanged();
             SignalHooks.onSettingsSnapshotPublished();
             StatusBarLyricHooks.onSettingsSnapshotPublished();
@@ -784,10 +785,15 @@ public class XposedInit extends XposedModule {
         if (sIsSystemServer) return SystemServerHooks.canHotReload();
         if ("com.android.systemui".equals(sHookedPackageName)) {
             if (!com.rikumi.colorosmod.hooks.AppNavigationHooks.prepareHotReload()) {
+                log("hot reload preflight rejected: navigation workers");
                 return false;
             }
-            if (!AncTileHooks.canHotReload()) return false;
+            if (!AncTileHooks.canHotReload()) {
+                log("hot reload preflight rejected: ANC worker/listeners");
+                return false;
+            }
             if (!StatusBarLyricHooks.prepareHotReloadListeners()) {
+                log("hot reload preflight rejected: lyric listeners");
                 AncTileHooks.cancelHotReloadPreflight();
                 return false;
             }
@@ -825,6 +831,7 @@ public class XposedInit extends XposedModule {
             SettingsHooks.cleanupForHotReload();
         }
         if ("com.android.systemui".equals(sHookedPackageName)) {
+            com.rikumi.colorosmod.hooks.LegacyNotificationLayoutHooks.cleanupForHotReload();
             try { AncTileHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("anc hot reload cleanup failed: " + t); }
             try { StatusBarLyricHooks.cleanupForHotReload(); }
@@ -956,7 +963,7 @@ public class XposedInit extends XposedModule {
             return false;
         }
         try {
-            Object[] state = new Object[20];
+            Object[] state = new Object[21];
             state[0] = StatusBarLyricHooks.captureHotReloadHost();
             state[1] = NotificationHooks.captureHotReloadHost();
             state[2] = SystemServerHooks.captureHotReloadHost();
@@ -977,6 +984,8 @@ public class XposedInit extends XposedModule {
             state[17] = MergedSettingsRotationHooks.capture();
             state[18] = com.rikumi.colorosmod.hooks.AppNavigationHooks.captureHosts();
             state[19] = com.rikumi.colorosmod.hooks.NativeFontHooks.captureHotReloadState();
+            // Bootstrap String/Integer values only; do not carry old callbacks or caches.
+            state[20] = sSettingsLoaded ? new java.util.HashMap<>(sSnapshot) : null;
             param.setSavedInstanceState(state);
         } catch (Throwable t) {
             cancelProcessPreflight();
@@ -1040,6 +1049,18 @@ public class XposedInit extends XposedModule {
             Object[] state = (Object[]) savedState;
             if (state.length > 19) {
                 com.rikumi.colorosmod.hooks.NativeFontHooks.restoreHotReloadState(state[19]);
+            }
+            if (state.length > 20 && state[20] instanceof java.util.Map<?, ?> previous) {
+                java.util.Map<String, Integer> snapshot = new java.util.HashMap<>();
+                for (java.util.Map.Entry<?, ?> entry : previous.entrySet()) {
+                    if (entry.getKey() instanceof String key && entry.getValue() instanceof Integer value)
+                        snapshot.put(key, value);
+                }
+                // Reinstall immediately using the last complete snapshot; the worker refreshes
+                // it asynchronously. A busy Provider must not stall every new hook generation.
+                sSnapshot = snapshot;
+                sSettingsLoaded = true;
+                sFirstWaitDone = true;
             }
             if (sIsSystemServer && state.length > 8 && state[8] instanceof ClassLoader) {
                 sSystemServerClassLoader = (ClassLoader) state[8];

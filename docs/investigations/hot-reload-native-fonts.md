@@ -23,3 +23,13 @@
 ## 验证
 
 `python3 scripts/check-native-font-reload.py` 编译实际 NativeFontHooks，并在八个相互隔离的 ClassLoader 代际中检查不活动状态、非法所有者拒绝、原始库所有者恒定及不重复调用原生初始化，共 34 项检查。Android 构建与这些检查不能代替设备上首次进程重启后的连续热重载验证。
+
+## 2026-10-25：迟到截图与设置恢复
+
+再次读取 OPPO PKT110：07:10:09 SystemUI/31575 返回拒绝；07:10:07 框架记录向冻结进程发送单向调用，Chrome 子进程在 07:25:27 死亡后才返回 PROCESS_DIED。未保留到对应 SystemUI 模块回调日志，因此不能将该次拒绝直接归因于某一个 preflight。
+
+源码检查发现导航栏截图超时会放弃当前 listener，但 captures 计数只在原生结果处理完成后减少。原生回调延迟或不再到达时，后续每次热重载都会因等待该计数而失败。新增 NavigationCaptureCallback，在 preflight 中先关闭截图准入，再安全作废所有待返回结果，随后保留 worker/captureWorker 的队列屏障。已入队结果仍由屏障等待；迟到结果只关闭 HardwareBuffer，不再引用 View、effect 或 worker。不等待 GPU 回调，不将仍在执行的应用任务查询或提交当作已经结束。
+
+已成功读取的完整设置快照也随代际交接，仅复制 String/Integer 数据。新代先用此快照恢复 hooks，再后台刷新，避免恢复期间逐项等待或同步查询繁忙的设置 Provider。旧代尚未取得完整快照时仍保留原有初始化路径。
+
+`NavigationCaptureCallbackTest` 覆盖迟到释放、回调所有者释放、队列拒绝、入队异常，以及 100 轮取消与入队竞态，共 505 项检查。设备上的连续自动热重载仍待验证。冻结进程的唤醒和 LSPosed 自动通知批次期限仍由框架决定；本修改没有更改系统冻结策略、重启进程或将失败伪报为成功。
