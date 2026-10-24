@@ -313,7 +313,8 @@ public final class QsHooks {
     //                                 设置按钮/多用户/搜索按钮的位移, 不在本功能范围内);
     //   mDateX/YExpandTranslationAnimator -> 日期平移到放大后的时间下方。
     // fraction=0 即"一次下拉"的初始态(小字号、未位移), fraction=1 为完全展开态(放大并移动)。
-    // 固定单行时每帧把时间缩放复位为 1, 并清除时间/日期位移, 不受系统字体倍率影响。
+    // 固定单行时保留原生适配后的基础倍率, 只取消二次展开的放大和时间/日期位移。
+    // FakeStatusController 的一次下拉时钟也使用该倍率; 固定为 1 会在交接时缩小。
     public static void hookQsClockNoExpandAnim(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             XposedHelpers.findAndHookMethod(
@@ -341,8 +342,9 @@ public final class QsHooks {
         Object date = XposedHelpers.getObjectField(footer, "mQsDateView");
         if (clock instanceof View) {
             View v = (View) clock;
-            v.setScaleX(1f);
-            v.setScaleY(1f);
+            float scale = ((Number) XposedHelpers.callMethod(footer, "getFontScale")).floatValue();
+            v.setScaleX(scale);
+            v.setScaleY(scale);
             v.setTranslationX(0f);
             v.setTranslationY(0f);
         }
