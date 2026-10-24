@@ -865,6 +865,9 @@ public class XposedInit extends XposedModule {
     // A queued commit can be cancelled only while it is provably still pending. Once the main
     // thread changes PENDING to RUNNING, rollback is forbidden and this method waits for commit.
     private static boolean commitProcessCleanup() {
+        // Font-only scope processes have no module-owned Views, listeners or main-thread
+        // callbacks. Their settings worker is already stopped; do not wait on a busy app UI.
+        if (!sIsSystemServer && sHookedPackageName.isEmpty()) return true;
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
             cleanupProcessResourcesOnMain();
             return true;
@@ -926,7 +929,7 @@ public class XposedInit extends XposedModule {
         // 尽早启动设置预热, 使 Launcher 首次加载应用列表时已能读取隐藏图标开关。
         if (!sIsSystemServer) {
             sAppContext = currentApplication();
-            if (sAppContext != null) {
+            if (sAppContext != null && isAppHookTarget(sAppContext.getPackageName())) {
                 startSettingsLoader();
             }
         }
@@ -940,9 +943,6 @@ public class XposedInit extends XposedModule {
     // 所有可能拒绝的检查都在无破坏 preflight 中完成；commit 一旦开始便只前进。
     @Override
     public boolean onHotReloading(@NonNull HotReloadingParam param) {
-        // Native libc hooks and Chromium's font manager survive Java generation changes.
-        if (com.rikumi.colorosmod.hooks.NativeFontHooks.isActive()) return false;
-
         log("onHotReloading: quiescing process=" + sProcessName);
         // Close the hook admission gate first, then inspect subsystem state. This makes the
         // preflight snapshot stable instead of racing callbacks that start after canHotReload().
@@ -956,7 +956,7 @@ public class XposedInit extends XposedModule {
             return false;
         }
         try {
-            Object[] state = new Object[19];
+            Object[] state = new Object[20];
             state[0] = StatusBarLyricHooks.captureHotReloadHost();
             state[1] = NotificationHooks.captureHotReloadHost();
             state[2] = SystemServerHooks.captureHotReloadHost();
@@ -976,6 +976,7 @@ public class XposedInit extends XposedModule {
             state[16] = MergedRadiantHooks.captureHotReloadHosts();
             state[17] = MergedSettingsRotationHooks.capture();
             state[18] = com.rikumi.colorosmod.hooks.AppNavigationHooks.captureHosts();
+            state[19] = com.rikumi.colorosmod.hooks.NativeFontHooks.captureHotReloadState();
             param.setSavedInstanceState(state);
         } catch (Throwable t) {
             cancelProcessPreflight();
@@ -1037,6 +1038,9 @@ public class XposedInit extends XposedModule {
         Object savedState = param.getSavedInstanceState();
         if (savedState instanceof Object[]) {
             Object[] state = (Object[]) savedState;
+            if (state.length > 19) {
+                com.rikumi.colorosmod.hooks.NativeFontHooks.restoreHotReloadState(state[19]);
+            }
             if (sIsSystemServer && state.length > 8 && state[8] instanceof ClassLoader) {
                 sSystemServerClassLoader = (ClassLoader) state[8];
             }
@@ -1048,8 +1052,15 @@ public class XposedInit extends XposedModule {
         }
         log("onHotReloaded: process=" + sProcessName + " isSystemServer=" + sIsSystemServer);
 
-        // 重新注册 settings observer + worker(新 gen 的 sWorkerThread==null, 可安全重新 start)。
-        startSettingsLoader();
+        // Font-only processes need the same monospace protection as their initial load, but
+        // have no feature settings to observe. Avoid a Provider/worker for every font scope.
+        com.rikumi.colorosmod.hooks.MonospaceHooks.hook(sIsSystemServer
+                ? sSystemServerClassLoader : ClassLoader.getSystemClassLoader());
+        android.content.Context app = sIsSystemServer ? null : currentApplication();
+        if (app != null) sAppContext = app;
+        if (sIsSystemServer || (app != null && isAppHookTarget(app.getPackageName()))) {
+            startSettingsLoader();
+        }
 
         // 重新执行当前进程的初始化。注意: app 进程的目标 packageName = app.getPackageName(),
         // 而非 sProcessName(process name 不保证等于 package name, 如 com.android.systemui 的
@@ -1057,7 +1068,6 @@ public class XposedInit extends XposedModule {
         if (sIsSystemServer) {
             SystemServerHooks.hookFloatWindowEdgeHangSystemServer(systemServerLpparam());
             SystemServerHooks.hookFloatWindowEdgeHangMute(systemServerLpparam());
-            com.rikumi.colorosmod.hooks.MonospaceHooks.hook(sSystemServerClassLoader);
             com.rikumi.colorosmod.hooks.SystemFontHooks.hook(systemServerLpparam());
             SystemServerHooks.hookFloatWindowLandscapeKeepRatio(systemServerLpparam());
             SystemServerHooks.hookFloatWindowSizeLimits(systemServerLpparam());
@@ -1069,7 +1079,6 @@ public class XposedInit extends XposedModule {
             SystemServerHooks.hookCompactFlexibleCaptionBar(systemServerLpparam());
             sSystemServerHooked = true;
         } else {
-            android.content.Context app = currentApplication();
             if (app != null) {
                 String pkg = app.getPackageName();
                 if (isAppHookTarget(pkg)) {

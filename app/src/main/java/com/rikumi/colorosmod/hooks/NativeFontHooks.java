@@ -10,8 +10,23 @@ import java.util.List;
 /** Native fonts are redirected only inside processes to which LSPosed has injected this module. */
 public final class NativeFontHooks {
     private static boolean active;
+    // libc callbacks belong to this library for the rest of the process. Keep only its first
+    // Java owner alive across reloads, so ART cannot unload the .so behind those callbacks.
+    // New generations reuse the installed snapshot and never load/intercept libc a second time.
+    private static Class<?> libraryOwner;
     private static native boolean configure(String[] paths, int[] descriptors);
     public static boolean isActive() { return active; }
+
+    public static synchronized Object captureHotReloadState() {
+        return active ? libraryOwner : null;
+    }
+
+    public static synchronized void restoreHotReloadState(Object state) {
+        if (state instanceof Class<?> owner && NativeFontHooks.class.getName().equals(owner.getName())) {
+            libraryOwner = owner;
+            active = true;
+        }
+    }
 
     public static synchronized void hook(XposedInit module) {
         if (active || android.os.Build.VERSION.SDK_INT < 29) return;
@@ -41,6 +56,7 @@ public final class NativeFontHooks {
             System.loadLibrary("coloros_font_bridge");
             active = configure(paths.toArray(new String[0]), fds);
             if (!active) throw new IOException("Framework native hook initialization unavailable");
+            libraryOwner = NativeFontHooks.class;
         } catch (Throwable error) { XposedInit.log("native font setup failed: " + error); }
         finally { for (ParcelFileDescriptor fd : descriptors) try { fd.close(); } catch (IOException ignored) {} }
     }
