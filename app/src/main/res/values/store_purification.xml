@@ -14,7 +14,7 @@
     <string name="store_hide_update_recommendations">去除应用更新页推荐</string>
     <string name="store_clean_search">去除搜索框热词及搜索页推荐</string>
     <string name="store_hide_rank">去除榜单 Tab</string>
-    <string name="store_empty_software">去除软件页所有内容</string>
+    <string name="store_empty_software">主 Tab 仅保留首页和我的</string>
     <string name="store_disable_dynamic_icons">禁用动态图标</string>
     <string name="store_disable_special_styles">禁用特殊应用样式</string>
 </resources>

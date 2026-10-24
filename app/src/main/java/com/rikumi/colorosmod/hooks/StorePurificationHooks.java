@@ -2,7 +2,6 @@ package com.rikumi.colorosmod.hooks;
 
 import android.app.Application;
 import android.content.Context;
-import android.content.pm.PackageInfo;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.ViewGroup;
@@ -19,7 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 import static com.rikumi.colorosmod.XposedInit.*;
 
-/** Domestic Market 26.9.4_CN / 260904 only. Runtime names verified in its smali. */
+/** Domestic Market purification hooks. */
 public final class StorePurificationHooks {
     private static final String DTO = "com.heytap.cdo.card.domain.dto.";
     private static final String PAGE = "com.heytap.cdo.client.cards.page.";
@@ -51,11 +50,6 @@ public final class StorePurificationHooks {
         if (attempted || !"com.heytap.market".equals(context.getPackageName())) return;
         attempted = true;
         try {
-            PackageInfo info = context.getPackageManager().getPackageInfo("com.heytap.market", 0);
-            if (info.getLongVersionCode() != 260904L || !"26.9.4_CN".equals(info.versionName)) {
-                log("Store purification: unsupported version " + info.versionName);
-                return;
-            }
             install(cl);
         } catch (Throwable t) { log("Store purification initialization: " + t); }
     }
@@ -100,13 +94,14 @@ public final class StorePurificationHooks {
                 p -> { if (enabled("block_splash")) p.setResult(false); });
 
         // Only the UI-facing structure is copied. Network/disk/default structures remain intact.
-        hook(cl, PAGE + "struct.TabDataPresenter", "ނ", false, p -> {
-            if (enabled("hide_featured") || enabled("hide_games") || enabled("hide_rank")) p.setResult(filterTabs(p.getResult()));
+        // 26.10.2: ރ() is TabDataPresenter#getStructDto(); ނ() returns the nav manager (o9b).
+        hook(cl, PAGE + "struct.TabDataPresenter", "ރ", false, p -> {
+            if (tabsFiltered()) p.setResult(filterTabs(p.getResult()));
         });
 
-        // Native nav refresh consumes the unmodified server/cache list independently.
-        hook(cl, "a.a.a.n3b", "ֈ", true, p -> {
-            if (enabled("hide_featured") || enabled("hide_games") || enabled("hide_rank")) p.args[0] = visibleTabs(list(p.args[0]));
+        // o9b is the actual tab navigation data manager. Filter every cache/network refresh here.
+        hook(cl, "a.a.a.o9b", "m36690", true, p -> {
+            if (tabsFiltered()) p.args[0] = visibleTabs(list(p.args[0]));
         }, "java.util.List");
         tagPresenter(cl, PAGE + "main.home.HomeChosenCardAdapterPresenter", "home");
         tagPresenter(cl, MARKET + "search.core.fragment.home.SearchHomeCardAdapterPresenter", "search");
@@ -288,20 +283,31 @@ public final class StorePurificationHooks {
         Object app = null;
         for (Object tab : tabs) {
             int id = (Integer) call(tab, "getId");
+            // Main-tab mode keeps only Home (10) and Mine (50); remove Software (20), Games (30), and Rankings (40).
+            if (enabled("empty_software")) {
+                if (id == 10 || id == 50) kept.add(tab);
+                continue;
+            }
             if (id == 20) app = tab;
             if ((id == 10 && enabled("hide_featured")) || (id == 30 && enabled("hide_games"))
                     || (id == 40 && enabled("hide_rank"))) continue;
             kept.add(tab);
         }
-        if (kept.isEmpty() || kept.size() == tabs.size()) return tabs;
-        if (enabled("hide_featured") && app != null) { kept.remove(app); kept.add(0, app); }
+        if (kept.size() == tabs.size()) return tabs;
+        if (enabled("hide_featured") && !enabled("empty_software") && app != null) { kept.remove(app); kept.add(0, app); }
         return kept;
+    }
+
+    private static boolean tabsFiltered() {
+        return enabled("hide_featured") || enabled("hide_games") || enabled("hide_rank")
+                || enabled("empty_software");
     }
 
     private static Object filterTabs(Object original) throws Throwable {
         if (original == null) return null;
         List<?> tabs = list(call(original, "getTabDtoList"));
-        int mask = (enabled("hide_featured") ? 1 : 0) | (enabled("hide_games") ? 2 : 0) | (enabled("hide_rank") ? 4 : 0);
+        int mask = (enabled("hide_featured") ? 1 : 0) | (enabled("hide_games") ? 2 : 0)
+                | (enabled("hide_rank") ? 4 : 0) | (enabled("empty_software") ? 8 : 0);
         Object state = XposedHelpers.getAdditionalInstanceField(original, VISIBLE_TABS);
         // Fragment, navigation and pager must share one visible structure for deep-link selection.
         if (state instanceof TabSnapshot saved && saved.mask == mask && saved.source == tabs) return saved.copy;

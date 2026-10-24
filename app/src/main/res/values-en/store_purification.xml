@@ -14,7 +14,7 @@
     <string name="store_hide_update_recommendations">Hide app update recommendations</string>
     <string name="store_clean_search">Hide search hot words and landing page recommendations</string>
     <string name="store_hide_rank">Hide Rankings tab</string>
-    <string name="store_empty_software">Remove all content from Software</string>
+    <string name="store_empty_software">Keep only Home and Mine main tabs</string>
     <string name="store_disable_dynamic_icons">Disable animated app icons</string>
     <string name="store_disable_special_styles">Disable special app styles</string>
 </resources>
