@@ -19,9 +19,6 @@ import com.rikumi.colorosmod.xposed.XposedBridge;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
-/**
- * 设置(com.android.settings) 作用域的全部 hook：首页图标风格(紧凑/列表)。
- */
 public final class SettingsHooks {
     // 仅主线程访问页面引用和原生样式；后台快照发布只投递刷新。
     private static final android.os.Handler HOME_HANDLER =
@@ -58,9 +55,6 @@ public final class SettingsHooks {
         sOriginalIconStyles.clear();
     }
 
-// 设置首页图标样式: 复用 Settings/Oplus 已有的 COUIRoundImageView 绘制路径。
-// Oplus 首页来自 top_level_settings_oplus.xml, 不经过 DashboardFeatureProviderImpl;
-// COUIPreference 的 couiIconStyle=0 是圆形, =1 是不规则圆角图标。
     public static void hookSettingsHomeIconStyle(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             final Class<?> oplusTopLevelClass = XposedHelpers.findClass(
@@ -126,21 +120,6 @@ public final class SettingsHooks {
         }
     }
 
-// 隐藏应用免验证的更直接入口: 安全中心会让本进程启动 ConfirmNumberPrivacy(或指纹变体
-// ConfirmBiometricInfo) 作为校验闸门, 成功时它本就会 setResult(-1) 交回安全中心。
-// 因此 onCreate 后立刻 setResult(-1)+finish() 即可, 不依赖 com.oplus.safecenter 作用域。
-    // 在设置的应用管理页隐藏已停用应用。
-    // 应用列表页(设置 -> 应用管理 -> 应用列表)是 com.android.settings.applications
-    // .manageapplications.ManageApplications, 默认 filterType=4, 取 AppFilterRegistry 第 4 项
-    // = OplusApplicationsState.FILTER_EVERYTHING_OPLUS(Oplus 自己的"所有应用")。
-    // 它只排除了 sDisablePackage / 画报 / 多开 / 配置隐藏的包, 没有排除停用的包;
-    // 而 AOSP 的"所有应用"(第 1 项)是 CompoundFilter(FILTER_WITHOUT_DISABLED_UNTIL_USED,
-    // FILTER_ALL_ENABLED), 是会排除的 —— 这就是停用后仍出现在列表里的原因。
-    // 注意用户级停用(pm disable-user)的包 ApplicationInfo.enabled 仍为 true, 只有
-    // enabledSetting == COMPONENT_ENABLED_STATE_DISABLED_USER(4), 所以必须看 enabledSetting。
-    // 这里只 hook 这一个 filter 实例, 因此"已停用应用"独立入口(DisabledAppsUtils, 不用这个
-    // filter)与列表里的"已停用"筛选项(FILTER_DISABLED, 第 7 项)都不受影响。
-    // 判定口径与 DisabledAppsUtils.getDisabledAppList 保持一致: !enabled || enabledSetting==4。
     public static void hookHideDisabledApps(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             Class<?> oplusStateClass = XposedHelpers.findClass(
@@ -227,16 +206,6 @@ public final class SettingsHooks {
         }
     }
 
-    // 停用应用免密码。设置对"受生物识别保护"的包(config_biometric_protected_package_names)
-    // 做停用前会强制验证, 两条架构的收口点不同:
-    //   SPA(新): PackageInfoPresenter#disable() -> requireAuthAndExecute -> Utils
-    //            .isProtectedPackage() 为真才弹 AppInfoDashboardFragment.showLockScreen();
-    //   老架构: AppButtonsPreferenceController#handleDialogClick(0) -> AppButtonsPreference
-    //            ControllerAdaptor#runKeyguardConfirmation() 返回真则发起验证。
-    // 两个判定函数都不是停用专用(前者还服务 forceStop / startUninstallActivity / stopPackage,
-    // 后者也可能被其它流程复用), 因此不能直接改它们的返回值, 否则会连带免掉卸载等操作的验证。
-    // 这里用 ThreadLocal 标记: 只在"本次调用确实来自停用入口"时把标记置上, 判定函数只在标记
-    // 为真时放行; 标记在入口方法返回前清除, 不会泄漏到后续操作。
     private static final ThreadLocal<Boolean> DISABLE_NOVERIFY = new ThreadLocal<>();
 
     public static void hookDisableAppsNoVerify(final XC_LoadPackage.LoadPackageParam lpparam) {
@@ -284,7 +253,7 @@ public final class SettingsHooks {
     }
 
     // 老架构: 停用走 handleDialogClick(0) -> adaptor.runKeyguardConfirmation(activity,
-    // fragment, 102); 返回 false 即视为无需验证, 继续执行 refreshAndDisableApp()。
+
     private static void hookDisableAppsNoVerifyLegacy(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             XposedHelpers.findAndHookMethod(

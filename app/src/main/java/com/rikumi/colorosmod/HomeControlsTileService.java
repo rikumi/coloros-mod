@@ -8,7 +8,6 @@ import android.service.quicksettings.Tile;
 import android.service.quicksettings.TileService;
 import android.widget.Toast;
 
-/** A real package-owned tile remains available when injection/root is unavailable. */
 public final class HomeControlsTileService extends TileService {
     @Override public void onStartListening() {
         super.onStartListening();
@@ -23,8 +22,7 @@ public final class HomeControlsTileService extends TileService {
     @Override public void onClick() {
         super.onClick();
         if (!HomeControlsTileSettings.enabled(this)) return;
-        // No injection: use exported launcher entry points, not SystemUI's
-        // add-provider selector (which hides already-authorized panel apps).
+
         for (Intent intent : HomeControlsLaunchIntents.apps(this)) {
             try {
                 if (Build.VERSION.SDK_INT >= 34)

@@ -6,7 +6,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.zip.ZipInputStream;
 
-/** Original binary layouts and dimension data from the supplied Android 15 framework. */
 final class LegacyFrameworkNotificationTemplates {
     record Resource(String type, String name, Long dimension) { }
     final Map<Integer, Resource> resources = new HashMap<>();

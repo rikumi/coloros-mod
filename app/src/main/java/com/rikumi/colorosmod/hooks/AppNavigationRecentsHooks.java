@@ -7,7 +7,6 @@ import java.lang.reflect.Field;
 import java.util.List;
 import java.util.function.Consumer;
 
-/** Freeze before Shell takes the app surface; completion may still leave overview visible. */
 final class AppNavigationRecentsHooks {
     private static final String HANDLER = "com.android.wm.shell.recents.RecentsTransitionHandler";
     private static final String COMMANDS = "com.android.systemui.statusbar.CommandQueue";

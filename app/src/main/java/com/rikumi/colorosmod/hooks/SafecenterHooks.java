@@ -19,12 +19,8 @@ import com.rikumi.colorosmod.xposed.XposedBridge;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
-/**
- * 手机管家(com.coloros.safecenter) 作用域的全部 hook：移除风险检测、去除认证开关。
- */
 public final class SafecenterHooks {
-    // 隐藏应用免验证打开: AppHideLauncherActivity 的 onCreate 调私有方法 d0()(checkPrivacyPwd),
-    // 若实例字段 I(noNeedCheckPrivacyPwd) 为 true 就走 e0() 的"已验证"分支, 跳过密码/指纹校验。
+
     // 这里在 d0() 前把 I 置 true。(d0 与 I 均为该版本 SafeCenter.apk 内真实混淆名, 已 dexdump 核对。)
     public static void hookSafecenter(final XC_LoadPackage.LoadPackageParam lpparam) {
         log(">>> matched com.oplus.safecenter");
@@ -37,7 +33,6 @@ public final class SafecenterHooks {
         }
     }
 
-    /** Feature 7 实现: 在 AppHideNewCheckActivity#d0() 前把字段 I(noNeedCheckPrivacyPwd) 置 true。 */
     public static void hookSafecenterNoverify(final XC_LoadPackage.LoadPackageParam lpparam) {
         log("hide_apps_noverify enabled=" + readBoolCached(KEY_HIDE_APPS_NOVERIFY_ENABLED, false));
         try {
@@ -51,7 +46,7 @@ public final class SafecenterHooks {
                                 // 运行时动态门控: 关闭则不跳过密码校验。
                                 if (!readBoolCached(KEY_HIDE_APPS_NOVERIFY_ENABLED, false)) return;
                                 Object obj = param.thisObject;
-                                // noNeedCheckPrivacyPwd = true -> 跳过密码/指纹, 直接进入已验证流程
+
                                 Class<?> c = obj.getClass();
                                 while (c != null && c != Object.class) {
                                     try {
@@ -75,14 +70,9 @@ public final class SafecenterHooks {
         }
     }
 
-    // 应用隐藏界面标题改为隐藏文件夹的实际名称: 系统 AppProtectListActivity#l0(boolean) 里
-    // setTitle(R.string.privacy_app_hide_name); hook 它, 仅当参数为 false(表示"应用隐藏"界面,
-    // 非应用锁)时用 launcher OplusFavoritesProvider 里的自定义文件夹名覆盖标题, 失败保持原标题。
     public static void hookSafecenterTitleFolder(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            // hook setTitle(CharSequence) 而非 l0(): 覆盖 Activity 自身与内部 fragment 的任意 setTitle 调用,
-            // 确保标题稳定为自定义文件夹名。l0() 通过 setTitle(int) -> 内部 setTitle(CharSequence), 同样被拦截。
-            // setTitle 为 Activity 继承方法, findAndHookMethod(exact) 找不到, 故用 getMethod + XposedBridge.hookMethod。
+
             Class<?> actClass = XposedHelpers.findClass(
                     "com.oplus.safecenter.privacy.view.AppProtectListActivity", lpparam.classLoader);
             java.lang.reflect.Method m = actClass.getMethod("setTitle", CharSequence.class);

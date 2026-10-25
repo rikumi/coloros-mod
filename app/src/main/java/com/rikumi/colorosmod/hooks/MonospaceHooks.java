@@ -6,7 +6,6 @@ import com.rikumi.colorosmod.MonospacePolicy;
 import com.rikumi.colorosmod.XposedInit;
 import com.rikumi.colorosmod.xposed.*;
 
-/** ColorOS PaintExtImpl and fake-bold substitutions must not turn monospace into OSans. */
 public final class MonospaceHooks {
     private static boolean installed;
     public static void hook(ClassLoader loader) {

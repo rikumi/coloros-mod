@@ -11,7 +11,6 @@ import com.rikumi.colorosmod.xposed.XposedBridge;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import static com.rikumi.colorosmod.XposedInit.*;
 
-/** Traced against domestic 16.42.6 and international 15.0; no resource IDs from another APK. */
 public final class WeatherHooks {
     static final String BASE = "com.oplus.weather.";
     private WeatherHooks() {}
@@ -51,12 +50,10 @@ public final class WeatherHooks {
         hideCreator(cl, "main.view.itemview.AirQualityItemCreator", "hide_air_quality");
         hideCreator(cl, "main.view.itemview.SunViewItemCreator", "hide_sun");
         hideCreator(cl, "main.view.itemview.CctvWeatherForecastItemCreator", "hide_cctv");
-        // NoticeItemCreator also adds CCTV to the scrolling notice list, independently
-        // of the forecast card. Skip only that entry; keep rain and warning notices.
+
         hook(cl, "adloop.utils.NoticeDataUtils", "createCCTVWeatherForecast", true,
                 p -> { if (enabled("hide_cctv")) p.setResult(null); });
-        // Both dressing notice branches require this config; null skips only dressing.
-        // NoticeType.TYPE_LIFE_INDEX_DRESSING is "0606" in the target APK.
+
         hook(cl, "adloop.utils.NoticeDataUtils", "getConfigByNoticeType", true,
                 p -> { if (enabled("hide_clothing") && "0606".equals(p.args[0])) p.setResult(null); });
         hideCreator(cl, "main.view.itemview.LifeGroupItemCreator", "hide_life");
@@ -145,8 +142,7 @@ public final class WeatherHooks {
     private static final String ORIGINAL_BACKGROUND_VISIBILITY = "colorosmod.weather.backgroundVisibility";
 
     private static void hookMeteorologyBackground(ClassLoader cl) {
-        // Only touch the decorative background of this exact binding type. Never clone
-        // LayoutParams: the target ConstraintLayout constructor drops all constraints.
+
         Class<?> bindingClass = XposedHelpers.findClassIfExists(
                 BASE + "databinding.ItemMeteorologyWeatherBinding", cl);
         if (bindingClass == null) return;

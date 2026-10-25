@@ -30,7 +30,6 @@ import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.function.ObjIntConsumer;
 
-/** Hosts the ColorOS native color-pick effect in SystemUI without injecting selected apps. */
 public final class AppNavigationHooks {
     interface Installer {
         void hook(String name, String method, XposedInterface.Hooker hooker, Class<?>... parameters);
@@ -277,8 +276,7 @@ public final class AppNavigationHooks {
             if (shadeVisible != visible) {
                 shadeVisible = visible;
                 for (State navigation : states.values()) {
-                    // Only button tint follows the shade. Raw task capture excludes
-                    // the shade, so app colors can keep updating without dim feedback.
+
                     try { reapply(navigation.transitions()); }
                     catch (ReflectiveOperationException error) { navigation.report(error); }
                 }
@@ -321,8 +319,7 @@ public final class AppNavigationHooks {
     private void recentsAnimationChanged(boolean running) {
         recentsRunning = running;
         if (running) {
-            // Publish before posting to main: already queued task/capture results
-            // must not remove or repaint the app child once the gesture starts.
+
             recentsCached = true;
             main.post(this::cacheForRecents);
         } else main.postDelayed(() -> {
@@ -471,8 +468,7 @@ public final class AppNavigationHooks {
                 effect = new ColorOsNavigationEffect(classLoader, main, task, navigation, (picked, alpha) -> {
                     if (paused || closed || !attached || token != generation || effectToken != effectVersion
                             || !enabled() || recentsCached) return;
-                    // Same ABGR conversion as ViewRootImplExtImpl; the native layer performs
-                    // the actual filling, and SystemUI only adjusts its handle tint.
+
                     color = picked;
                     if (Color.alpha(picked) > 0 && alpha > 0) clearNavigationBackground();
                     else restoreNavigationBackground();
@@ -511,8 +507,7 @@ public final class AppNavigationHooks {
                             if (status == 0 && allocation != null && allocation.getWidth() == bounds.width()
                                     && allocation.getHeight() == bounds.height() && !paused && !closed && attached
                                     && token == generation && request == activeCapture && !recentsCached) {
-                                // Pass the GPU buffer directly to the native effect's parent.
-                                // No Bitmap copy, Java pixel read, majority vote or uniformity gate.
+
                                 currentEffect.submit(allocation, (ColorSpace) getColorSpace.invoke(buffer), navigation, bounds);
                                 submitted = true;
                             }

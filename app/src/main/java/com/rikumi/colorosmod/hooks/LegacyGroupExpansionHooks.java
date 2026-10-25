@@ -6,7 +6,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Adapt the Android 15 continuous child layout to the current row/state classes. */
 final class LegacyGroupExpansionHooks {
     private static boolean enabled() { return readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) == 1; }
 
@@ -67,8 +66,7 @@ final class LegacyGroupExpansionHooks {
                     }
                 });
             }
-            // Old group expansion is one continuous 360ms height/position transition,
-            // without the new per-child scale delay and split-stage interpolators.
+
             String split = "com.oplus.systemui.notification.stackednotification.NotificationGroupSplitExImpl";
             Class<?> properties = XposedHelpers.findClass("com.android.systemui.statusbar.notification.stack.AnimationProperties", lp.classLoader);
             Class<?> expandable = XposedHelpers.findClass("com.android.systemui.statusbar.notification.row.ExpandableView", lp.classLoader);
@@ -129,8 +127,7 @@ final class LegacyGroupExpansionHooks {
             }
             Object headerState = XposedHelpers.getObjectField(container, "mHeaderViewState");
             if (headerState != null && !low) {
-                // Padding is part of the header's layout position. Keep only the
-                // native animated translation here, avoiding double application.
+
                 XposedHelpers.callMethod(headerState, "setYTranslation", (float)
                         XposedHelpers.getIntField(container, "mCurrentHeaderTranslation"));
             }

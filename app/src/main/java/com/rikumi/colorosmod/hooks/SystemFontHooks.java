@@ -16,7 +16,6 @@ import java.security.MessageDigest;
 import java.util.*;
 import java.util.zip.ZipFile;
 
-/** Replace system fallback families before FontManagerService serializes the shared font map. */
 public final class SystemFontHooks {
     public static final String PREFS = "system_fonts";
     public static final String ZH = "system_font_zh", LATIN = "system_font_latin", MONO = "system_font_mono";
@@ -39,10 +38,7 @@ public final class SystemFontHooks {
         if (android.os.Build.VERSION.SDK_INT < 29) return;
         try {
             prefs = module.getRemotePreferences(PREFS);
-            // The font_data_file SELinux label allows apps to reopen serialized fonts.
-            // UpdatableFontDir rejects every unregistered child, and deleteAllFiles also uses
-            // File.listFiles through FileUtils. Hide only our directory from these enumerations;
-            // native update files, their signatures and the update config remain untouched.
+
             XposedHelpers.findAndHookMethod(File.class, "listFiles", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     if (!FONT_ROOT.equals(((File) p.thisObject).getAbsolutePath())
@@ -52,7 +48,7 @@ public final class SystemFontHooks {
                 }
             });
             Class<?> systemFonts = XposedHelpers.findClass("android.graphics.fonts.SystemFonts", pkg.classLoader);
-            // Signature and ColorOS named families verified against the target framework.jar.
+
             XposedBridge.hookAllMethods(systemFonts, "createFontFamily", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     if (!(p.getResult() instanceof FontFamily original)) return;
@@ -162,8 +158,7 @@ public final class SystemFontHooks {
     private static File materialize(String source) throws Exception {
         File existing = files.get(source);
         if (existing != null && existing.isFile()) return existing;
-        // Typeface serialization stores file paths. Apps must be able to reopen them after fork.
-        // The parent must already have init's font_data_file label; do not create it ourselves.
+
         if (!new File(FONT_ROOT).isDirectory()) throw new IOException("System font directory unavailable");
         File directory = new File(FONT_ROOT, CACHE_NAME);
         if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("Cannot create font cache");

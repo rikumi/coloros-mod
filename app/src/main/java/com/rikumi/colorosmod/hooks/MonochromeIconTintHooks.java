@@ -9,7 +9,6 @@ import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import static com.rikumi.colorosmod.XposedInit.log;
 
-/** Validated notification masks follow native foreground/animation/doze colors. */
 final class MonochromeIconTintHooks {
     private static final WeakHashMap<View, Boolean> nativeColorable = new WeakHashMap<>();
 

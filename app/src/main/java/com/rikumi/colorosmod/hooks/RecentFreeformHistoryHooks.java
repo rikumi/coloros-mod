@@ -11,7 +11,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** ColorOS 16.1: 关闭小窗后保留过滤，标记随 Task 实例销毁，不按包名永久隐藏。 */
 public final class RecentFreeformHistoryHooks {
     private static final String CLOSED = "colorosmod_closed_freeform";
     private static final Object RECORD_LOCK = new Object();

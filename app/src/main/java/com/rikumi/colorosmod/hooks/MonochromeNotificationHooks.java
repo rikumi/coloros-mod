@@ -22,7 +22,6 @@ import java.util.ArrayList;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-/** Status-bar masks and the requested Messages panel glyph; never mutate Notification or shared descriptors. */
 public final class MonochromeNotificationHooks {
     private static final String KEY = "statusbar_monochrome_notification_icons_enabled";
     private static final String MANAGER = "com.android.systemui.statusbar.notification.icon.IconManager";
@@ -167,7 +166,6 @@ public final class MonochromeNotificationHooks {
                 XposedHelpers.getStaticObjectField(type, "NotifSmallIcon"));
     }
 
-    /** Resolve the original notification glyph using the same validation in both surfaces. */
     static Icon notificationMask(Context host, StatusBarNotification sbn) {
         Notification notification = sbn.getNotification();
         boolean substituted = notification.extras != null
@@ -211,7 +209,6 @@ public final class MonochromeNotificationHooks {
                 XposedHelpers.getStaticObjectField(type, "NotifSmallIcon"));
     }
 
-    /** These exact notification wrappers contain an existing white notification glyph. */
     private static Icon nativeNotificationLayer(Context context, StatusBarNotification sbn, Icon icon) {
         if (!"com.android.settings".equals(sbn.getPackageName()) || icon.getType() != Icon.TYPE_RESOURCE
                 || !sbn.getPackageName().equals(icon.getResPackage())) return icon;
@@ -226,7 +223,6 @@ public final class MonochromeNotificationHooks {
         return id == 0 ? icon : Icon.createWithResource(sbn.getPackageName(), id);
     }
 
-    /** Check the original pixels; no desaturation or adaptive-icon monochrome extraction. */
     private static boolean isNotificationMask(Drawable drawable, int level) {
         if (drawable == null || drawable instanceof AdaptiveIconDrawable) return false;
         Bitmap bitmap = Bitmap.createBitmap(48, 48, Bitmap.Config.ARGB_8888);

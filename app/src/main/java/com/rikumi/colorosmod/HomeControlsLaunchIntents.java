@@ -5,7 +5,6 @@ import android.content.Intent;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Ordinary launcher entry points; no root or controls binding permission required. */
 public final class HomeControlsLaunchIntents {
     private HomeControlsLaunchIntents() {}
 

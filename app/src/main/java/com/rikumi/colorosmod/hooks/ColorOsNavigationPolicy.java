@@ -1,6 +1,5 @@
 package com.rikumi.colorosmod.hooks;
 
-/** Values and pixel format from IOplusNavBarBgManager / ViewRootImplExtImpl. */
 final class ColorOsNavigationPolicy {
     static final String LAYER_NAME = "DecorNavBarBg-OverlayLayer";
     static final int FRAME_RATE = 101, FULLSCREEN_VARIANCE = 102, VARIANCE = 103;

@@ -64,10 +64,6 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import com.rikumi.colorosmod.XposedInit.KEY_DISABLE_APPS_NOVERIFY_ENABLED
 import com.rikumi.colorosmod.XposedInit.KEY_HIDE_DISABLED_APPS_ENABLED
 
-// 保留原警告和普通入口的只读用途；主动操作只由五次点击后的警告菜单进入。
-
-
-// 说明段落之间的额外间距: 段内靠行距, 段间再拉开一点以区分段落。
 private val HINT_PARAGRAPH_GAP = 2.dp
 
 // 生成导出脚本: 每行一条 adb 命令, 按模式分段并以注释标出(停用 / 用户级卸载)。
@@ -86,7 +82,6 @@ private fun buildExportScript(ctx: Context, apps: List<ManagedAppEntry>): String
     return sb.toString()
 }
 
-/** 普通入口保留列表及导出；五次点击警告说明后，显式确认才进入系统应用操作列表。 */
 @Composable
 internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
     val listState = rememberLazyListState()
@@ -263,7 +258,6 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
     }
 }
 
-/** 停用应用免密码开关: 开启后设置里停用受保护应用不再要求生物识别/锁屏验证。 */
 @Composable
 private fun DisableAppsNoVerifyRow(ctx: Context) {
     var checked by remember {
@@ -279,7 +273,6 @@ private fun DisableAppsNoVerifyRow(ctx: Context) {
     )
 }
 
-/** 隐藏已停用应用开关: 开启后设置的应用管理页不再列出已停用的应用。 */
 @Composable
 private fun HideDisabledAppsRow(ctx: Context) {
     var checked by remember {
@@ -295,7 +288,6 @@ private fun HideDisabledAppsRow(ctx: Context) {
     )
 }
 
-/** 功能说明行: 标题 + subtitle(与设置项同款文字样式与行内边距)。 */
 @Composable
 private fun DisabledAppsHintRow(enabled: Boolean, onAdd: () -> Unit) {
     val gate = remember { AppManagementEntryGate() }
@@ -364,9 +356,6 @@ private fun DisabledAppsHintRow(enabled: Boolean, onAdd: () -> Unit) {
 
 }
 
-// 跳转到设置的应用详情页。标准 Intent 由 com.android.settings.applications
-// .InstalledAppDetails 响应(实测停用与用户级卸载的包都能解析到它)。用户级卸载的包已不在当前
-// 用户下, 设置可能打不开, 因此兜住 ActivityNotFoundException 并提示。
 private fun openAppDetails(ctx: Context, pkg: String) {
     try {
         ctx.startActivity(
@@ -378,7 +367,6 @@ private fun openAppDetails(ctx: Context, pkg: String) {
     }
 }
 
-/** 带图标及状态的应用行；动作菜单由父组件按列表用途提供。 */
 @Composable
 private fun DisabledAppRow(entry: ManagedAppEntry, showState: Boolean = true, onClick: () -> Unit) {
     val onSurface = MiuixTheme.colorScheme.onSurface

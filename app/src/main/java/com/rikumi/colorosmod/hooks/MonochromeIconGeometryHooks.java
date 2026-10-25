@@ -12,7 +12,6 @@ import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import static com.rikumi.colorosmod.XposedInit.log;
 
-/** Retain native drawing dimensions with separate spacing. */
 final class MonochromeIconGeometryHooks {
     private static final WeakHashMap<View, Boolean> widths = new WeakHashMap<>();
 
@@ -61,10 +60,7 @@ final class MonochromeIconGeometryHooks {
     }
 
     static int cellWidth(View view) {
-        // Native horizontal_margin is baked into each cell, not View padding.
-        // Remove that allowance and 1.5dp of cell whitespace per side. Some ROMs
-        // set horizontal_margin to zero and bake all whitespace into size_sp.
-        // The independent drawing compensation keeps drawingSize unchanged.
+
         int id = NotificationResourceIds.get(view.getResources(), "status_bar_icon_size_sp", "dimen", "android");
         int content = id == 0 ? nativeWidth(view) : view.getResources().getDimensionPixelSize(id);
         return Math.max((int) Math.ceil(drawingSize(view)), content - Math.round(3f * density(view)));
@@ -73,9 +69,7 @@ final class MonochromeIconGeometryHooks {
     private static float density(View view) { return view.getResources().getDisplayMetrics().density; }
 
     private static float drawingScale(ImageView icon) {
-        // Vendor conversion can change a 20dp icon into a larger bitmap. Native
-        // mIconScale is relative to the original reference, so restoring that
-        // scale alone does not restore the native drawing-size resource.
+
         if (icon.getScaleType() != ImageView.ScaleType.CENTER_INSIDE) return 1f;
         Drawable drawable = icon.getDrawable();
         if (drawable == null) return 0f;
@@ -98,9 +92,7 @@ final class MonochromeIconGeometryHooks {
     }
 
     private static int nativeWidth(View icon) {
-        // NotificationIconContainerViewBinder combines these exact dimensions.
-        // Never trust the mutable LayoutParams as the baseline: the native flow
-        // can have retained an inflated instance from an older module generation.
+
         android.content.res.Resources resources = icon.getResources();
         int size = NotificationResourceIds.get(resources, "status_bar_icon_size_sp", "dimen", "android");
         int margin = NotificationResourceIds.get(resources, "status_bar_icon_horizontal_margin", "dimen", "com.android.systemui");
@@ -111,8 +103,7 @@ final class MonochromeIconGeometryHooks {
     private static void setWidth(View icon, int width) {
         ViewGroup.LayoutParams current = icon.getLayoutParams();
         if (current == null || current.width == width) return;
-        // Native StateFlow emits one shared FrameLayout.LayoutParams instance.
-        // Clone before modifying it; mutating it expands every sibling and future bind.
+
         FrameLayout.LayoutParams own = current instanceof FrameLayout.LayoutParams frame
                 ? new FrameLayout.LayoutParams(frame) : new FrameLayout.LayoutParams(current);
         own.width = width;

@@ -15,7 +15,6 @@ import java.util.ArrayList;
 import java.lang.ref.WeakReference;
 import java.util.WeakHashMap;
 
-/** 合并版普通磁贴和收起状态单行磁贴的正方形网格。 */
 final class MergedTileGridHooks {
     private static Class<?> tileClass, headerClass, quickControllerClass;
     private static final WeakHashMap<ViewGroup, Boolean> pagedPages = new WeakHashMap<>();
@@ -93,9 +92,7 @@ final class MergedTileGridHooks {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             if (!MergedCardRatioHooks.ratioEnabled((View) p.thisObject)
                                     || (Float) p.args[0] < 1f) return;
-                            // updateViewState writes the panel's scale directly. The animator's
-                            // endpoint refresh does not correct this value, so a missed final
-                            // frame can leave every expanded tile permanently undersized.
+
                             Object quickPanel = XposedHelpers.getObjectField(p.thisObject, "mQQSPanel");
                             Object fullPanel = XposedHelpers.getObjectField(p.thisObject, "mQSPanel");
                             for (Object panel : new Object[]{quickPanel, fullPanel}) if (panel instanceof View view) {
@@ -123,9 +120,7 @@ final class MergedTileGridHooks {
                 XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.OplusQSAnimator", pkg.classLoader,
                         "updateAnimators", animatorUpdate);
             }
-            // OplusQSAnimator's TouchAnimators can finish after the final tile layout pass.
-            // Re-run ratio geometry once the panel reaches its expanded endpoint so native
-            // animation writes cannot leave the merged-card contents at their pre-expansion size.
+
             XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.OplusQSAnimator", pkg.classLoader,
                     "setPosition", float.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
@@ -453,8 +448,7 @@ final class MergedTileGridHooks {
         int gap = Math.round(available * MergedCardRatioHooks.gapFraction());
         int diameterWidth = available;
         int diameterColumns = collapsedColumns(root, available);
-        // QQS 与 QS 的父容器宽度可能不同。以同一面板的收起网格为尺寸基准，
-        // 仅改变展开栏位的分布，不重新计算圆形磁贴直径。
+
         if (!headerClass.isInstance(root)) {
             for (ViewGroup quick : hosts.keySet()) {
                 if (quick != null && headerClass.isInstance(quick) && quick.getRootView() == root.getRootView()) {
@@ -623,8 +617,7 @@ final class MergedTileGridHooks {
         if (drawableBounds == null || drawableBounds.isEmpty() || panel.getScaleY() <= 0f) return clip.bounds;
         scrim.getLocationInWindow(clip.scrimLocation);
         panel.getLocationInWindow(clip.panelLocation);
-        // NotificationBarDrawable draws the handle at drawableBounds.top + 8dp.
-        // Stop 2dp before that handle, using its live position after all animations.
+
         int bottom = Math.round((clip.scrimLocation[1] + drawableBounds.top + clip.handleGap
                 - clip.panelLocation[1]) / panel.getScaleY());
         if (bottom > clip.bounds.bottom) clip.bounds.bottom = bottom;

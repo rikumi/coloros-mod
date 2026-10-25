@@ -4,9 +4,6 @@ import static com.rikumi.colorosmod.XposedInit.*;
 
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
-// SystemUI(com.android.systemui) 作用域的 hook 入口, 只做转发。
-// 各功能按类别拆分到同包独立文件: QsHooks / NotificationHooks / StatusBarHooks /
-// KeyguardHooks / PasswordInputHooks / StatusBarLyricHooks。
 public final class SystemUiHooks {
 
     public static void hookSystemUi(final XC_LoadPackage.LoadPackageParam lpparam) {
@@ -27,12 +24,8 @@ public final class SystemUiHooks {
             QsHooks.hookQsTopMargin(lpparam, footerPx);
         }
 
-        // Feature 3 — 通知分组副标题: 始终注入, 运行时按 KEY_NOTIFICATION_SUBTITLE_ENABLED 门控,
-        // 字号缩减量由 KEY_NOTIFICATION_SUBTITLE_SP(0-16sp, 默认 8sp) 运行时读取, 偏移/内边距随其等比缩放。
         NotificationHooks.hookNotificationSubtitle(lpparam, density);
 
-        // Feature 3b — 通知内边距: 始终注入, 运行时按 KEY_NOTIFICATION_PADDING_ENABLED 门控,
-        // 内边距由 KEY_NOTIFICATION_PADDING_DP(0-8dp, 默认 4dp) 运行时读取。
         NotificationHooks.hookNotificationPadding(lpparam, density);
         NotificationAppNameHooks.hook(lpparam);
         LegacyNotificationLayoutHooks.hook(lpparam);
@@ -41,8 +34,7 @@ public final class SystemUiHooks {
         NotificationHooks.hookNotificationSwipeToDismiss(lpparam);
         // 通知下滑展开: 始终注入, 运行时按 KEY_NOTIFICATION_PULL_EXPAND_ENABLED 门控。
         NotificationHooks.hookNotificationPullExpand(lpparam);
-        // 通知图标区仓库(状态栏歌词显示时切"显示数字"要用): 由 NotificationHooks 统一下发显示模式,
-        // 两处各写一份会互相拉扯(图标 <-> 数字来回跳)。
+
         NotificationHooks.hookNotificationIconAreaRepository(lpparam);
         MonochromeNotificationHooks.hook(lpparam);
 
@@ -82,14 +74,13 @@ public final class SystemUiHooks {
         GestureHooks.hookGestureTouchThrough(lpparam);
         // 解锁时关机无需校验密码: 与手势无关, 始终注入, 运行时门控。
         KeyguardHooks.hookUnlockedShutdownNoVerify(lpparam);
-        // 指纹失败前三次不自动显示密码界面，系统报告锁定时保留原生切换行为。
+
         KeyguardHooks.hookFingerprintFailureDelay(lpparam);
         // 取消解锁界面控件光效: 与手势无关, 始终注入, 运行时门控。
         PasswordInputHooks.hookKeyguardNoLightEffect(lpparam);
         // 自定义密码界面背景亮度: 与手势无关, 始终注入, 运行时门控。
         PasswordInputHooks.hookBouncerBackgroundBrightness(lpparam);
-        // 锁屏通知区域下移: 运行时按 KEY_KEYGUARD_NOTIFICATION_OFFSET_ENABLED 门控,
-        // 下移量由 KEY_KEYGUARD_NOTIFICATION_OFFSET_DP(0-80dp, 默认 40dp) 运行时读取。
+
         KeyguardHooks.hookKeyguardNotificationOffset(lpparam, density);
         // 输入密码界面支持侧滑或下滑返回: 运行时按 KEY_KEYGUARD_BOUNCER_SWIPE_BACK_ENABLED 门控。
         KeyguardHooks.hookBouncerSwipeBack(lpparam);

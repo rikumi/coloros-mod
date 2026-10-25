@@ -19,10 +19,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Music only: Existing status-bar lyric view -> CapsuleView/ViewItem -> CapsulePage.left_section.
- * Names/fields below are from the checked-in ColorOS SystemUIPlugin decompilation.
- * Keep the native artwork and right side; extend the left side between the artwork and cutout.
- */
 public final class FluidCloudLyricHooks {
     private static final String CAPSULE_VIEW =
             "com.oplus.systemui.plugins.seedling.capsule.ui.view.CapsuleView";
@@ -154,7 +150,7 @@ public final class FluidCloudLyricHooks {
             return item != null && isMusicCapsuleKey((String) XposedHelpers.getObjectField(item, "a"));
         } catch (Throwable ignored) { return false; }
     }
-    /** Returns true only when the lyric is actually hosted by a visible native music capsule. */
+
     public static boolean show(View root, FrameLayout lyricView,
             boolean panelExpanded) {
         if (!enabled() || root == null || lyricView == null) {
@@ -171,8 +167,7 @@ public final class FluidCloudLyricHooks {
                 return false;
             }
             FluidCloudLyricGeometry.setPanelExpanded(false);
-            // Native line/width transitions can temporarily set ancestor alpha to zero.
-            // Keep the existing host through that transition instead of falling back to number mode.
+
             View capsule = isHosting(lyricView) && belongsTo(root, sCapsule)
                     ? sCapsule : findMusicCapsule(root);
             if (capsule == null) {
@@ -266,8 +261,7 @@ public final class FluidCloudLyricHooks {
         if (key == null) return false;
         if (key.contains("_sid=268452006_rk=")
                 || key.contains("_sid=default_com.android.systemui_268452006_rk=")) return true;
-        // Notification-backed native music cards use StatusBarNotification#getKey, as preserved
-        // by plugin w3.b/e4.a#getKey. Match package and id fields, not an arbitrary substring.
+
         String[] parts = key.split("\\|", -1);
         return parts.length >= 5 && "com.android.systemui".equals(parts[1])
                 && "268452006".equals(parts[2]);

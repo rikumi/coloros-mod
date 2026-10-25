@@ -131,10 +131,6 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.TextStyles
 import top.yukonga.miuix.kmp.theme.defaultTextStyles
 
-// couix —— 对 miuix 的轻度 ColorOS 化封装。不直接改动 miuix 库本身,
-// 而是用一组包装 Composable 调整尺寸/间距/文字/圆角。
-
-// 开关目标尺寸（miuix 默认 49x28dp -> 缩小到约 36x22dp）。
 private val COUIX_SWITCH_W = 36.dp
 private val COUIX_SWITCH_H = 22.dp
 private val COUIX_SWITCH_RADIUS = 12.dp
@@ -154,16 +150,13 @@ private val COUIX_HEADER_GLOW_LIGHT = Color(0xFFDD7963)
 private const val COUIX_HEADER_GLOW_RADIUS_RATIO = 0.7f
 // 渐变圆心在横幅底边之下(>1 表示沉到底边外), 使可见范围内只剩光晕上部, 越往上越淡。
 private const val COUIX_HEADER_GLOW_CENTER_Y_RATIO = 1f
-// 椭圆的横向/纵向半径: 分别以横幅宽、高为基准。radialGradient 本身是正圆, 绘制时纵向压缩
-// canvas 得到椭圆(绘制矩形已按压缩比反向放大, 渐变半径处 alpha 已归零, 故纵向可放心压小)。
+
 private const val COUIX_HEADER_GLOW_RY_RATIO = 0.85f
-// 中心再叠一个更扁的椭圆提亮紧邻底边的一带: 横向半径相对大椭圆略收(让亮带向中心收拢),
-// 纵向略微抬高, 形成一小片贴底的亮区而非一条细线。
+
 private const val COUIX_HEADER_CORE_RADIUS_RATIO = 8f
 private const val COUIX_HEADER_CORE_RY_RATIO = 0.34f
 private const val COUIX_HEADER_CORE_ALPHA = 0.5f
-// 渐变衰减曲线: 由若干 stop 逼近 log 曲线 alpha(t) = 1 - ln(1 + k·t)/ln(1 + k)(t 为归一化半径)。
-// 相比线性衰减, 中心附近掉得快、外圈留一条长尾; k 越大越陡, k→0 退化为线性。
+
 private const val COUIX_HEADER_GLOW_LOG_K = 12f
 private const val COUIX_HEADER_GLOW_STOP_COUNT = 32
 // 横幅内系统名: 相对文字色的不透明度, 以及贴底时离底边的距离。
@@ -200,9 +193,6 @@ private val COUIX_ROW_VPADDING = 13.dp
 private val COUIX_DROPDOWN_WIDTH = 160.dp
 private val COUIX_DROPDOWN_TRANSFORM_ORIGIN = TransformOrigin(0.85f, 0f)
 
-// 右上角下拉菜单的阴影: 抬升值取对话框级别(Material 的菜单通常只有 3~8dp), 扩散范围随抬升
-// 单调增大, 菜单本身面积小, 这个值已经是一片明显偏大的投影。环境光/主光源两层都压成纯黑,
-// 暗色主题下也能看出菜单轮廓。
 private val COUIX_DROPDOWN_ELEVATION = 12.dp
 
 // 标题栏底部分割线: 界面上滑时出现, 初始两端各内缩 16dp, 随滚动量在该距离内逐渐延长至通栏。
@@ -212,9 +202,6 @@ private val TOP_BAR_DIVIDER_EXTEND_SCROLL = 48.dp
 // 子页面返回按钮图标尺寸: miuix 图标固有尺寸为 24dp, 此处略微放大。
 internal val COUIX_BACK_ICON = 26.dp
 
-// 标题栏(首页大标题 / 子页面标题)共用尺寸: 垂直内边距、右侧内缩、标题字号三者一致,
-// 保证两种页面的标题栏高度完全相同。两侧都放有 40dp 的 IconButton(重启菜单),
-// 因此行高由它决定, 标题再高也不会撑开。
 private val COUIX_TOP_BAR_VPADDING = 8.dp
 private val COUIX_TOP_BAR_END = 16.dp
 
@@ -241,7 +228,6 @@ private val COUIX_CATEGORY_SUBTITLE_GAP = 12.dp
 // 分类入口行标题左边缘相对卡片左缘的距离: 带图标 item 的分割线从此处起，避开图标。
 internal val COUIX_CATEGORY_TEXT_START = COUIX_ROW_HPADDING + COUIX_CATEGORY_ICON + COUIX_CATEGORY_ICON_GAP
 
-/** 列表项标题采用中等字重(比常规体略粗)。 */
 fun couixTextStyles(): TextStyles {
     val base = defaultTextStyles()
     return base.copy(
@@ -253,8 +239,6 @@ fun couixTextStyles(): TextStyles {
 // 副标题(body2)行高: 略高于默认行距, 长副标题折行后行与行之间不至于挤在一起。
 private val COUIX_SUBTITLE_LINE_HEIGHT = 20.sp
 
-// 分组副标题（顶部小标题）：比 miuix SmallTitle 更小、常规字重。
-// miuix SmallTitle 用 subtitle(14sp/Bold) 且不支持外部覆盖字号字重，故用 BasicText 直接绘制。
 @Composable
 fun CouixSmallTitle(
     text: String,
@@ -271,7 +255,6 @@ fun CouixSmallTitle(
     )
 }
 
-/** 标题栏标题文字样式: 首页与子页面完全一致(title3 中等字重)。 */
 @Composable
 private fun couixTopBarTitleStyle(): TextStyle =
     MiuixTheme.textStyles.title3.copy(
@@ -279,8 +262,6 @@ private fun couixTopBarTitleStyle(): TextStyle =
         fontWeight = FontWeight.Medium,
     )
 
-// 标题栏外框: 首页大标题与子页面标题共用, 统一状态栏 inset、垂直内边距与底部分割线,
-// 从而保证两种页面的标题栏高度完全相同。startPadding 因首页无返回按钮而不同, 但只影响水平位置。
 @Composable
 private fun CouixTopBarFrame(
     startPadding: Dp,
@@ -305,8 +286,6 @@ private fun CouixTopBarFrame(
     }
 }
 
-// 自绘页面大标题: miuix TopAppBar 的大标题用固定样式(无法外部覆盖字重), 这里用 BasicText 直接
-// 绘制, 仅加粗, 并自行处理状态栏 inset 与右侧 actions 的布局。高度与字号与 CouixTopAppBar 一致。
 @Composable
 fun CouixLargeTitle(
     title: String,
@@ -336,9 +315,6 @@ fun CouixLargeTitle(
     }
 }
 
-// 依据列表滚动状态计算标题栏分割线进度:
-// 首项仍在屏幕内时按真实滚动偏移延长, 首项离开后保持通栏。
-// overscrollOffset 不为空时, 一并参考回弹位移(上滑为负), 让不可滚动页面在上滑回弹时也显示分割线。
 @Composable
 internal fun couixTopBarDividerProgress(
     listState: LazyListState,
@@ -361,13 +337,6 @@ internal fun couixTopBarDividerProgress(
     }.value
 }
 
-/**
- * 状态栏跟随 miuix 主题: 背景取主题 surface(与 miuix Scaffold 的底色一致), 图标按背景明暗
- * 在深/浅之间切换。需在 `MiuixTheme` 内调用。
- *
- * AppCompat 的 DayNight 主题**没有**定义 `android:windowLightStatusBar`(已核对 appcompat
- * 1.6.1 全部 values-* 资源), 该属性默认为 false, 日间模式下状态栏图标依然是白色, 故在此显式跟随。
- */
 @Composable
 fun CouixStatusBar() {
     val view = LocalView.current
@@ -387,46 +356,20 @@ fun CouixStatusBar() {
 // 回弹位移的上限: 手指拖动拉到该距离后停住(线性阻尼下必须有一个终点, 否则可无限拖动)。
 private val COUIX_OVERSCROLL_MAX = 400.dp
 
-// 惯性撞边时位移的渐近上限: 常规速度下位移远达不到它, 只在极端速度下才起作用,
-// 免得一次猛甩把列表拉出去太远 —— 见 couixOverscrollFlingStep。
 private val COUIX_OVERSCROLL_FLING_MAX = 50.dp
 
-// 惯性撞边的减速阻尼: 单帧位移 = 该帧的惯性位移 × DRAG_FLING。惯性在衰减, 每帧的惯性位移
-// 逐帧变小, 推出的量同步变小 —— 撞边瞬间即开始减速, 位移随惯性一起走完整个减速过程,
-// 到速度耗尽时停在当下拉到的位置, 不存在"推到某个固定位置才停"。
 private const val COUIX_OVERSCROLL_DRAG_FLING = 0.7f
 
-// 拉动阻尼系数: 手指移动 1px 内容移动这么多, 全程恒定, 与已拉出的距离无关
-// (1 = 完全跟手)。越小越"沉", 但无论拉多远手感都不变。
 private const val COUIX_OVERSCROLL_DRAG = 0.7f
 
 // 松手回弹: 不过冲(DampingRatioNoBouncy), 刚度明显低于系统 MediumLow(400), 回弹过程更慢更柔和。
 private const val COUIX_RELEASE_STIFFNESS = 120f
 
-/**
- * 关闭系统自带的过度滚动, 让 [Modifier.couixOverscroll] 完全接管边界回弹。
- *
- * 系统 EdgeEffect(Android 12+ 的内容拉伸)有两个问题: 阻尼几乎 1:1 且无法调; 惯性滑动撞到
- * 边界后它会一直保持拉伸, 直到惯性速度完全衰减才释放, 表现为"停住很久才弹回"。
- * 将 [LocalOverscrollFactory] 置空后 `rememberOverscrollEffect()` 返回 null, 边界上剩余的
- * 手势增量就会全部流到 [Modifier.couixOverscroll] 的 connection 里。
- */
 @Composable
 fun CouixOverscrollHost(content: @Composable () -> Unit) {
     CompositionLocalProvider(LocalOverscrollFactory provides null) { content() }
 }
 
-/**
- * 让列表在上滑/下滑到边界时回弹, 并接管回弹的阻尼与回弹动画。
- *
- * 列表吃不掉的手势增量一律按固定比例(见 COUIX_OVERSCROLL_DRAG)折算成整列位移, 松手后由
- * 本函数自己的弹簧弹回。需配合 [CouixOverscrollHost] 使用: 系统 overscroll 会抢先吃掉边界
- * 增量并自己回弹, 不关掉的话这里拿不到量(内容可滚动时尤甚)。
- */
-/**
- * @param overscrollOffset 可选: 跨组件共享的当前回弹位移(px, 上滑为负)。传入后,
- *   顶部标题栏分割线进度可一并参考该位移, 让不可滚动页面在上滑回弹时也显示分割线。
- */
 @Composable
 fun Modifier.couixOverscroll(
     listState: LazyListState,
@@ -442,8 +385,7 @@ fun Modifier.couixOverscroll(
 
     val connection = remember(maxPx, flingPx, scope) {
         object : NestedScrollConnection {
-            // 已有位移时, 反向拖动先 1:1 原路返回; 归零后剩余增量交还列表(内容不可滚动时无剩余)。
-            // delta 与屏幕坐标同向: 上滑为负、下滑为正, 与 offsetPx 同号。
+
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 val delta = available.y
                 if (offsetPx == 0f || delta == 0f) return Offset.Zero
@@ -460,8 +402,6 @@ fun Modifier.couixOverscroll(
                 return Offset(0f, consumed)
             }
 
-            // 列表吃不到的增量转成回弹位移: 只看拖动方向上是否还有内容可滚,
-            // 到顶继续下拉 / 到底继续上滑都算到边(内容不足一屏时两个 can* 均为 false, 恒接管)。
             override fun onPostScroll(
                 consumed: Offset,
                 available: Offset,
@@ -478,11 +418,10 @@ fun Modifier.couixOverscroll(
                 releaseJob?.cancel()
                 releaseJob = null
                 if (source != NestedScrollSource.UserInput) {
-                    // 惯性撞边: 按剩余速度折算位移 —— 惯性每衰减一点, 这一帧推出的量就跟着
-                    // 变小, 于是"撞边立刻开始减速", 而不是等推到某个位置才停。
+
                     val step = couixOverscrollFlingStep(delta, flingPx, offsetPx)
                     offsetPx += step
-                    // 惯性速度耗尽(单帧已推不动)时报告"未消费": DefaultFlingBehavior 只要有
+
                     // 半像素没吃完就立刻取消惯性动画, 随后 onPostFling 起弹簧回弹。
                     if (abs(step) < 0.5f) return Offset.Zero
                     return Offset(0f, delta)
@@ -500,14 +439,11 @@ fun Modifier.couixOverscroll(
                 return available
             }
 
-            // 惯性滑动撞到边界后残留的增量同样会被 onPostScroll 吃成位移,
-            // 滑行结束时这里负责把它弹回(可能与 onPreFling 的回弹重复调用, 由 startRelease 去重)。
             override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
                 startRelease()
                 return Velocity.Zero
             }
 
-            /** 位移回零: 已在回弹中则忽略, 否则从当前位移起弹。 */
             private fun startRelease() {
                 if (offsetPx == 0f || releaseJob != null) return
                 releaseJob = scope.launch {
@@ -531,34 +467,17 @@ fun Modifier.couixOverscroll(
         .nestedScroll(connection)
 }
 
-/**
- * 手指拖动的回弹位移推进: 线性阻尼。手指的位移按固定比例折算成内容位移, 系数恒为 DRAG,
- *
- *     offset' = offset + delta * DRAG
- *
- * 与已拉出的距离无关 —— 拉到哪儿都是同一份"沉", 不会出现越拉越费力的橡皮筋感。
- * 代价是必须给一个终点: 到 maxPx 即停。
- */
 private fun couixOverscrollStep(current: Float, delta: Float, maxPx: Float): Float {
     if (maxPx <= 0f) return 0f
     return (current + delta * COUIX_OVERSCROLL_DRAG).coerceIn(-maxPx, maxPx)
 }
 
-/**
- * 惯性撞边的位移推进: 位移完全由惯性当前这一帧的位移 [delta] 驱动 —— 惯性在减速, 每帧推出的
- * 量同步变小, 所以撞边瞬间就开始减速, 到惯性速度耗尽时位移也恰好停在当时推到的位置并回弹,
- * 全程不需要"推到固定位置才停"的判定。
- *
- * 剩余行程系数(与 [capPx] 的差距成正比)只在位移接近上限时才起作用, 用于兜住极端速度;
- * 常规速度下位移远不到 capPx, 该系数恒为 1, 位移只由惯性决定。
- */
 private fun couixOverscrollFlingStep(delta: Float, capPx: Float, current: Float = 0f): Float {
     if (capPx <= 0f) return 0f
     val remaining = (capPx - abs(current)).coerceIn(0f, capPx)
     return delta * COUIX_OVERSCROLL_DRAG_FLING * (remaining / capPx)
 }
 
-/** 标题栏底部分割线: 随 [progress] 从两端内缩逐渐延长至通栏。 */
 @Composable
 internal fun BoxScope.CouixTopBarDivider(progress: Float) {
     val density = LocalDensity.current
@@ -574,8 +493,6 @@ internal fun BoxScope.CouixTopBarDivider(progress: Float) {
     }
 }
 
-// 子页面标题栏: 左侧返回按钮 + 小标题, 右侧 actions(如重启菜单),
-// 底部同样带随列表滚动延长的分割线。
 @Composable
 fun CouixTopAppBar(
     title: String,
@@ -623,9 +540,6 @@ internal fun CouixCard(
     )
 }
 
-// 超长列表用的单行卡片容器: 与 CouixCard 同款外观(圆角/底色/边距), 但每行各占一个独立容器。
-// 上百行若塞进同一个 Card, 该容器会变成上万像素高, 首屏要一次性组合全部行, 且滚动到后半段时
-// 命中测试会失效(表现为"前面能点、后面点不动")。故长列表应逐行使用本容器。
 @Composable
 internal fun CouixCardRow(
     first: Boolean,
@@ -666,8 +580,6 @@ internal fun CouixCardRow(
     )
 }
 
-// 首页分类入口行: 左侧线条图标(与标题同色, 无底色), 中间标题, 右侧前进箭头。
-// 配置了 subtitle 时不占第二行, 而是显示在前进箭头左侧、右对齐。
 @Composable
 internal fun CouixCategoryRow(
     icon: ImageVector?,
@@ -722,7 +634,6 @@ internal fun CouixCategoryRow(
     }
 }
 
-/** 按 log 曲线采样出渐变的 stop 表: 第 i 个 stop 位于 t = i/N, alpha 为 log 衰减值 × [alpha]。 */
 private fun glowStops(color: Color, alpha: Float): Array<Pair<Float, Color>> {
     val k = COUIX_HEADER_GLOW_LOG_K.toDouble()
     val denom = ln(1.0 + k)
@@ -733,11 +644,6 @@ private fun glowStops(color: Color, alpha: Float): Array<Pair<Float, Color>> {
     }
 }
 
-/** 首页第一张 group 卡片顶部的机型横幅: 底色上叠两层同心椭圆光晕(圆心沉在底边之下),
- *  外层为压扁的椭圆放射, 内层再叠一个更扁的椭圆把紧邻底边的一带提亮。
- *  设备名粗体居中(再上移一点), 系统名贴底, system 未取到时只显示设备名。
- *  shape 由调用方给出: 嵌在卡片顶部时只需裁顶部两角, 单独成卡片时才四角全裁。
- *  亮色主题下底色/渐变色另取一套, 文字色随之切换(见下方 light 常量)。 */
 @Composable
 internal fun CouixDeviceHeader(
     model: String,
@@ -754,8 +660,7 @@ internal fun CouixDeviceHeader(
     // 两层光晕共用同一条 log 衰减曲线, 只有整体 alpha 不同; 按颜色缓存避免每次重组重算。
     val outerStops = remember(glowColor) { glowStops(glowColor, 1f) }
     val coreStops = remember(glowColor) { glowStops(glowColor, COUIX_HEADER_CORE_ALPHA) }
-    // 长按时连续轻微短振动: 按住超过阈值后反复触发一次 VIRTUAL_KEY tick(与系统虚拟按键同款,
-    // 跟随系统"触摸反馈"开关), 间隔由 BANNER_TICK_INTERVAL_MS 控制, 松手即停。
+
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     var bannerTickJob by remember { mutableStateOf<Job?>(null) }
@@ -790,11 +695,7 @@ internal fun CouixDeviceHeader(
                 drawRect(color = baseColor)
                 val cx = size.width / 2f
                 val cy = size.height * COUIX_HEADER_GLOW_CENTER_Y_RATIO
-                // 画一层以 (cx, cy) 为心、横/纵半径分别为 radiusX/radiusY 的椭圆光晕。
-                // radialGradient 只会画正圆, 故按 k = radiusY/radiusX 纵向压缩 canvas 得到椭圆。
-                // 注意压缩同时会缩小所绘矩形: 若按 size 绘制, 矩形纵向只覆盖 [cy-k*cy, cy+k*(h-cy)],
-                // 渐变在该边界处 alpha 尚未归零, 会露出一条硬边(看起来就是被裁切的圆)。
-                // 因此把矩形的纵向范围按 1/k 反向放大, 使其压缩后正好铺满整张横幅。
+
                 fun drawGlowEllipse(
                     radiusX: Float,
                     radiusY: Float,
@@ -862,9 +763,6 @@ internal fun CouixDeviceHeader(
     }
 }
 
-// 两个等宽可点击格横向并排, 中间以 1px 竖线分隔(纵向内缩与列表项一致)。
-// 无图标、无开关, 只放标题, 用于并排摆放一次性动作(如启动 KernelSU / LSPosed)。
-// 与 CouixCategoryRow 同高, 标题各自在半区内左对齐。
 @Composable
 internal fun CouixActionPairRow(
     leftTitle: String,
@@ -937,17 +835,12 @@ private fun CouixActionCell(
     }
 }
 
-/**
- * 开关切换时的短振动反馈: 与系统虚拟按键同款 tick, 跟随系统"触摸反馈"开关, 不额外申请权限。
- */
 @Composable
 private fun couixSwitchTick(): () -> Unit {
     val view = LocalView.current
     return { view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) }
 }
 
-// 自绘开关: miuix Switch 内部硬编码 49x28 布局(绘制坐标绑定该尺寸), 无法从外部整体缩放且不溢出。
-// 这里改用 Canvas 直接按目标尺寸绘制轨道+滑块, 尺寸精确、不溢出, 并带滑块位移动画。
 @Composable
 fun CouixSwitch(
     checked: Boolean,
@@ -981,8 +874,6 @@ fun CouixSwitch(
     }
 }
 
-// 单行开关偏好: 整行可点击切换, 右侧为缩小后的 couix 开关。
-// 文字沿用 miuix 主题(已通过 couixTextStyles 全局缩小)。
 @Composable
 fun CouixSwitchPreference(
     checked: Boolean,
@@ -1088,7 +979,6 @@ fun CouixSwitchPreference(
     }
 }
 
-/** 物理 1px 分割线（按当前 density 折算），两端内缩 COUIX_DIVIDER_INSET。 */
 @Composable
 fun CouixItemDivider(modifier: Modifier = Modifier, startInset: Dp = COUIX_DIVIDER_INSET) {
     val thickness: Dp = (1f / LocalDensity.current.density).dp
@@ -1101,9 +991,6 @@ fun CouixItemDivider(modifier: Modifier = Modifier, startInset: Dp = COUIX_DIVID
     )
 }
 
-// 一个设置分组卡片：圆角更小，item 之间用 1px 分割线（内缩 24dp）隔开。
-// version 用于强制各开关在外部(如"全部开启/关闭")改动后重新读取 prefs; onItemChanged 在
-// 任一项切换时回调, 供顶层刷新主开关状态。
 @Composable
 internal fun CouixGroup(
     items: List<SettingsItem>,
@@ -1200,8 +1087,6 @@ internal fun CouixSelectGroup(
     }
 }
 
-// 下拉弹层里的单项: 左侧文字(选中态用主题色), 右侧细线勾图标;
-// 项与项之间由调用方用 CouixDropdownDivider 插入分割线。
 @Composable
 private fun CouixDropdownItem(
     text: String,
@@ -1231,8 +1116,6 @@ private fun CouixDropdownItem(
     }
 }
 
-// 细线风格勾选图标(对齐 ColorOS 原生下拉): 用两段圆头描边线段绘制,
-// 描边色由调用方传入(选中态主题色), 非填充式。
 @Composable
 private fun CouixCheckMark(
     color: Color,
@@ -1250,7 +1133,6 @@ private fun CouixCheckMark(
     }
 }
 
-/** 下拉弹层内的 1px 细分割线（ColorOS 原生下拉风格）。 */
 @Composable
 private fun CouixDropdownDivider() {
     val density = LocalDensity.current
@@ -1264,9 +1146,6 @@ private fun CouixDropdownDivider() {
     )
 }
 
-/**
- * 折叠行右侧的下拉指示箭头（细线风格，与勾图标一致）：用单条连续路径绘制，避免转角处重复叠加透明度。
- */
 @Composable
 private fun CouixDropdownArrow(
     color: Color,
@@ -1451,9 +1330,6 @@ private fun CouixSelectRow(
 }
 }
 
-// 顶部"启用模块"主开关卡片: 与 CouixGroup 相同样式, 仅一个开关项。checked 与 title 由调用方
-// (基于全部功能是否任一开启)决定; subtitle 非空时紧贴 title 显示。title/subtitle 放在左侧
-// Column(weight=1f), 右侧为开关, 文字自然水平避让开关而不会延伸到其下方。
 @Composable
 fun CouixMasterToggle(
     checked: Boolean,
@@ -1510,9 +1386,6 @@ fun CouixMasterToggle(
     }
 }
 
-// ColorOS 风格自绘滑条: 轨道加高加圆成胶囊容器, 滑块内嵌其中(四周留 2dp 间隙); 激活部分与
-// 滑块同宽同圆角, 从轨道内左缘延伸到滑块右缘, 二者连成一个胶囊。只响应水平手势, 不消费竖直滚动。
-// 拖动时轨道为全高(24dp), 未拖动时高度动画收缩为 COUIX_SLIDER_TRACK_H_IDLE(滑块尺寸不变)。
 @Composable
 fun CouixSlider(
     value: Float,
@@ -1581,7 +1454,6 @@ data class ActionMenuItem(
     val onClick: () -> Unit,
 )
 
-/** 设置列表行的动作菜单，复用 Couix 的形状、颜色、分割线和进出动画。 */
 @Composable
 internal fun CouixRowActionMenu(
     expanded: Boolean,
@@ -1670,9 +1542,6 @@ fun CouixActionMenu(
             },
         ) { icon() }
 
-        // 菜单锚定到屏幕左上角(0,0)，宽度铺满全屏并右对齐，使菜单从最右上角开始布局：
-        // 向下移动 24dp、向左 12dp 微调，使其恰好落在图标下方而非压住图标，
-        // 再次点击右上角图标时菜单顶部就位于图标处，可快速重复触发重启作用域。
         if (popupVisible) Popup(
             alignment = Alignment.TopStart,
             offset = IntOffset(0, 0),
@@ -1758,8 +1627,7 @@ private fun CouixSwitchRow(
     }
     val label = androidx.compose.ui.res.stringResource(item.label)
     val scope = rememberCoroutineScope()
-    // 系统设置不保存在 prefs，不能因其它条目的 prefs 刷新而重置状态。
-    // 普通设置仍随 version 重读；系统设置仅在首次进入或主开关覆盖变化时读取。
+
     val rowVersion = if (item.rootBacked) 0 else version
     val rowOverride = if (item.rootBacked) null else overrideValue
     var checked by remember(item.key, rowVersion, rowOverride) {

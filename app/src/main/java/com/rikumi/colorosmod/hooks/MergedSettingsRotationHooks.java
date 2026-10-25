@@ -11,7 +11,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Rotation follows the native footer translation, including interrupted gestures. */
 public final class MergedSettingsRotationHooks {
     private static final WeakHashMap<View, Float> originals = new WeakHashMap<>();
     private static final WeakHashMap<View, Float> footers = new WeakHashMap<>();

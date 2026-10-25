@@ -7,11 +7,6 @@ import java.util.Map;
 
 import io.github.libxposed.api.XposedInterface;
 
-/**
- * 旧版 XC_MethodHook 的等价实现: 在新版拦截器链上还原
- * beforeHookedMethod / afterHookedMethod 的语义(含 setResult 短路原方法、
- * 异常传播、以及 before 抛异常时回滚副作用)。
- */
 public abstract class XC_MethodHook {
 
     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
@@ -70,7 +65,6 @@ public abstract class XC_MethodHook {
             extras.put(key, value);
         }
 
-        /** 丢弃回调已经产生的返回值/异常, 回到"未拦截"状态。 */
         void resetResult() {
             result = null;
             throwable = null;
@@ -99,7 +93,6 @@ public abstract class XC_MethodHook {
         }
     }
 
-    /** 在拦截器链上跑一次 before -> 原方法 -> after。 */
     Object handleHookedMethod(XposedInterface.Chain chain) throws Throwable {
         MethodHookParam param = new MethodHookParam();
         param.method = (Member) chain.getExecutable();

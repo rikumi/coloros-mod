@@ -10,7 +10,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Detect the complete shade gesture, then use native QS expansion and collapse states. */
 final class MergedTwoFingerExpandHooks {
     private static final WeakHashMap<Object, Gesture> gestures = new WeakHashMap<>();
 
@@ -55,8 +54,7 @@ final class MergedTwoFingerExpandHooks {
                             Object panel = XposedHelpers.getObjectField(p.thisObject, "this$0");
                             Object qs = XposedHelpers.getObjectField(panel, "mQsController");
                             XposedHelpers.callMethod(qs, "setExpandImmediate", false);
-                            // Use the native full-QS target rather than a persistent override;
-                            // the following upward gesture can still fling to the normal minimum.
+
                             if (action == MotionEvent.ACTION_UP
                                     && !(Boolean) XposedHelpers.callMethod(panel, "isFullyCollapsed")
                                     && ((Number) XposedHelpers.callMethod(qs, "computeExpansionFraction")).floatValue() < 1f) {

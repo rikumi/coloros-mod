@@ -28,13 +28,8 @@ import com.rikumi.colorosmod.xposed.XposedBridge;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
-/**
- * 通知(分组副标题、通知内边距)相关的 SystemUI hook。
- */
 public final class NotificationHooks {
-// 通知面板分组副标题: 布局由 SectionHeaderView 驱动, 内部 TextView(@id/header_label) 原始 24sp。
-// hook onFinishInflate(after): 缩小字体至 fontSizePx(16sp), 并把 content 的 paddingTop 减少
-// offsetPx(8dp) 让文字上移 —— 不能用 translationY, 否则文字顶端越界被 clipChildren 裁切。
+
     public static void hookNotificationSubtitle(final XC_LoadPackage.LoadPackageParam lpparam,
                                                  final float density) {
         try {
@@ -48,8 +43,7 @@ public final class NotificationHooks {
                             try {
                                 // 运行时动态门控: 关闭则保持系统默认样式。
                                 if (!readBool(KEY_NOTIFICATION_SUBTITLE_ENABLED, false)) return;
-                                // 滑条 = 字号缩减量(0=系统默认 24sp, 默认 8sp -> 16sp, 最大 16sp -> 8sp);
-                                // 偏移与额外内边距按缩减比例等比缩放, 缩减为 0 时整体即系统默认样式。
+
                                 int reduceSp = Math.max(0, Math.min(16,
                                         readInt(KEY_NOTIFICATION_SUBTITLE_SP,
                                                 SUBTITLE_REDUCE_SP_DEFAULT)));
@@ -160,9 +154,6 @@ public final class NotificationHooks {
 
     static volatile int sNotifPadPx = 0;
 
-// 非静默通知: 给子视图(contracted/expanded/headsUp/singleLine)上下各加 padPx 内边距。
-// 直接改子视图 padding 才能被 NotificationContentView#getViewHeight 计入高度, 从而整卡增高。
-// 在 onNotificationUpdated(after) 中以首次记录的原始 padding 为基准叠加, 保证幂等。
     public static void hookNotificationPadding(final XC_LoadPackage.LoadPackageParam lpparam,
                                                 final float density) {
         try {
@@ -201,8 +192,6 @@ public final class NotificationHooks {
                         }
                     });
 
-            // Full templates own their padding, including expanded group children.
-            // Collapsed hybrid rows keep only the shared group-body inset.
             String contentClass = "com.android.systemui.statusbar.notification.row.NotificationContentView";
             XC_MethodHook bindPadding = new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
@@ -233,18 +222,6 @@ public final class NotificationHooks {
         }
     }
 
-// 通知左滑直接清除(走海外 exp 分支)。
-// 国内版左滑通知会先露出"设置/删除"两个侧边按钮, 要滑到头才清除; exp 分支不生成任何按钮、
-// 抬手达阈值即清除。区分点在两处(均已 dexdump 核对, 同在 SystemUI 的 classes3.dex):
-//   1. NotificationMenuRowExtImpl#createMenuViewsExt(Z, NotificationMenuRowPlugin, ArrayList,
-//        Context, Z, Z)V (PUBLIC) —— 源码 265 行 `if (!FeatureOption.isExpRegion())` 内
-//        addFirst 设置项(gear)与删除项(lottie); exp 分支在末尾 arrayList.clear()(332 行)。
-//   2. OplusSwipeHelperExImpl#shouldNotShowMenuExt(MotionEvent, View, float,
-//        NotificationMenuRowPlugin)Z (PUBLIC) —— 源码 182 行
-//        `(FeatureOption.isExpRegion() && view instanceof ExpandableNotificationRow)`。
-//        返回 true 时 NotificationSwipeHelper#handleMenuRowSwipe(240 行)跳过"吸附露出菜单"
-//        分支, 改走 dismiss / snapClosed。
-// 不 hook FeatureOption.isExpRegion(): 全 SystemUI 有 150+ 处调用, 影响面不可控。
     public static void hookNotificationSwipeToDismiss(
             final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
@@ -265,8 +242,7 @@ public final class NotificationHooks {
                                 if (items instanceof java.util.ArrayList) {
                                     ((java.util.ArrayList) items).clear();
                                 }
-                                // 与 exp 分支保持一致: 侧边按钮实例也不保留, 否则 onDismissRow()
-                                // 会拿这两个未挂载的 view 跑移除动画。
+
                                 clearMenuItem(param.thisObject, "settingsItem");
                                 clearMenuItem(param.thisObject, "deleteItem");
                             } catch (Throwable t) {
@@ -343,11 +319,6 @@ public final class NotificationHooks {
                     + Log.getStackTraceString(t));
         }
 
-// 左滑越过"可清除"阈值时的振动(NotificationMenuRow#onTouchMove, 源码 437-444 行:
-// canBeDismissed() 下 mSnappingToDismiss 由 false 翻 true 的那一刻调
-// mNotificationMenuRowExt.performHapticFeedback(getMenuView()))。
-// 方向只能从被拖动的通知行本身取: NotificationMenuRowExtImpl 里没有 mTranslation 字段
-// (它在 NotificationMenuRow 里), 取字段会抛 NoSuchFieldError 导致屏蔽完全失效。
         try {
             XposedHelpers.findAndHookMethod(
                     "com.oplus.systemui.notification.row.NotificationMenuRowExtImpl",
@@ -357,11 +328,7 @@ public final class NotificationHooks {
                         protected void beforeHookedMethod(MethodHookParam param) {
                             if (!readBool(KEY_NOTIFICATION_SWIPE_TO_DISMISS_ENABLED, false)) return;
                             try {
-                                // SwipeHelper 先 setTranslation 再回调 menuRow.onTouchMove,
-                                // 因此这里读到的就是当前实际位移; 只拦左滑(位移为负)。
-                                // 通知行的位移有两套来源, 任一为负即判左滑:
-                                //   - ExpandableView#getTranslation()(Oplus 侧滑动主要写这个)
-                                //   - View#getTranslationX()
+
                                 Object row = XposedHelpers.callMethod(
                                         param.thisObject, "getMenuRowParent");
                                 float translation = 0.0f;
@@ -390,18 +357,6 @@ public final class NotificationHooks {
         }
     }
 
-// 通知下滑展开(走海外/一加 OxygenOS 的 exp 分支)。
-// 国内版 ColorOS 关掉了 AOSP 的 ExpandHelper(单指下拉通知展开), 两处判断(均已 dexdump 核对):
-//   1. NotificationStackScrollLayout 构造末尾(源码 3080-3085 行)
-//        `if (FeatureOption.isExpRegion() || getView() == null) return; view.setExpandingEnabled(false);`
-//      —— 国内版构造时就把 mExpandHelper.setEnabled(false); exp 分支什么都不做,
-//        保留构造里设的 expandHelper.mEnabled = true。
-//   2. NotificationStackScrollLayoutExtImpl#setExpandingEnabled(Z)V (PUBLIC, classes4.dex)
-//      —— `if (!FeatureOption.isExpRegion() || getView() == null) return;` 直接短路,
-//        唯一的调用方 NotificationStackScrollLayoutController(237 行)传 !onKeyguard(),
-//        国内版永远传不进去。
-// 因此要补两刀: 构造后把 enabled 复位为 true(对齐 exp 的初值), 并让 ext 层把参数透传下去
-// (保留"锁屏上不展开"的原生语义)。不 hook FeatureOption.isExpRegion(): 全 SystemUI 150+ 处调用。
     public static void hookNotificationPullExpand(
             final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
@@ -440,8 +395,7 @@ public final class NotificationHooks {
                                 if (!readBool(KEY_NOTIFICATION_PULL_EXPAND_ENABLED, false)) {
                                     return;
                                 }
-                                // 等价于接口 NotificationStackScrollLayoutExt 的 default 实现
-                                // (Ext.java 152-155 行): 直接透传给 view, 跳过 exp 判断。
+
                                 Object view = XposedHelpers.callMethod(param.thisObject, "getView");
                                 if (view == null) return;
                                 XposedHelpers.callMethod(view, "setExpandingEnabled", param.args[0]);
@@ -458,22 +412,15 @@ public final class NotificationHooks {
         }
     }
 
-
-    // ------------------------------------------------- 通知图标区显示方式(状态栏歌词专用)
-    // 通知图标区的显示模式由 OplusNotificationIconAreaRepository 的 notificationShowMode
-    // (MutableStateFlow) 决定: 0=显示图标, 1=显示数字, 2=不显示。系统由 Settings.Secure
-    // notification_prompt_mode 的观察者写入; 显示歌词时要切"显示数字", 只能改这个流。
-    // 调用方见 StatusBarLyricHooks#setNotificationNumberMode。
     private static final String CLS_ICON_AREA_REPOSITORY =
             "com.oplus.systemui.statusbar.icon.data.OplusNotificationIconAreaRepository";
     private static final String CLS_LEGACY_ICON_AREA_CONTROLLER =
             "com.oplus.systemui.statusbar.phone.OplusNotificationIconAreaController";
 
-    /** 通知图标区仓库实例(构造时抓取), 用于下发"显示数字"及其还原值。 */
     private static volatile Object sIconAreaRepository = null;
-    /** 歌词显示期间强制"显示数字"。 */
+
     private static volatile boolean sLyricNumberMode = false;
-    /** 显示模式对齐间隔(ms): 只在目标值与仓库当前值不同时才写, 平时只读一次 StateFlow。 */
+
     private static final long SHOW_MODE_APPLY_INTERVAL_MS = 500L;
     private static volatile boolean sShowModeLoopStarted = false;
     private static volatile boolean sShowModeLoopActive = false;
@@ -517,10 +464,6 @@ public final class NotificationHooks {
         }
     }
 
-
-    // 轮询对齐显示模式: 只在目标值与仓库当前值不同时才写, 平时只读一次 StateFlow。
-    // 轮询是必需的 —— 歌词状态变化不会触发系统的设置观察者, 且儿童模式/专注模式下仓库
-    // 仍会输出"不显示", 那是系统行为, 保留。
     private static void startShowModeLoop() {
         if (sShowModeLoopStarted) return;
         sShowModeLoopStarted = true;
@@ -542,13 +485,10 @@ public final class NotificationHooks {
         }, SHOW_MODE_APPLY_INTERVAL_MS);
     }
 
-
-    /** Capture only the host-owned repository for API 102 cross-generation handoff. */
     public static Object captureHotReloadHost() {
         return sIconAreaRepository;
     }
 
-    /** Capture currently modified host views so the new generation can reapply their effects. */
     public static Object captureHotReloadViews() {
         java.util.ArrayList<Object> padded = new java.util.ArrayList<>();
         java.util.ArrayList<Object> translated = new java.util.ArrayList<>();
@@ -710,7 +650,6 @@ public final class NotificationHooks {
         sNotifPadPx = 0;
     }
 
-    /** 把目标显示模式写进通知图标区仓库; 与当前值一致时不写。 */
     static void applyNotificationShowMode() {
         Object repo = sIconAreaRepository;
         if (repo == null) return;
@@ -734,13 +673,11 @@ public final class NotificationHooks {
         log("notification show mode -> " + desired);
     }
 
-    /** 歌词显示期间强制"显示数字"(由 StatusBarLyricHooks 调用)。 */
     public static void setLyricNumberMode(boolean on) {
         sLyricNumberMode = on;
         applyNotificationShowMode();
     }
 
-    /** 读系统设置里的"通知栏显示方式", 用于歌词结束后还原。 */
     private static int readNotificationPromptMode() {
         try {
             Context ctx = sAppContext;
@@ -772,7 +709,6 @@ public final class NotificationHooks {
         return false;
     }
 
-    /** 快速判断分组容器是否处于最小化状态 (无 IPC) */
     static boolean isMinimizedGroup(Object container) {
         try {
             Object row = XposedHelpers.getObjectField(container, "mContainingNotification");

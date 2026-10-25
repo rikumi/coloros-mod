@@ -45,9 +45,6 @@ import com.rikumi.colorosmod.xposed.XposedBridge;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
-/**
- * system_server(android) 作用域的全部 hook：小窗贴边挂机、横屏小窗保持比例。
- */
 public final class SystemServerHooks {
     public static void hookFloatWindowCount(XC_LoadPackage.LoadPackageParam lp) {
         try {
@@ -55,8 +52,7 @@ public final class SystemServerHooks {
                     "com.android.server.wm.FlexibleWindowManagerService", lp.classLoader,
                     "getMaxWinNum", int.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            // 只改悬浮小窗场景，不改变嵌入式任务和分屏策略。
-                            // WMS 锁内不得通过 Provider 同步读取配置。
+
                             if ((Integer) p.args[0] == 1
                                     && readBoolCached(KEY_FLOAT_WINDOW_COUNT_ENABLED, false)) {
                                 p.setResult(Math.max(1, Math.min(10,
@@ -77,7 +73,6 @@ public final class SystemServerHooks {
         } catch (Throwable t) { log("float window count hook failed: " + t); }
     }
 
-    /** 窗口变化合并通知: 避免 relayoutWindow 动画期间频繁触发跨进程查询。 */
     private static final long STATUSBAR_OVERLAY_EVENT_DEBOUNCE_MS = 250L;
     private static Handler sStatusBarOverlayEventHandler;
     private static Context sStatusBarOverlayEventContext;
@@ -98,11 +93,6 @@ public final class SystemServerHooks {
         }
     };
 
-    /**
-     * pscanvas 嵌入任务与悬浮小窗分别使用 launchScenario=2/1。系统默认向应用下发约
-     * 40dp 的状态栏 inset，它正是顶部控制栏的预留空间。控制栏缩小后，这里把对应
-     * InsetsSource 同步至相同高度；不能直接移除，否则沉浸式内容会画到控制栏下面。
-     */
     public static void hookCompactCanvasCaptionInsets(
             final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
@@ -148,9 +138,7 @@ public final class SystemServerHooks {
                                         task, "getBounds"));
                                 frame.set(taskBounds.left, taskBounds.top, taskBounds.right,
                                         taskBounds.top + compactHeight);
-                                // frame 为应用提供 24dp caption inset；legacy visible frame 仍应描述
-                                // 物理状态栏。否则 getWindowVisibleDisplayFrame() 会把任务绝对位置与
-                                // caption 高度重复计入，触发依赖该 API 的应用反复修正自身布局。
+
                                 XposedHelpers.callMethod(adjustedSource, "setVisibleFrame",
                                         legacyVisibleFrame);
                             } else {
@@ -158,8 +146,7 @@ public final class SystemServerHooks {
                                 frame.bottom = frame.top + compactHeight;
                             }
                             XposedHelpers.callMethod(adjustedSource, "setFrame", frame);
-                            // InsetsState 的复制可能与上一帧共享 InsetsSource；直接修改原 source
-                            // 会同时污染新旧状态，使客户端持续收到“变化”并反复重新布局。
+
                             XposedHelpers.callMethod(param.getResult(), "addSource", adjustedSource);
                         }
                     });
@@ -173,11 +160,6 @@ public final class SystemServerHooks {
         }
     }
 
-    /**
-     * 悬浮小窗的顶部控制栏由 system_server 的 FlexibleTaskCaptionView 绘制，原始高度也是
-     * 40dp。与画布分屏保持相同的 24dp 高度，并把内部按钮重新居中；同时缩小系统
-     * 上报的顶部栏高度及拖动触摸区，避免透明的旧区域继续拦截应用点击。
-     */
     public static void hookCompactFlexibleCaptionBar(
             final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
@@ -317,9 +299,7 @@ public final class SystemServerHooks {
             gravity = (gravity & ~Gravity.VERTICAL_GRAVITY_MASK) | Gravity.CENTER_VERTICAL;
             int height = params.height;
             int width = params.width;
-            // 高度缩小时宽度也必须按原始比例缩放，否则 ImageView 的 fitXY
-            // 会把图标和按下背景横向拉伸。固定布局尺寸优先，wrap_content
-            // 则使用 drawable 的固有尺寸（例如高亮背景原本为 100x28dp）。
+
             int originalHeight = height;
             int originalWidth = width;
             if (child instanceof ImageView) {
@@ -337,9 +317,7 @@ public final class SystemServerHooks {
             if (params.gravity == gravity && params.topMargin == 0
                     && params.bottomMargin == 0 && params.height == height
                     && params.width == width) continue;
-            // translationY 不参与测量：原 28dp 的 wrap_content 高亮背景在 24dp 父栏中
-            // 扣除 10dp topMargin 后只剩 14dp，继续上移会与三个点错位。改用真实布局
-            // 居中，让背景和图标共享中心；宽高同步缩放，保持原始长宽比。
+
             params.gravity = gravity;
             params.topMargin = 0;
             params.bottomMargin = 0;
@@ -349,11 +327,6 @@ public final class SystemServerHooks {
         }
     }
 
-    /**
-     * 监听 WindowManagerService 的窗口增删与重新布局。第三方悬浮窗在应用进程创建，
-     * 但最终必须经过此服务；这里只发布一个合并后的变化序号，窗口矩形仍由 SystemUI
-     * 收到事件后通过 OplusWindowManager 跨进程查询，避免高频轮询和传递窗口对象。
-     */
     public static void hookStatusBarThirdPartyOverlayEvents(
             final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
@@ -400,9 +373,7 @@ public final class SystemServerHooks {
                     + Log.getStackTraceString(t));
         }
     }
-    // 贴边挂机: 拦 TaskExtImpl#moveTaskToBackForPanorama(只切后台), 让图标动画跑完并把任务留在前台。
-    // 不可拦 exitFlexibleTaskWindowInnerLocked —— 图标成形/缩小动画在其 handleEvent() 内, 截断就卡在松手位置。
-    // 同时把焦点交给小窗下方任务, 避免"窗口已 hide 但仍 focused"导致音量键无响应 / ANR。
+
     public static void hookFloatWindowEdgeHangSystemServer(final XC_LoadPackage.LoadPackageParam lpparam) {
         sEdgeHangHooksReady = false;
         boolean coreHooksReady = false;
@@ -436,8 +407,7 @@ public final class SystemServerHooks {
                             Object previous = param.getObjectExtra(EDGE_EXIT_TASK);
                             if (previous == null) sEdgeExitTask.remove();
                             else sEdgeExitTask.set(previous);
-                            // 原生提交还会隐藏表面、移除小窗及通知监听器。完成后再同步输入焦点，
-                            // 不依赖用户切换前台来触发下一次焦点计算。原方法的锁已释放，需重新获取。
+
                             if (param.hasThrowable() || param.args[0] == null
                                     || sHungTaskIds.isEmpty()) return;
                             try {
@@ -466,9 +436,7 @@ public final class SystemServerHooks {
                     }
                 }
             };
-            // 仅 hide Task 的 SurfaceControl 不改变 WindowState 的可见性和输入资格。
-            // 否则 findFocusedWindow 仍会选中隐藏小窗，手势条和识屏服务看到的焦点仍错误。
-            // getTask() 对手势条等非 Activity 窗口返回 null，不改变原生长按识别和监听器。
+
             XposedHelpers.findAndHookMethod(windowCls, "canReceiveKeys", boolean.class,
                     rejectHungWindowInput);
             XposedHelpers.findAndHookMethod(windowCls, "canReceiveTouchInput", rejectHungWindowInput);
@@ -479,8 +447,7 @@ public final class SystemServerHooks {
                     String.class, new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
-                            // exitFlexibleTask 在跳过 moveTaskToBack 后，仍会将支持 PiP 的
-                            // Activity 加入停止队列。只拦这次贴边提交，不干预锁屏等暂停流程。
+
                             if (!"startToFloatAnimation".equals(param.args[2])) return;
                             try {
                                 Object task = XposedHelpers.callMethod(param.thisObject, "getTask");
@@ -531,9 +498,6 @@ public final class SystemServerHooks {
                         }
                     });
 
-            // 挂机期间锁屏再解锁, 系统会重新把任务的 surface show 出来(ActivityRecord#setVisibility
-            // 会连带 show 所有父容器 surface 并把 Task.mLastSurfaceShowing 置 true), 真实窗口就会重新出现。
-            // 这里在 Task#prepareSurfaces 之后把挂机任务的 surface 重新 hide, 作为恒常不变式。
             XposedHelpers.findAndHookMethod(taskCls, "prepareSurfaces", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
@@ -545,8 +509,7 @@ public final class SystemServerHooks {
                         if (!floating || !readBoolCached(KEY_FLOAT_WINDOW_EDGE_HANG_ENABLED, false)) {
                             Object task = param.thisObject;
                             releaseHungTask(task);
-                            // 开关关闭时补回此前跳过的原生退后台；在原生 prepareSurfaces 前执行，
-                            // 由系统按更新后的任务状态决定表面可见性。
+
                             if (floating) XposedHelpers.callMethod(task, "moveTaskToBack", task);
                             return;
                         }
@@ -568,8 +531,7 @@ public final class SystemServerHooks {
                         if (!sHungTaskIds.contains(taskId)) return;
 
                         if (!isTaskInFloatingList(taskId)) {
-                            // 已还原成浮窗(点把手)或已被移除: 交还系统。mLastSurfaceShowing 置 false,
-                            // 否则系统认为 surface 已是 shown, 不再下发 show, 窗口反倒不再显示。
+
                             releaseHungTask(task);
                             // 任务离开浮窗列表 = 用户点开小窗 / 关闭应用: 静音在此处可靠地恢复。
                             log(">>> edge_hang: task " + taskId + " left floating list, release surface");
@@ -608,9 +570,6 @@ public final class SystemServerHooks {
             log("!!! float_window_edge_hang system_server hook failed: " + t);
         }
 
-        // 挂机任务没有 moveTaskToBack, 解锁时系统 resume 台前任务会把焦点指回它;
-        // 它的 surface 已被我们隐藏, 焦点落在不可见窗口上会导致音量键等事件 dispatch 失败。
-        // 解锁后把焦点交还给小窗后面的主窗口。
         try {
             final Class<?> ftcCls = XposedHelpers.findClass(
                     "com.android.server.wm.FlexibleTaskController", lpparam.classLoader);
@@ -648,9 +607,6 @@ public final class SystemServerHooks {
             log("!!! float_window_edge_hang keyguard refocus hook failed: " + t);
         }
 
-        // 不变式: 任何把焦点指向挂机任务的调用, 一律改指到它下面的主窗口。
-        // 解锁时系统会 resume 台前任务把焦点拨回小窗, 而小窗 surface 已被隐藏, 焦点落在看不见的窗口上
-        // 会让音量键等按键事件 dispatch 失败。一次性纠正会被后续焦点计算覆盖, 故做成不变式。
         try {
             final Class<?> dcCls = XposedHelpers.findClass(
                     "com.android.server.wm.DisplayContent", lpparam.classLoader);
@@ -689,15 +645,9 @@ public final class SystemServerHooks {
             log("!!! float_window_edge_hang focus invariant hook failed: " + t);
         }
 
-        // 小窗贴边显示为白色竖条: 接管浮窗贴边把手(FloatHandleView)的绘制, 去掉应用图标,
-        // 只保留一个带圆角的白色竖条, 距屏幕边缘 8dp。
         hookFloatHandleWhiteBar(lpparam);
     }
 
-    // 小窗贴边显示为白色竖条: 开启后, 把浮窗贴边把手(FloatHandleView)改为一个带圆角的白色竖条,
-    // 距屏幕边缘 8dp。作用于 system_server 进程内的 FloatHandleView(浮窗贴边把手窗口内容)。
-    // 注意: 把手位置由 setTranslationX/Y 控制(computeCurrentPosition -> updateCurrentPosition),
-    // 把手宽度由 mViewContainerLayoutParams.width 控制(updateViewLayoutParams 应用), 不能用 margin。
     private static void hookFloatHandleWhiteBar(final XC_LoadPackage.LoadPackageParam lpparam) {
         final int BAR_WIDTH_DP = 4;   // 竖条宽度(细)
         final int EDGE_DP = 8;       // 距屏幕右边界距离
@@ -766,8 +716,6 @@ public final class SystemServerHooks {
                         }
                     });
 
-            // 3b) 落点计算: 把吸附落点的 x 直接改成"距屏幕右边界 8dp", 使框架算出的滑动终点也是右边缘,
-            //     从源头消除"向左滑动"动画。
             XposedHelpers.findAndHookMethod(fhvCls, "computeCurrentPosition",
                     int.class,
                     new XC_MethodHook() {
@@ -847,8 +795,6 @@ public final class SystemServerHooks {
                         }
                     });
 
-            // 5) 抑制图标列表的"展开/堆叠"动画: 把手切换到全模式(toMode=2)或堆叠时会把应用图标动画显示出来,
-            //    这里直接 no-op, 使吸附动画期间只呈现白色竖条、不出现应用图标。
             final Class<?> iconListCls = XposedHelpers.findClass(
                     "com.android.server.wm.floathandle.FloatIconListAnimationLayout",
                     lpparam.classLoader);
@@ -991,11 +937,6 @@ public final class SystemServerHooks {
         }
     }
 
-    // 把焦点交给小窗下方任务。不走 FlexibleTaskController#setFocusTask:
-    // 它最终是 ATMS#setFocusedTask(taskId, null), 而该方法只在 moveFocusableActivityToTop 成功时
-    // 才真正转移焦点(ActivityTaskManagerService.java:1763/1769) —— touchedActivity 为 null 且移不动时
-    // 什么都不做(实测无效); 一旦移动成功, 后方任务被移到 top 并 resume, 挂机任务随即被 pause, 挂机失效。
-    // 这里改走 AOSP 同一分支中"只更新焦点不动栈"的做法(DisplayContent#setFocusedApp + 重算焦点窗口)。
     private static void focusTaskBehind(Object floatTask) {
         try {
             Object ar = findBehindActivity(floatTask);
@@ -1047,13 +988,11 @@ public final class SystemServerHooks {
         }
     }
 
-    // 贴边挂机静音: 走系统多应用音量通道 PlaybackActivityMonitorExtImpl#setVolumeForUid,
-    // isEternalSet=true 会写入 mMusicVolumeMap, 当前及此后新建的播放器都按该值生效。
     private static final Object MUTE_LOCK = new Object();
     private static Class<?> sFloatHandleController;   // 兜底: 判断挂机任务是否仍在浮窗列表
     private static Class<?> sFlexibleWindowService;   // FlexibleWindowManagerService
-    private static volatile Object sFlexibleTaskController;   // 单例持有的控制器实例
-    // 贴边挂机中的任务: 真实窗口已隐藏、任务仍留在台前。
+    private static volatile Object sFlexibleTaskController;
+
     private static final Set<Integer> sHungTaskIds =
             Collections.synchronizedSet(new HashSet<Integer>());
     // taskId -> Task(弱引用, 仅供解锁后纠正焦点时取对象用)。
@@ -1167,8 +1106,6 @@ public final class SystemServerHooks {
         }
     }
 
-    // WM hooks can run while holding the global lock. Invalidate a queued mute synchronously,
-    // then defer PackageManager/audio work until after the hook returns.
     private static void releaseHungTaskMuteAsync(final int taskId) {
         synchronized (MUTE_LOCK) {
             if (sPendingMuteTaskId == taskId) cancelPendingMuteLocked();
@@ -1180,10 +1117,6 @@ public final class SystemServerHooks {
         });
     }
 
-    // 只在小窗被点开还原成浮窗、或任务已被关闭(两者都表现为"不在浮窗列表")时恢复原音量。
-    // 【不要】加"焦点回到该 task 就恢复"的判定: 锁屏/解锁时系统会 resume 台前任务,
-    // 把焦点短暂拨回挂机小窗, 若据此恢复, 解锁后立刻重新出声 —— 而此时小窗仍是边缘图标,
-    // 用户并没有点开它。静音必须贯穿整个挂机期间, 直到用户主动点开小窗。
     private static void restoreMuteIfNeeded() {
         synchronized (MUTE_LOCK) {
             if (sPendingMuteTaskId >= 0 && (!sHungTaskIds.contains(sPendingMuteTaskId)
@@ -1238,8 +1171,6 @@ public final class SystemServerHooks {
         }
     }
 
-    // 音量表的键须与系统一致: PackageManager#getNameForUid(uid)。
-    // ExtImpl 的 mContext 有时为 null(实测 NPE), 故按多条路径依次取 PackageManager。
     private static String pkgNameForUid(Object pamExt, int uid) {
         // 1) ExtImpl.mContext
         try {
@@ -1345,8 +1276,6 @@ public final class SystemServerHooks {
         }
     }
 
-    // system_server 的 system context: ActivityThread#currentActivityThread()#getSystemContext()。
-    // 取不到时回落到被 hook 进程的 Application。
     private static Context systemContext() {
         try {
             Object at = XposedHelpers.callStaticMethod(
@@ -1362,9 +1291,6 @@ public final class SystemServerHooks {
         return currentApplication();
     }
 
-    // 横屏应用小窗保持比例: 系统 fillFlexibleTaskInfo 对横屏应用硬编码 ratio=0.5625f(9:16)。
-    // afterHook fillFlexibleTaskInfo 改 ratio 并按系统同款公式重算 scale 与 launchBounds;
-    // afterHook getFlexibleTaskAvailableRatioByActivity 把目标比例加入可选列表。
     public static void hookFloatWindowLandscapeKeepRatio(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             final Class<?> ftc = XposedHelpers.findClass(
@@ -1466,16 +1392,11 @@ public final class SystemServerHooks {
         }
     }
 
-    // 小窗尺寸与贴边: 1) 缩到最小(mini)时贴靠边缘只留 FLOAT_WINDOW_SIDE_MARGIN_DP;
-    // 2) 放大的最大宽度 = 屏幕宽度 - 2 * FLOAT_WINDOW_SIDE_MARGIN_DP。
     public static void hookFloatWindowSizeLimits(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             final Class<?> zoomDisplayCls = XposedHelpers.findClass(
                     "com.android.server.wm.OplusZoomDisplay", lpparam.classLoader);
 
-            // 1) mini 窗口贴边时与屏幕边缘的间距(小屏竖屏默认 20dp)。
-            //    getDefaultMulitMiniRect / getDefaultMiniRect 用它算贴靠后的 right = 屏宽 - limit,
-            //    getLimitBoundInMiniFlexibleTask 也用它当拖动边界, 所以左右两侧统一留出该间距。
             XposedHelpers.findAndHookMethod(zoomDisplayCls, "getLeftRightLimitInMini",
                     new XC_MethodHook() {
                         @Override
@@ -1489,10 +1410,6 @@ public final class SystemServerHooks {
                         }
                     });
 
-            // 2) 各屏幕档位的可视宽度上限: 从源头把每个比例的 mMaxVisualWidth 改成 屏幕宽度 - 左右边距。
-            //    该字段是"该 ratio 下最大可视宽度"的唯一来源, getCurrentRatioMaxVisualWidth(dp) 与
-            //    getCurrRatioMaxFlexibleScale(= mMaxVisualWidth / policyReferValue) 都读它,
-            //    改字段二者自动同步, 不会出现 bounds 能到屏宽而 scale 被旧上限拉回去的错位。
             final String[] paramClsNames = {
                     "com.android.server.wm.OplusZoomSmallScreenParameter",
                     "com.android.server.wm.OplusZoomMiddleScreenParameter",
@@ -1534,8 +1451,6 @@ public final class SystemServerHooks {
                         }
                     });
 
-            // 4) 打开/重算小窗尺寸时的 clamp: 系统会预留左右各 18dp 安全边距, 临时改成 2dp。
-            //    只在方法执行期间改, 不动多窗排布用到的其它间距计算。
             final Class<?> policyCls = XposedHelpers.findClass(
                     "com.android.server.wm.OplusFlexibleTaskLayoutPolicy", lpparam.classLoader);
             final Class<?> taskCls = XposedHelpers.findClass(
@@ -1637,8 +1552,6 @@ public final class SystemServerHooks {
             java.util.Collections.newSetFromMap(
                     new java.util.IdentityHashMap<Object, Boolean>());
 
-    // 把每个比例的 mMaxVisualWidth(dp) 改写成 屏幕宽度 - 左右边距:
-    // 竖屏场景(mIsPort)用屏幕短边, 横屏场景用长边, 这样两种旋转下都是"当前屏幕宽度"。
     @SuppressWarnings("unchecked")
     private static void widenMaxVisualWidth(Object parameterStore) {
         if (parameterStore == null) return;
@@ -1704,13 +1617,6 @@ public final class SystemServerHooks {
         }
     }
 
-    // ---- 多任务清除卡片时彻底结束进程 (与 LauncherHooks#hookRecentsSwipeUpKill 配合) ----
-    // Launcher 是普通应用: 没有 FORCE_STOP_PACKAGES(反射调 ActivityManager#forceStopPackage
-    // 必被 SecurityException 拒), KernelSU 也不给 app root, 所以它无法自己强杀。
-    // 通道: Launcher 调 ActivityManager#killBackgroundProcesses(pkg) 把包名送进来, 这里拦下
-    // (setResult 跳过原方法, 顺带绕开 KILL_BACKGROUND_PROCESSES 权限检查 —— Launcher 没声明它),
-    // 再以 system_server 的身份升级成 AMS#forceStopPackage, 彻底结束进程。
-    // 必须在 mGlobalLock 之外执行, 所以另起线程 + clearCallingIdentity。
     private static volatile int sLauncherUid = -1;
     private static final java.util.Set<Thread> sKillThreads =
             java.util.Collections.synchronizedSet(new java.util.HashSet<Thread>());
@@ -1726,8 +1632,7 @@ public final class SystemServerHooks {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
-                                // 两个开关任一打开都要放行: 清附属任务是独立开关,
-                                // 它不依赖"多任务上划彻底结束进程"。
+
                                 if (!readBool(KEY_RECENTS_SWIPE_UP_KILL_ENABLED, false)
                                         && !readBool(
                                                 KEY_RECENTS_SWIPE_UP_KILL_SUBSIDIARY_ENABLED,
@@ -1873,7 +1778,6 @@ public final class SystemServerHooks {
         return true;
     }
 
-    /** Preserve host-owned objects whose constructors are not replayed after reload. */
     public static Object captureHotReloadHost() {
         synchronized (WIDTH_POLICY_LOCK) {
             return new Object[] { sPamExt, sWidthParameterStores.toArray() };
@@ -1940,6 +1844,5 @@ public final class SystemServerHooks {
             sWidthParameterStores.clear();
         }
     }
-
 
 }

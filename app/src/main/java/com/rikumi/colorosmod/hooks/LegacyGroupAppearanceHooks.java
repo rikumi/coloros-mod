@@ -8,7 +8,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Drive the original backgrounds and compact header with the same expansion progress. */
 final class LegacyGroupAppearanceHooks {
     private record Background(float alpha, int visibility) { }
     private static final WeakHashMap<View, Background> originalBackgrounds = new WeakHashMap<>();
@@ -27,8 +26,7 @@ final class LegacyGroupAppearanceHooks {
                                     && !Boolean.TRUE.equals(XposedHelpers.callMethod(container, "showingAsLowPriority")))
                             {
                                 p.args[0] = null;
-                                // A null background is already cleared. Repeating the
-                                // native setter would invalidate this header every frame.
+
                                 if (XposedHelpers.getObjectField(header, "mBackground") == null) p.setResult(null);
                             }
                         }
@@ -75,8 +73,7 @@ final class LegacyGroupAppearanceHooks {
             View header = (View) XposedHelpers.getObjectField(original, "mView");
             if (header instanceof android.view.ViewGroup group)
                 LegacyCollapsedGroupHooks.applyHeaderProgress(container, group, progress);
-            // The expanded legacy header is a standalone application heading.
-            // Only the summary/child cards crossfade; the heading has no card.
+
             if (XposedHelpers.getObjectField(header, "mBackground") != null)
                 XposedHelpers.callMethod(header, "setHeaderBackgroundDrawable", (Object) null);
         } catch (Throwable error) { log("legacy group appearance failed: " + error); }

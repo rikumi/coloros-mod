@@ -7,12 +7,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Native fonts are redirected only inside processes to which LSPosed has injected this module. */
 public final class NativeFontHooks {
     private static boolean active;
-    // libc callbacks belong to this library for the rest of the process. Keep only its first
-    // Java owner alive across reloads, so ART cannot unload the .so behind those callbacks.
-    // New generations reuse the installed snapshot and never load/intercept libc a second time.
+
     private static Class<?> libraryOwner;
     private static native boolean configure(String[] paths, int[] descriptors);
     public static boolean isActive() { return active; }

@@ -18,7 +18,6 @@ import java.util.WeakHashMap;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Asymmetric music capsule. Keep the native hole and right edge, spend only the left space. */
 final class FluidCloudLyricGeometry {
     private static final Set<Class<?>> sHooked = new HashSet<>();
     private static View sRoot, sCapsule, sContent, sHostContent, sSpace, sRight;
@@ -50,8 +49,7 @@ final class FluidCloudLyricGeometry {
             boolean keepRightEdge = geometryAttached();
             View anchor = sRestoring ? currentCapsule() : sCapsule;
             if (keepRightEdge && managedCapsule(anchor)) {
-                // CapsuleContainer centers children on every native layout. Align the bound music
-                // capsule to the right padding while its lyric width is changing.
+
                 int right = sContainer.getWidth() - sCapsuleRightInset;
                 int left = right - sPlan.width;
                 anchor.layout(left, anchor.getTop(), right,
@@ -129,9 +127,7 @@ final class FluidCloudLyricGeometry {
                 && sContainer == container;
         NativeBounds previousBounds = reuse ? sNativeBounds.get(sCapsule) : null;
         if (reuse && sRestoring) {
-            // Lyrics can return while the previous track's no-lyrics shrink is still animating.
-            // Resume from the current right-anchored width instead of clearing geometry and
-            // allowing CapsuleContainer's native centered layout to flash in between.
+
             cancelWidthAnimator();
             sTargetPlan = null;
             sRestoring = false;
@@ -185,8 +181,7 @@ final class FluidCloudLyricGeometry {
         sCapsuleRightInset = container.getWidth() - capsule.getLeft() - capsule.getWidth();
         captureStablePadding(content, left, space, right, container, sOuter, reuse);
         installPaddingHooks();
-        // A section rebuild or rapid pause/resume can arrive before the restoring layout pass.
-        // Never recapture an already enlarged capsule as the original right-side width.
+
         sNativeHole = nativeBounds.hole;
         sNativeRightSectionWidth = Math.round(nativeBounds.rightSectionWidth
                 * density / nativeBounds.density);
@@ -213,8 +208,7 @@ final class FluidCloudLyricGeometry {
         if (blank <= 0) blank = ((Number) XposedHelpers.callMethod(sContainer, "getBlankWidth")).intValue();
         int coverId = sLeft.getResources().getIdentifier("img_primary", "id", "com.oplus.systemui.plugins");
         View artwork = coverId == 0 ? null : sLeft.findViewById(coverId);
-        // CapsulePage adds the native module with default FrameLayout MATCH_PARENT params. Its root
-        // grows with the lyric area; the actual img_primary stays at the native 20dp artwork size.
+
         int cover = artwork == null ? 0 : leftWithin(sLeft, artwork)
                 + Math.max(artwork.getMeasuredWidth(), artwork.getLayoutParams().width);
         int screenStart = sRoot.getPaddingLeft();
@@ -406,8 +400,7 @@ final class FluidCloudLyricGeometry {
         int outerLeft = leftWithin(sRoot, sOuter);
         int target = targetRight - outerLeft - sContainer.getWidth()
                 - Math.round(sContainer.getTranslationX());
-        // CapsuleContainer is centered by native layout. Reapply its position after every layout
-        // so its right edge stays fixed and all width change is spent on the left edge.
+
         sContainer.offsetLeftAndRight(target - sContainer.getLeft());
     }
 
@@ -691,8 +684,7 @@ final class FluidCloudLyricGeometry {
         }
         sDrawObserver = null;
         if (sContainer != null && sOuter != null && sContainer.getParent() == sOuter) {
-            // Let the restoring native measure/layout center the original width in one pass.
-            // Centering the still-expanded width here would expose an intermediate position.
+
             sContainer.requestLayout();
         }
         writeIconLimit(sNativeIconLimit);

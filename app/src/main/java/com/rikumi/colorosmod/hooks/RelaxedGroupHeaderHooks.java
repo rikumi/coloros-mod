@@ -13,7 +13,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Keep application names aligned while native group icons change between two sizes. */
 final class RelaxedGroupHeaderHooks {
     private static final WeakHashMap<View, WeakReference<TextView>> names = new WeakHashMap<>();
     private static final WeakHashMap<View, HeaderLine> headerLines = new WeakHashMap<>();
@@ -95,9 +94,7 @@ final class RelaxedGroupHeaderHooks {
                             Object object = XposedHelpers.getObjectField(p.thisObject, "overlayContainer");
                             int top = extraHeight(group) + NotificationGroupPaddingHooks.inset(group) + fixedTopInset(group);
                             if (object instanceof ViewGroup overlay) {
-                                // Native layout resets each copied child's bounds.
-                                // Reserve the name and top inset inside the copied
-                                // body, independently of when real child states apply.
+
                                 for (int i = 0; i < overlay.getChildCount(); i++)
                                     overlay.getChildAt(i).offsetTopAndBottom(top);
                                 XposedHelpers.callMethod(p.thisObject, "updateOverlayTranslation", "relaxed body layout");
@@ -114,9 +111,7 @@ final class RelaxedGroupHeaderHooks {
                             Object object = XposedHelpers.getObjectField(p.thisObject, "overlayContainer");
                             Object header = XposedHelpers.getObjectField(p.thisObject, "opusCollapsedGroupHeader");
                             if (object instanceof View overlay && header instanceof View title) {
-                                // Child states may apply after native overlay updates.
-                                // The copied body now owns its inset, so both roots
-                                // exclude the inset from the native following motion.
+
                                 float base = Math.max(0f, overlay.getTranslationY() - bodyInset);
                                 overlay.setTranslationY(base);
                                 title.setTranslationY(base);
@@ -183,8 +178,7 @@ final class RelaxedGroupHeaderHooks {
         TextView name = line.name.get(), time = line.time.get();
         View button = line.button.get();
         if (name == null || time == null || button == null || name.getHeight() == 0) return;
-        // Native FrameLayout layout resets the button each pass. Keep its arrow
-        // centered on the application-name row, independent of the first child.
+
         int center = name.getTop() + name.getHeight() / 2;
         button.offsetTopAndBottom(center - (button.getTop() + button.getHeight() / 2));
         if (time.getBaseline() < 0 || name.getBaseline() < 0) return;
@@ -195,8 +189,7 @@ final class RelaxedGroupHeaderHooks {
             if (!(current.getParent() instanceof View parent)) return;
             current = parent;
         }
-        // Align text baselines despite differing font padding and time-box height.
-        // Use layout coordinates so native alpha/translation animations remain intact.
+
         time.offsetTopAndBottom(name.getTop() + name.getBaseline() - top - time.getBaseline());
     }
 
@@ -216,8 +209,7 @@ final class RelaxedGroupHeaderHooks {
         int id = header.getResources().getIdentifier("icon_container", "id", "com.android.systemui");
         View iconContainer = id == 0 ? null : header.findViewById(id);
         if (iconContainer == null) return;
-        // Native compact header centers its 32dp icon over the message body.
-        // Keep the name row above it, rather than anchoring both at the same top.
+
         alignIcon(iconContainer, Gravity.CENTER_VERTICAL | Gravity.START, 0);
         id = header.getResources().getIdentifier("icon", "id", "com.android.systemui");
         View icon = id == 0 ? null : iconContainer.findViewById(id);
@@ -278,9 +270,7 @@ final class RelaxedGroupHeaderHooks {
 
     static int fixedExtraHeight(Object object) {
         if (!enabled() || !(object instanceof View group) || NotificationHooks.isMinimizedGroup(group)) return 0;
-        // Fixed 2dp total, using pixel-offset rounding. At the captured 2.975
-        // density this fills the 5px gap between the 271px group and 276px card.
-        // Deliberately independent of the optional notification-padding switch.
+
         return Math.max(0, (int) (2f * group.getResources().getDisplayMetrics().density));
     }
 

@@ -20,7 +20,6 @@ import java.util.HashMap;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-/** root 只读查询：包含 PMS 隐藏入口，并使用桌面相同的安全中心隐藏标志分组。 */
 public final class HiddenAppsQueryCommand {
     public static void main(String[] args) {
         try {

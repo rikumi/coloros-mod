@@ -13,7 +13,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Inline the legacy expand control after the app-name/time line. */
 final class LegacyExpandAlignmentHooks {
     private static final WeakHashMap<View, WeakReference<ViewTreeObserver.OnPreDrawListener>> listeners = new WeakHashMap<>();
 
@@ -55,8 +54,7 @@ final class LegacyExpandAlignmentHooks {
             WeakReference<ViewTreeObserver.OnPreDrawListener> previous = listeners.get(button);
             if (previous != null && previous.get() != null) return;
             ViewTreeObserver.OnPreDrawListener listener = () -> {
-                // Template transforms reset translationX on animation frames without
-                // requesting layout. Correct after those updates, before rendering.
+
                 align(button);
                 return true;
             };
@@ -66,8 +64,7 @@ final class LegacyExpandAlignmentHooks {
     }
 
     private static void align(View button) {
-        // Disabling the setting reinflates the templates. Leave native animation
-        // translations untouched while that rebind is pending.
+
         if (readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) != 1) return;
         if (button.getParent() instanceof View header) hideTimeDivider(header);
         if (button.getWidth() == 0 || !(button.getParent() instanceof ViewGroup parent)) return;
@@ -94,8 +91,7 @@ final class LegacyExpandAlignmentHooks {
                 ? Math.max(parent.getPaddingLeft(), start - gap - button.getWidth())
                 : Math.min(parent.getWidth() - parent.getPaddingRight() - button.getWidth(), end + gap);
         float translation = desired - button.getLeft();
-        // Move the complete native control, including its hit bounds. Keep XML's
-        // measurement reservation so long header text cannot overlap the arrow.
+
         if (button.getTranslationX() != translation) button.setTranslationX(translation);
     }
 

@@ -18,7 +18,6 @@ import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import static com.rikumi.colorosmod.XposedInit.*;
 
-/** Local notification-center grouping; never post or change a notification in system_server. */
 final class SystemNotificationGroupHooks {
     private static final String TAG = "coloros_mod_android_summary";
     private static final Handler main = new Handler(Looper.getMainLooper());
@@ -63,8 +62,7 @@ final class SystemNotificationGroupHooks {
                     sync(p.thisObject);
                 }
             });
-            // RankingMap comes from system_server and cannot contain our local summary.
-            // Hide only our entries during reconciliation, without dispatching removal events.
+
             XposedHelpers.findAndHookMethod(type, "applyRanking", RankingMap.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     Map<String, Object> hidden = new LinkedHashMap<>();
@@ -80,8 +78,7 @@ final class SystemNotificationGroupHooks {
                         entries(p.thisObject).putAll(hidden);
                 }
             });
-            // The user's explicit grouping choice must also apply while the panel
-            // is open, when native visual stability otherwise restores old parents.
+
             XposedHelpers.findAndHookMethod("com.android.systemui.statusbar.notification.collection.ShadeListBuilder", lp.classLoader,
                     "maybeSuppressGroupChange", XposedHelpers.findClass("com.android.systemui.statusbar.notification.collection.NotificationEntry", lp.classLoader),
                     List.class, new XC_MethodHook() {
@@ -103,8 +100,7 @@ final class SystemNotificationGroupHooks {
                     for (Object entry : list) if (leaf(entry)) counts.merge(user(sbn(entry)), 1, Integer::sum);
                     for (var item : counts.entrySet()) if (item.getValue() >= 2 && summaries.containsKey(item.getKey()))
                         visibleSummaries.put(item.getKey(), summaries.get(item.getKey()));
-                    // Keep real summary records in NotifCollection, but render one local
-                    // summary in this list instead of multiple native aggregate headers.
+
                     list.removeIf(entry -> {
                         StatusBarNotification n = sbn(entry);
                         return "android".equals(n.getPackageName()) && ((n.getNotification().flags & Notification.FLAG_GROUP_SUMMARY) != 0)

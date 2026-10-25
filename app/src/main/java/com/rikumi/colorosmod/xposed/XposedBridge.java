@@ -7,13 +7,6 @@ import java.util.Set;
 
 import io.github.libxposed.api.XposedInterface;
 
-/**
- * 兼容层入口: 持有框架注入的 XposedInterface, 并提供旧版 XposedBridge 的
- * log / hookMethod / hookAllConstructors 三个能力。
- *
- * 新版(libxposed)API 只有 OkHttp 风格的拦截器链, 不再提供 XposedHelpers 之类的便利接口;
- * 本包用最小代价把旧语义还原出来, 使 hooks 下的业务代码保持原样。
- */
 public final class XposedBridge {
 
     private static volatile XposedInterface sFramework;
@@ -21,10 +14,6 @@ public final class XposedBridge {
     private XposedBridge() {
     }
 
-    /**
-     * 由模块入口 (XposedInit) 在 onModuleLoaded 中调用。
-     * 在此之前不能做任何 hook —— 框架尚未把 XposedInterface 挂到模块上。
-     */
     public static void attachFramework(XposedInterface framework) {
         sFramework = framework;
     }

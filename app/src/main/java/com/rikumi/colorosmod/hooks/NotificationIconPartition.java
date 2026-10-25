@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 
-/** Partition eligible leaf notifications BEFORE icon limits or per-application deduplication. */
 final class NotificationIconPartition {
     static <T> List<? extends T> leaves(T summary, List<? extends T> children) {
         return children.isEmpty() ? java.util.Collections.singletonList(summary) : children;

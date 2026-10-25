@@ -38,38 +38,6 @@ import java.util.WeakHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-// 控制中心蓝牙磁贴显示降噪控制(com.android.systemui)。
-//
-// 形态直接复用系统三段式静音磁贴(ringermode)的整套实现, 不做自绘。逆向结论(classes3/classes8):
-//   1) 形态选择   TileDataViewModelMapper$Companion#convertTileConfigToViewModel 里硬编码
-//      tileSpec.equals("ringermode") ? TileUiType.THREE_STAGE : TileUiType.DEFAULT;
-//      其结果经 TileEditViewModel#4$3.emit -> mapper.map -> EditTileAdapter 决定
-//      getItemViewType(5=三段式), 再由 EditableTileViewHolder.Companion.fetch 造出
-//      OplusQSResizeableThreeStageView(OplusQSThreeStageIconView)。合并/分离两套控制中心
-//      共用这条链路(OplusQSTilesComponent / OplusQSLeftBTilesComponent), 故改一处即可。
-//   2) 状态下发   OplusQSResizeableThreeStageView#handleTileStateChange 调用
-//      OplusQSThreeStageLayout.setSelectedIndex(state.threeStageMode, ...),
-//      即把 QSTile.State.threeStageMode 当段索引用。
-//   3) 点击回传   OplusQSThreeStageLayout 在触摸/点击时给自己 setTag(段值),
-//      OplusQSResizeableTileView$init$tileClick$1.onClick 把它搬到外层 view 的
-//      R.id.qs_three_stage_tag, 再调 tile.click(); ThreeStageRingerModeTile#handleClick
-//      正是从这里取值。
-//   4) 段值与屏幕位置(LTR) 左=2 中=1 右=0。静音磁贴即 响铃=2(左) 振动=1(中) 静音=0(右)。
-//      本功能沿用同一约定: 降噪=2(左) 关闭=1(中) 通透=0(右), 与需求一致。
-//
-// 降噪状态的读写走欢律(com.oplus.melody)的 EarphoneControlProvider —— 系统给设备卡片/
-// SystemUI 用的正式接口, 声明了 android:permission="com.oplus.permission.safe.IOT"
-// (signature|privileged), SystemUI 持有该权限, 无需 root、无需注入欢律进程。
-//   query  content://com.oplus.melody.provider.EarphoneControlProvider/melody_method_active_device
-//          -> 列 name, address(当前活动耳机, 未连接时为空游标)
-//   query  .../melody_method_noise_reduction  selection="address" args=[mac]
-//          -> 列 name, address, type(当前模式), supports(支持模式的 JSON 数组)
-//   call   .../melody_method_noise_reduction  extras: name / address / type(int) -> 切换模式
-// 欢律状态变化会 notifyChange 该 provider 的根 Uri, 故用 ContentObserver 做近实时回显。
-//
-// 模式类型(欢律 WhitelistConfigDTO.NoiseReductionMode.getModeType):
-//   1=关闭 2=通透 3=轻度降噪 4=深度降噪 5=降噪 10=自适应
-// 图标沿用欢律 melody_ui_reduction_noise_* 的矢量路径, 与欢律详情页完全一致。
 public final class AncTileHooks {
 
     // ---- 欢律 ContentProvider ----
@@ -82,7 +50,7 @@ public final class AncTileHooks {
     private static final String COLUMN_SUPPORTS = "supports";
 
     private static final String SYSUI_PACKAGE = "com.android.systemui";
-    /** 蓝牙磁贴的 tile spec(OplusBluetoothTile#getTileSpec)。 */
+
     private static final String BT_SPEC = "bt";
 
     // ---- SystemUI 侧目标类 ----
@@ -107,8 +75,7 @@ public final class AncTileHooks {
             "com.oplus.systemui.qs.base.temporarilyinfo.TemporarilyInfoManager";
     private static final String CLS_INFO_SHOW_STYLE =
             "com.oplus.systemui.qs.base.temporarilyinfo.TemporarilyInfoManager$InfoShowStyle";
-    // 音量条底部图标(OplusQsVolumeIconView)在蓝牙路由下的状态对象: 连着蓝牙耳机时,
-    // 音量图标会切到 status_bar_qs_icon_volume_media_bt(_mute), 我们要换的就是它。
+
     private static final String CLS_VOLUME_BT_ICON_STATE =
             "com.oplus.systemui.qs.base.seek.OplusQsVolumeIconView$bluetoothRouteIconState$1";
     // 音量条图标的点击监听器(原本是"音量切到最小/恢复", 即静音切换)。
@@ -117,16 +84,12 @@ public final class AncTileHooks {
     private static final String CLS_VOLUME_STATE =
             "com.android.systemui.plugins.qs.QSVolume$VolumeState";
 
-    // 三段式布局里三段图标/动画视图的 id 名(SystemUI 的 oplus_qs_three_stage_layout.xml)。
-    // 顺序固定为 左/中/右, 与 iconResIds 一致。
     private static final String[] ICON_ID_NAMES = {
             "left_icon_view", "middle_icon_view", "right_icon_view"};
     private static final String[] LOTTIE_ID_NAMES = {"left_lottie", "middle_lottie", "right_lottie"};
 
-    // 三段的模式类型(欢律 mode type), 与 ICON_ID_NAMES 同序: 降噪 / 关闭 / 通透。
-    // 降噪一栏按耳机实际支持情况依次尝试 降噪 / 深度降噪 / 轻度降噪 / 自适应。
     private static final int[] SLOT_ANC = {5, 4, 3, 10};
-    /** threeStageMode 段值 -> 段索引(左中右)。 */
+
     private static final int[] STAGE_TO_SLOT = {2, 1, 0};
 
     // 切模式后的回显刷新时机(ms): 欢律写耳机是异步的, 一次太快、一次兜底。
@@ -142,9 +105,8 @@ public final class AncTileHooks {
     // 三段式图标位移的收敛系数: 系统默认是 ±10% 段宽, 蓝牙磁贴取一半。
     private static final float ICON_OFFSET_SCALE = 0.5f;
 
-    /** 一次查询得到的耳机状态快照。 */
     private static final class State {
-        /** 欢律内部名(如 "OnePlus Buds 3"), 写回时必须原样带上, 否则 call 会因名字不匹配被拒。 */
+
         String name;
         String address;
         int type;
@@ -160,7 +122,7 @@ public final class AncTileHooks {
     private static volatile Handler sMain;
     private static volatile ExecutorService sWorker;
     private static volatile ContentObserver sObserver;
-    /** True after preflight successfully detached the provider observer. */
+
     private static volatile boolean sObserverDetachedForHotReload;
     private static final int OBSERVER_ROLLBACK_MAX_ATTEMPTS = 4;
     private static final long OBSERVER_ROLLBACK_BASE_DELAY_MS = 250L;
@@ -171,30 +133,24 @@ public final class AncTileHooks {
     private static volatile int[] sIconIds;
     private static volatile int[] sLottieIds;
 
-    /** 缓存的最新耳机状态; null = 当前没有可控的降噪耳机。所有读取方都只读它。 */
     private static volatile State sState = null;
-    /** 蓝牙磁贴实例(弱引用), 用于状态变化时主动 refreshState。 */
+
     private static volatile WeakReference<Object> sTileRef = new WeakReference<Object>(null);
-    /** 已换成降噪图标的三段式 lottie 视图 -> 标记, 用于跳过 ringermode 动画。 */
+
     private static final Map<Object, Boolean> sAncLottieViews = new WeakHashMap<Object, Boolean>();
-    /** 正在服务蓝牙磁贴的三段式布局实例, 用于把段选中事件路由回降噪切换。 */
+
     private static final Map<Object, Boolean> sAncLayouts = new WeakHashMap<Object, Boolean>();
-    /** 抑制蓝牙开关的时间窗(截止时间), 用于吞掉三段式点击顺带触发的开关蓝牙。 */
+
     private static volatile long sSuppressBtToggleUntil = 0L;
-    /** 待替换的提示文案; null = 这次提示不是蓝牙磁贴触发的, 维持系统原文案。 */
+
     private static volatile String sPendingToast = null;
-    /** 音量条底部图标视图(OplusQsVolumeIconView), 降噪状态变化时主动刷新它。 */
+
     private static volatile WeakReference<Object> sVolumeIconRef = new WeakReference<Object>(null);
-    /** 音量条填充是否已漫过图标(决定深色/浅色), 由 onVolumeStateChanged 更新。 */
+
     private static volatile boolean sVolumeAboveThreshold = false;
-    /**
-     * 期望的降噪模式(乐观值); null = 没有待兑现的切换。
-     * 点击后立即置位并据此刷新 UI, 不等欢律回显 —— 回显期间 sState 会出现中间态
-     * (欢律按 address 精确匹配, 切换瞬间可能查不到而返回 null), 若直接用它刷新,
-     * 磁贴会在两种形态间瞬跳, 表现为闪烁。
-     */
+
     private static volatile Integer sTargetType = null;
-    /** 是否有协调任务在跑, 保证多次点击串行兑现。 */
+
     private static volatile boolean sSyncing = false;
     private static volatile long sLastSyncQueryMs = 0L;
 
@@ -204,11 +160,7 @@ public final class AncTileHooks {
         final ClassLoader cl = lpparam.classLoader;
         log("anc: hooking in " + lpparam.packageName);
         try {
-            // 4. 音量条图标: 蓝牙路由下音量条底部图标原本是
-            //    status_bar_qs_icon_volume_media_bt(_mute) —— 一只耳机, 只反映静音与否。
-            //    有可控降噪耳机时换成降噪/通透图标, 反映真实降噪状态。
-            //    放在 after: 系统的 setImageResource 已把耳机图标设好, 我们再覆盖图形,
-            //    然后交回系统 updateIconColor 决定配色(见 applyVolumeIcon)。
+
             XposedHelpers.findAndHookMethod(
                     XposedHelpers.findClass(CLS_VOLUME_BT_ICON_STATE, cl), "onVolumeStateChanged",
                     XposedHelpers.findClass(CLS_VOLUME_STATE, cl), new XC_MethodHook() {
@@ -218,8 +170,7 @@ public final class AncTileHooks {
                                 Object view = XposedHelpers.getObjectField(param.thisObject, "this$0");
                                 if (view == null) return;
                                 sVolumeIconRef = new WeakReference<Object>(view);
-                                // aboveThreshold: 音量条填充已漫过图标所在位置(距底 >= 20dp),
-                                // 此时图标压在亮色激活区上, 需要深色才看得清。
+
                                 Boolean above = (Boolean) XposedHelpers.getObjectField(
                                         param.thisObject, "aboveThreshold");
                                 sVolumeAboveThreshold = Boolean.TRUE.equals(above);
@@ -236,8 +187,7 @@ public final class AncTileHooks {
         }
 
         try {
-            // 5. 音量条点击: 原本是在"音量最小 <-> 上次音量"之间切换(即静音)。
-            //    有可控降噪耳机时整段吞掉, 改为在降噪/通透之间切换。
+
             XposedHelpers.findAndHookMethod(
                     XposedHelpers.findClass(CLS_VOLUME_ICON_CLICK, cl), "onClick",
                     View.class, new XC_MethodHook() {
@@ -332,21 +282,14 @@ public final class AncTileHooks {
             try {
                 Thread.sleep(POLL_INTERVAL_MS);
             } catch (InterruptedException ignored) {
-                // Preflight interrupts the poller. If rollback reactivated it while a provider
-                // query was still blocked, InterruptedException clears the flag and polling resumes.
+
                 if (!sActive) break;
             }
         }
     }
 
-
-    /**
-     * Non-destructive preflight: stop only the polling loop and wait for it to leave. No observer,
-     * executor, Handler, or cache is changed until this succeeds.
-     */
     public static boolean canHotReload() {
-        // A rejected reload may still be restoring the observer. Do not enter another preflight
-        // with ambiguous registration ownership or create a duplicate registration.
+
         if (sObserverDetachedForHotReload) {
             log("anc observer rollback still pending, rejecting reload");
             return false;
@@ -367,8 +310,7 @@ public final class AncTileHooks {
                 return false;
             }
         }
-        // The poller may exit immediately after sActive becomes false. Its executor can still
-        // contain provider refresh or ANC synchronization work and must always be drained.
+
         ExecutorService worker = sWorker;
         if (worker != null && !worker.isShutdown()) {
             java.util.concurrent.CountDownLatch idle = new java.util.concurrent.CountDownLatch(1);
@@ -405,7 +347,6 @@ public final class AncTileHooks {
         return true;
     }
 
-    /** Restore resources detached by preflight and re-arm the stopped polling loop. */
     public static synchronized void cancelHotReloadPreflight() {
         restoreObserverAfterHotReloadPreflight();
         if (sActive) return;
@@ -488,7 +429,6 @@ public final class AncTileHooks {
         sObserverRollbackAttempts = 0;
     }
 
-    /** Preserve host-owned tile/view identities whose constructors are not replayed by reload. */
     public static Object captureHotReloadHosts() {
         State current = sState;
         Object state = current == null ? null : new Object[] {
@@ -530,7 +470,6 @@ public final class AncTileHooks {
         if (main != null) postUiRefresh();
     }
 
-    /** Destructive commit. Preflight already proved the poller stopped; this method never rejects. */
     public static synchronized void cleanupForHotReload() {
         sActive = false;
         cancelObserverRollbackRetry();
@@ -568,7 +507,6 @@ public final class AncTileHooks {
         return out;
     }
 
-    /** 三段式形态是否可用: 开关已开、当前耳机支持降噪/关闭/通透三种模式。 */
     private static boolean isAvailable() {
         return readBool(KEY_ANC_TILE_ENABLED, false) && sState != null;
     }
@@ -578,7 +516,6 @@ public final class AncTileHooks {
         if (sActive && w != null && !w.isShutdown()) w.execute(r);
     }
 
-    /** 拉取耳机状态，变化时刷新音量条。 */
     private static void refresh() {
         if (!readBool(KEY_ANC_TILE_ENABLED, false)) {
             if (sState != null) {
@@ -591,7 +528,7 @@ public final class AncTileHooks {
         State old = sState;
         if (old != null && st != null && st.signature().equals(old.signature())) return;
         sState = st;
-        // 回显已确认到目标, 乐观值可以撤掉(之后的显示回到真实状态)。
+
         Integer target = sTargetType;
         if (target != null && st != null && st.type == target.intValue()) {
             sTargetType = null;
@@ -600,7 +537,6 @@ public final class AncTileHooks {
         notifyVolumeIcon();
     }
 
-    /** 降噪状态变了就刷新音量条图标(欢律的 notifyChange 不一定带动音量状态刷新)。 */
     private static void notifyVolumeIcon() {
         final Object view = sVolumeIconRef.get();
         if (view == null) return;
@@ -612,8 +548,6 @@ public final class AncTileHooks {
         });
     }
 
-    // mapper 在主线程跑, 缓存未建立时当场同步查一次欢律(一次 IPC, 几十 ms)。
-    // 后台轮询还没跑完就展开控制中心时靠它拿到形态判定所需的状态。
     private static void syncQueryOnce() {
         if (sContext == null) return;
         long now = System.currentTimeMillis();
@@ -632,11 +566,6 @@ public final class AncTileHooks {
         return st == null ? "null" : (st.name + "/" + st.type + "/" + st.supports);
     }
 
-    /**
-     * 把首次布局产生的图标位移收敛到 ICON_OFFSET_SCALE。首次布局早于 sAncLayouts 登记,
-     * 那时 getIconTargetTranslationX 的 hook 还没生效, 故这里补一次。
-     * 走 XposedHelpers.callMethod 调用, hook 已登记, 拿到的就是收敛后的值。
-     */
     private static void fixIconOffset(final Object layout) {
         ((View) layout).post(new Runnable() {
             @Override
@@ -672,14 +601,6 @@ public final class AncTileHooks {
 
     // ---- 音量条图标 ----
 
-    /**
-     * 把音量条底部图标换成当前降噪状态对应的图标(降噪/通透)。
-     * 图标矢量沿用欢律 melody_ui_reduction_noise_*, 与欢律详情页一致。
-     * 配色交回系统: OplusQsVolumeIconView#updateIconColor(isMute, aboveThreshold) 内部是
-     * `z2 ? getUnMuteIconColor() : getMuteIconColor()` 再 setColorFilter —— 第一个参数实际
-     * 未参与着色, 只有 aboveThreshold 决定深浅。故换完图形后调它, 图标被音量条激活部分
-     * 遮盖时自然变深色, 与系统耳机图标的观感一致。
-     */
     private static void applyVolumeIcon(Object view) {
         Resources res = sRes;
         if (res == null || view == null) return;
@@ -700,12 +621,10 @@ public final class AncTileHooks {
         }
     }
 
-    /** 当前是否是通透(含通透人声)模式。 */
     private static boolean isTransparentMode(int type) {
         return type == 2 || type == 6;
     }
 
-    /** 降噪 <-> 通透 二态切换(目标按乐观值算, 故连点能正确在两者间来回)。 */
     private static void toggleAncTransparent() {
         State st = sState;
         if (st == null) return;
@@ -724,7 +643,6 @@ public final class AncTileHooks {
         requestType(target);
     }
 
-    /** 点击某一段后切换模式: slot 为段索引(0=降噪 1=关闭 2=通透)。 */
     private static void applySegment(final int slot) {
         State st = sState;
         if (st == null) return;
@@ -735,7 +653,6 @@ public final class AncTileHooks {
 
     // ---- 切换的乐观更新与串行兑现 ----
 
-    /** 当前应当显示的模式类型: 有待兑现的切换时用乐观值, 否则用真实回显值。 */
     private static int displayType() {
         Integer t = sTargetType;
         if (t != null) return t.intValue();
@@ -743,11 +660,6 @@ public final class AncTileHooks {
         return st == null ? -1 : st.type;
     }
 
-    /**
-     * 请求切到指定模式。立即按乐观值刷新 UI, 再交给协调任务串行下发。
-     * 快速连点不会互相丢弃: 每次点击只是改写 sTargetType, 协调循环会依次把耳机
-     * 兑现到最新目标 —— 即"先切过去, 再切回来"。
-     */
     private static void requestType(final int target) {
         State st = sState;
         if (st == null) return;
@@ -771,7 +683,6 @@ public final class AncTileHooks {
         });
     }
 
-    /** 反复把耳机切到最新目标直到达成; 目标中途被改写就接着切, 从而实现排队。 */
     private static void syncLoop() {
         for (int attempt = 0; attempt < MAX_SYNC_ATTEMPTS; attempt++) {
             Integer target = sTargetType;
@@ -779,7 +690,7 @@ public final class AncTileHooks {
             State cur = queryState();
             if (cur != null) sState = cur;
             if (cur != null && cur.type == target.intValue()) {
-                sTargetType = null;     // 回显已确认, 乐观值兑现
+                sTargetType = null;
                 return;
             }
             if (cur == null) {
@@ -796,7 +707,6 @@ public final class AncTileHooks {
         refresh();
     }
 
-    /** 主线程刷新音量条降噪图标。 */
     private static void postUiRefresh() {
         sMain.post(new Runnable() {
             @Override
@@ -808,8 +718,6 @@ public final class AncTileHooks {
         });
     }
 
-    // 先查当前活动耳机, 再用它的 MAC 查降噪模式。注意 provider 对 selection 是精确匹配:
-    // 必须是 "address" 且 selectionArgs[0] 为 MAC, 否则直接返回 null(见 EarphoneControlProvider#query)。
     private static State queryState() {
         if (sContext == null) return null;
         ContentResolver cr = sContext.getContentResolver();
@@ -866,7 +774,6 @@ public final class AncTileHooks {
         return st;
     }
 
-    /** supports 列是 Gson 序列化的整数数组("[5,1,2]"), 解析失败给空列表。 */
     private static List<Integer> parseSupports(String raw) {
         List<Integer> out = new ArrayList<Integer>();
         if (raw == null) return out;
@@ -881,7 +788,6 @@ public final class AncTileHooks {
         return out;
     }
 
-    /** 段索引 -> 该段实际要下发的欢律 mode type; 不支持返回 0。 */
     private static int typeOfSlot(int slot, List<Integer> supports) {
         if (slot == 1) return contains(supports, 1) ? 1 : 0;
         if (slot == 2) return contains(supports, 2) ? 2 : 0;
@@ -891,7 +797,6 @@ public final class AncTileHooks {
         return 0;
     }
 
-    /** 当前 mode type -> threeStageMode 段值(左=2 中=1 右=0)。 */
     private static int stageOfType(int type) {
         if (type == 1) return 1;
         if (type == 2) return 0;
@@ -902,11 +807,6 @@ public final class AncTileHooks {
         return supports.contains(Integer.valueOf(type));
     }
 
-    /**
-     * 切段提示的文案。段值(左=2 中=1 右=0)先换算成段索引, 再取该段在当前耳机上
-     * 实际对应的模式名 —— 这样支持"深度降噪/轻度降噪/自适应"的耳机会显示真实档位名,
-     * 而不是笼统的"降噪"。文案沿用系统的"已切换到X模式"句式。
-     */
     private static String ancToastText(int stage) {
         State st = sState;
         if (st == null || stage < 0 || stage > 2) return null;
@@ -951,13 +851,11 @@ public final class AncTileHooks {
 
     // ---- 三段式图标替换 ----
 
-    /** 把三段式布局(iconView 宿主)里的响铃/振动/静音换成降噪/关闭/通透, 并登记其 lottie 视图。 */
     private static void applyAncIcons(Object iconViewHost) {
         Object segmentLayout = XposedHelpers.callMethod(iconViewHost, "getSegmentLayout");
         if (segmentLayout == null) return;
         View layout = (View) segmentLayout;
-        // 登记实例, 让 selectSegmentAt / getIconTargetTranslationX 的 hook 只认这一段
-        // 是蓝牙磁贴的三段式布局。
+
         sAncLayouts.put(layout, Boolean.TRUE);
         fixIconOffset(layout);
         int[] iconIds = sIconIds;
@@ -967,8 +865,7 @@ public final class AncTileHooks {
             ImageView icon = (ImageView) layout.findViewById(iconIds[i]);
             if (icon != null) {
                 Drawable d = ancDrawable(i);
-                // 只换图形不碰 tint: 颜色由 OplusQSThreeStageLayout#tintIconColor 按选中态下发,
-                // 沿用静音磁贴那套取值, 无需我们自己算色。
+
                 if (d != null) icon.setImageDrawable(d);
             }
             View lottie = layout.findViewById(lottieIds[i]);
@@ -1002,7 +899,6 @@ public final class AncTileHooks {
         }
     }
 
-    /** 从某个 lottie 视图向上找到所属的 OplusQSThreeStageLayout。 */
     private static View findThreeStageLayout(View v) {
         try {
             Class<?> cls = XposedHelpers.findClass(CLS_THREE_STAGE_LAYOUT, v.getContext()

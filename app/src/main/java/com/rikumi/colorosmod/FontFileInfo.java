@@ -7,7 +7,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
-/** SFNT/TTC metadata. Offsets in TTC table records are relative to the entire file. */
 public final class FontFileInfo {
     public static final long MAX_BYTES = 100L * 1024 * 1024;
     public static final class Face {
@@ -175,7 +174,6 @@ public final class FontFileInfo {
         return 0;
     }
 
-    /** Prefer the requested locale within multi-language TTCs, then native weight/slant distance. */
     public static Face match(List<Face> faces, int weight, boolean italic, String language) {
         Face best = null; int bestScore = Integer.MAX_VALUE;
         boolean hongKong = language.contains("HK");

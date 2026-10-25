@@ -5,7 +5,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Retain the old hybrid/content morph while keeping native expansion completion bookkeeping. */
 final class LegacyGroupContentHooks {
     private static final ThreadLocal<Integer> selectionDepth = ThreadLocal.withInitial(() -> 0);
     private static boolean enabled() { return readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) == 1; }
@@ -33,8 +32,7 @@ final class LegacyGroupContentHooks {
             XposedHelpers.findAndHookMethod(content, lp.classLoader, "getVisualTypeForHeight", float.class, selection);
             XposedHelpers.findAndHookMethod(extension, lp.classLoader, "isChildrenExpandedAnimating", new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    // Only bypass the new hybrid-selection and snap-transition guards.
-                    // Other callers retain the true state, listeners and completion callback.
+
                     if (enabled() && selectionDepth.get() > 0) p.setResult(false);
                 }
             });
@@ -52,8 +50,7 @@ final class LegacyGroupContentHooks {
                     Object container = XposedHelpers.getObjectField(parent, "mChildrenContainer");
                     if (container == null || XposedHelpers.getBooleanField(container, "mUserLocked")) return;
                     java.util.List<?> children = (java.util.List<?>) XposedHelpers.callMethod(container, "getAttachedChildren");
-                    // The native callback has finished the group animation. Refresh hybrid
-                    // selection now, rather than waiting for an unrelated height update.
+
                     for (Object child : children) select(child, false);
                 }
             });

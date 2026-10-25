@@ -24,13 +24,8 @@ import com.rikumi.colorosmod.xposed.XposedBridge;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
-/**
- * 密码输入界面相关的 SystemUI hook: 控件光效、背景亮度、滑动输入、纯色背景绘制。
- */
 public final class PasswordInputHooks {
-    // 取消解锁界面控件光效。COUI 给锁屏密码控件叠了三类"非纯色"绘制(与主题/壁纸无关): 1) 径向渐变光晕
-    // LightEffectHelper#drawLightEffect(LIGHTEN); 2) InnerShadowHelper 生成的内阴影 Bitmap; 3) 高光描边
-    // drawInnerBorder(LUMINOSITY)。另: 已输入圆点的光晕是 drawGlowEffect, 缩放动画取 mCircleScales[index](上限 1.2f)。
+
     private static final String CLS_NUMERIC_KEYBOARD =
             "com.coui.appcompat.lockview.COUINumericKeyboard";
     private static final String CLS_NUMERIC_KEYBOARD_CELL =
@@ -49,7 +44,6 @@ public final class PasswordInputHooks {
         hookPwdInputNoLightEffect(lpparam);
     }
 
-    /** SystemUI 15 draws the keyboard's blur ripple from Cell#blurCircle in onDraw. */
     private static void hookLegacyNumericKeyboardNoBlurRipple(
             final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
@@ -84,7 +78,6 @@ public final class PasswordInputHooks {
         }
     }
 
-    /** PIN/密码键盘(含 SIM 卡界面键盘): 去光晕、去内阴影、去高光描边。 */
     private static void hookNumericKeyboardNoLightEffect(
             final XC_LoadPackage.LoadPackageParam lpparam) {
         // 0) 径向渐变光晕。
@@ -113,8 +106,6 @@ public final class PasswordInputHooks {
             return;
         }
 
-        // 1) 内阴影 Bitmap: 这层是按键唯一的可见背景(delegate 为 null 时),
-        //    跳过前先用本方法的入参画纯色圆 —— 圆心/进退出位移/淡入 alpha 全部由系统传入, 天然跟随动画。
         try {
             XposedHelpers.findAndHookMethod(
                     CLS_NUMERIC_KEYBOARD, lpparam.classLoader, "drawInnerShadowLayer",
@@ -137,9 +128,6 @@ public final class PasswordInputHooks {
             log("HOOK FAIL COUINumericKeyboard#drawInnerShadowLayer :: " + Log.getStackTraceString(t));
         }
 
-    // 2) 按键边框: 整段跳过。drawInnerBorder 里先画 mInnerLightAlpha 触发的高光描边(LUMINOSITY), 再无条件
-    //    画一道 mBorderLineColor 常规描边, 两者都不要。侧边键走 drawSide 时也会调这里, 但它传的 alpha 是
-    //    0.0f, 常规描边 alpha = mBorderLineAlpha * 0 本就不可见, 一并跳过不影响。
         try {
             XposedHelpers.findAndHookMethod(
                     CLS_NUMERIC_KEYBOARD, lpparam.classLoader, "drawInnerBorder",
@@ -159,9 +147,6 @@ public final class PasswordInputHooks {
         }
     }
 
-    // 自定义密码界面背景亮度。壁纸纯黑时锁屏为纯黑, 而 bouncer 为均匀的 (26,26,26)。来源: 设备属性
-    // persist.sys.oplus.anim_level=1 而 isLowGaussianLevel() 要求 >=3, 故本机走 **AutoBlurDrawable** 分支
-    // (之前 hook WallpaperBlurDrawable#draw 无效 —— 该类在本机根本没被实例化)。
     private static final String CLS_PANEL_BLUR_EX_KT =
             "com.oplusos.systemui.common.util.NotifiAndQsPlatformBlurExKt";
     // LUMINOSITY 混色模式(mode 5)。
@@ -211,8 +196,7 @@ public final class PasswordInputHooks {
             log("HOOK OK NotifiAndQsPlatformBlurExKt#panelBouncerMixConfig (bouncer_brightness)");
         } catch (Throwable t) {
             log("HOOK FAIL bouncer_brightness :: " + Log.getStackTraceString(t));
-            // SystemUI 15 builds the bouncer mix inside ScrimControllerExImp rather than
-            // exposing panelBouncerMixConfig(boolean).
+
             try {
                 XposedHelpers.findAndHookMethod(
                         "com.oplus.systemui.statusbar.phone.ScrimControllerExImp",
@@ -268,12 +252,8 @@ public final class PasswordInputHooks {
         }
     }
 
-    // 密码支持滑动输入。系统原生是"抬起与按下同键才输入", 本功能改为"进入即输入": DOWN 圆形命中即按下并输入,
-    // MOVE 换键时取消旧键、新键输入, 移出则取消, UP 仅取消按下态。命中区域 = 以按键中心为圆心、"按键圆半径*2/3"
-    // 为半径的圆; 只认数字键(0-8 -> 1-9、10 -> 0), 排除 9/11 侧键以保留删除/确定的点击语义。
     private static final float SLIDE_HIT_RADIUS_RATIO = 2.0f / 3.0f;
-    // 运行时键盘实例是子类 NumericKeyboardWidget, 但被反射调用的方法都声明在父类
-    // COUINumericKeyboard, 故缓存父类 Class 用于 getDeclaredMethod(见 invokeExact)。
+
     private static Class<?> sKeyboardClass = null;
 
     public static void hookKeyguardSlideInput(final XC_LoadPackage.LoadPackageParam lpparam) {
@@ -293,7 +273,6 @@ public final class PasswordInputHooks {
         hookSlideReset(kbCls);
     }
 
-    /** action: 0=DOWN 1=MOVE 2=UP。三个方法签名同为 (FFI)V。 */
     private static void hookSlideAction(Class<?> kbCls, String method, int action) {
         try {
             XposedHelpers.findAndHookMethod(kbCls, method,
@@ -317,9 +296,7 @@ public final class PasswordInputHooks {
                                         slideStartShrink(kb);
                                     }
                                 }
-                                // 删除(9) / 确定(11) 等侧键保持系统原生点击语义:
-                                // 只要手指正落在侧键上、或当前按下的是侧键, 就完全交还原生处理
-                                // (不 setResult), 否则原生输入路径会被跳过导致点击失效。
+
                                 if (isSideKeyCell(invokeKeyboard(kb, "checkForNewHit",
                                         new Class<?>[]{float.class, float.class}, x, y))
                                         || isSideKeyCell(findPressedCell(kb, pid))) {
@@ -344,18 +321,11 @@ public final class PasswordInputHooks {
         }
     }
 
-    // 滑动输入时的按键缩小: 滑动期间把所有数字键(不含 9/11 侧键)的绘制半径缩到与圆形命中区一致
-    // (mNumberBackgroundRadius * SLIDE_HIT_RADIUS_RATIO), 数字同时淡出; 松手/取消后动画还原。
-    // 实现上只在 drawCell(Canvas, int column, int row) 绘制单格的前后临时替换两个字段:
-    // cell.mButtonScale —— style 1 下 drawInnerShadowLayer / drawInnerBorder 取圆半径、drawCell
-    // 取字号的唯一来源; mKeyboardNumberTextAlpha —— 只作用于数字文本透明度(int, 见 initPaint)。
-    // 替换只发生在一次绘制内, 按下动画/spring 写入的真实值不受影响, 松手后自然是系统自己的值。
     private static final long SLIDE_SHRINK_DURATION_MS = 150L;
     private static final String EXTRA_SLIDE_CELL = "cm_ss_cell";
     private static final String EXTRA_SLIDE_SCALE = "cm_ss_scale";
     private static final String EXTRA_SLIDE_ALPHA = "cm_ss_alpha";
 
-    /** 每个键盘实例一份: 缩小进度、正在滑动的 pointerId 位掩码、当前动画。 */
     private static final class SlideState {
         float progress;   // 0 = 原尺寸, 1 = 缩到命中区尺寸。
         long pointers;
@@ -363,7 +333,6 @@ public final class PasswordInputHooks {
         ValueAnimator animator;
     }
 
-    /** 绘制期缩放: 只改绘制读取的字段, 不参与命中判定(命中半径与 mButtonScale 无关)。 */
     private static void hookSlideDrawCell(Class<?> kbCls) {
         try {
             XposedHelpers.findAndHookMethod(kbCls, "drawCell",
@@ -385,7 +354,6 @@ public final class PasswordInputHooks {
         }
     }
 
-    /** 临时替换(apply=true) / 还原(apply=false) 单格的缩放与数字透明度。 */
     private static void swapSlideShrink(XC_MethodHook.MethodHookParam param, boolean apply) {
         if (!apply) {
             restoreSlideShrink(param);
@@ -445,7 +413,6 @@ public final class PasswordInputHooks {
         return st;
     }
 
-    /** 绘制期只读, 不创建状态。 */
     private static float slideProgress(Object kb) {
         SlideState st = (SlideState) XposedHelpers.getAdditionalInstanceField(kb, "cm_slideState");
         return st == null ? 0f : st.progress;
@@ -472,7 +439,6 @@ public final class PasswordInputHooks {
         }
     }
 
-    /** 所有手指都失效: 立即取消动画并复位(无需动画, 状态本身已丢弃)。 */
     private static void slideResetPointers(Object kb) {
         SlideState st = slideState(kb);
         st.pointers = 0L;
@@ -506,10 +472,6 @@ public final class PasswordInputHooks {
         animator.start();
     }
 
-    // 恢复时机必须看真实 MotionEvent, 不能看 handleActionCancel(int): 手指滑到侧键(9/11)上时我们
-    // 会交还原生 handleActionMove, 而它一旦判定"落点不再是原格"就调 handleActionCancel —— 斜着从 0
-    // 滑到 7 途经侧键/间隙时会误触发, 导致中途弹回原尺寸。因此只在 UP / POINTER_UP(且无其它手指)
-    // / CANCEL 时恢复, 中途移出按键区域(甚至移出键盘)都保持缩小, 直到手指抬起。
     private static void hookSlideTouchTracking(Class<?> kbCls) {
         try {
             // 限定本类声明: onTouchEvent 在 View 里有实现, 上溯会命中所有 View。
@@ -549,7 +511,6 @@ public final class PasswordInputHooks {
         }
     }
 
-    /** 键盘重新做入场动画(bouncer 再次出现)时复位, 避免上一次滑动残留的缩小状态。 */
     private static void hookSlideReset(Class<?> kbCls) {
         try {
             XposedHelpers.findAndHookMethod(kbCls, "getEnterAnim", new XC_MethodHook() {
@@ -577,7 +538,6 @@ public final class PasswordInputHooks {
         }
     }
 
-    /** DOWN: 命中数字键则显示按下态并立即输入该字符。 */
     private static void slideDown(Object kb, float x, float y, int pid) {
         slidePointerDown(kb, pid);
         Object hit = findSlideHitCell(kb, x, y);
@@ -589,7 +549,6 @@ public final class PasswordInputHooks {
         invalidate(kb);
     }
 
-    /** MOVE: 命中键变化时取消旧键、按下并输入新键; 移出所有数字键则取消按下态。 */
     private static void slideMove(Object kb, float x, float y, int pid) {
         Object cur = findPressedCell(kb, pid);
         Object hit = findSlideHitCell(kb, x, y);
@@ -604,7 +563,6 @@ public final class PasswordInputHooks {
         invalidate(kb);
     }
 
-    /** UP: 仅取消按下态(字符在进入时已输入, 抬起不再重复输入)。 */
     private static void slideUp(Object kb, int pid) {
         slidePointerUp(kb, pid);
         Object cur = findPressedCell(kb, pid);
@@ -620,9 +578,6 @@ public final class PasswordInputHooks {
         invalidate(kb);
     }
 
-    // 圆形命中测试: 遍历 sCells 找中心与 (x,y) 距离不超过"按键圆半径*2/3"的数字键。刻意不反射调用键盘实例方法:
-    // getTouchIndex 是 private 且有无参重载; checkForNewHit 定义在父类, 装箱查找会抛 NoSuchMethodError。
-    // 中心按系统公式算(paddingLeft + mCellWidth/2 + col*(mCellWidth+spacing)), 索引按 row*3+column。
     private static Object findSlideHitCell(Object kb, float x, float y) {
         try {
             Object[][] sCells = (Object[][]) XposedHelpers.getObjectField(kb, "sCells");
@@ -632,8 +587,7 @@ public final class PasswordInputHooks {
             float vSp = XposedHelpers.getIntField(kb, "mVerticalSpacing");
             float pl = ((android.view.View) kb).getPaddingLeft();
             float pt = ((android.view.View) kb).getPaddingTop();
-            // 命中半径 = 按键圆半径的 2/3。用 mNumberBackgroundRadius 而不乘 mButtonScale:
-            // mButtonScale 随按下动画缩放, 用它会导致按下后命中区缩小、误触发取消。
+
             float rr = XposedHelpers.getIntField(kb, "mNumberBackgroundRadius") * SLIDE_HIT_RADIUS_RATIO;
 
             float best = rr * rr;
@@ -662,21 +616,17 @@ public final class PasswordInputHooks {
         }
     }
 
-    /** 仅数字键参与滑动输入(0-8 -> 1-9, 10 -> 0); 左键 9 / 右键 11 保持点击语义。 */
     private static boolean isSlideNumberCell(Object cell) {
         int idx = slideTouchIndex(cell);
         return (idx >= 0 && idx <= 8) || idx == 10;
     }
 
-    // 左键(索引 9, 删除) / 右键(索引 11, 确定) 标记为侧键。这里用 row*3+column 的原始位置判断, 而非系统的
-    // getTouchIndex(): 后者在侧键样式为空时返回 -1, 但我们仍需把该位置识别为侧键以便交还原生处理。
     private static boolean isSideKeyCell(Object cell) {
         if (cell == null) return false;
         int idx = slideTouchIndex(cell);
         return idx == 9 || idx == 11;
     }
 
-    /** 索引 = row*3+column, 与系统 private getTouchIndex(Cell) 实现一致, 无需反射。 */
     private static int slideTouchIndex(Object cell) {
         if (cell == null) return -1;
         try {
@@ -688,7 +638,6 @@ public final class PasswordInputHooks {
         }
     }
 
-    /** 扫描 sCells 找 pointerId 匹配的格(避免反射调用 private findCellByPointerId)。 */
     private static Object findPressedCell(Object kb, int pid) {
         if (pid == -1) return null;
         try {
@@ -707,9 +656,6 @@ public final class PasswordInputHooks {
         return null;
     }
 
-    // 用精确签名调用键盘实例方法。不可用 XposedHelpers.callMethod: 它会把基础类型参数装箱后再匹配, 而运行时实例是
-    // 子类 NumericKeyboardWidget, 实测抛 NoSuchMethodError; callback(int)、executeLightEffectAnimator(Cell, boolean)
-    // 必须显式按 int.class/boolean.class 查。调父类方法须在声明类上 getDeclaredMethod(findMethodExact 不搜索父类)。
     private static Object invokeKeyboard(Object target, String name,
             Class<?>[] paramTypes, Object... args) {
         if (sKeyboardClass == null) return null;
@@ -737,7 +683,6 @@ public final class PasswordInputHooks {
         }
     }
 
-    /** 显示按下态: 兼容 mPressEffectStyle 0(传统圆圈) 与 1(光效)。 */
     private static void showPressCell(Object kb, Object cell) {
         try {
             int style = XposedHelpers.getIntField(kb, "mPressEffectStyle");
@@ -752,7 +697,6 @@ public final class PasswordInputHooks {
         }
     }
 
-    /** 取消按下态: 播放收起动画并清除 pointerId。 */
     private static void cancelPressCell(Object kb, Object cell) {
         if (cell == null) return;
         try {
@@ -769,7 +713,6 @@ public final class PasswordInputHooks {
         }
     }
 
-    /** 立即输入该键字符(走系统 callback, 索引到字符的映射与原生完全一致)。 */
     private static void inputCell(Object kb, Object cell) {
         try {
             int idx = slideTouchIndex(cell);
@@ -805,7 +748,6 @@ public final class PasswordInputHooks {
         }
     }
 
-    /** 已输入圆点: 去掉叠在圆点外的光晕 Drawable。 */
     private static void hookSimpleLockNoGlowEffect(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             XposedHelpers.findAndHookMethod(
@@ -824,9 +766,6 @@ public final class PasswordInputHooks {
             log("HOOK FAIL COUISimpleLock#drawGlowEffect :: " + Log.getStackTraceString(t));
         }
 
-        // 圆点缩放动画: drawFilledRectangleWithScale 是唯一对圆点做 canvas.scale 的地方,
-        // 缩放值取 mCircleScales[index](spring 动画输出, 0 -> 1 带回弹, 上限 1.2f)。
-        // 绘制前临时置 1.0f 即等价于恒不缩放, 其余(透明度淡入、位移、save/restore)完全交给系统。
         try {
             XposedHelpers.findAndHookMethod(
                     CLS_SIMPLE_LOCK, lpparam.classLoader, "drawFilledRectangleWithScale",
@@ -850,7 +789,6 @@ public final class PasswordInputHooks {
         }
     }
 
-    /** 把圆点缩放值临时固定为 1.0f(不缩放)再换回, 从而去掉缩放动画但保留系统其余绘制逻辑。 */
     private static void swapCircleScale(XC_MethodHook.MethodHookParam param, boolean apply) {
         try {
             float[] scales = (float[]) XposedHelpers.getObjectField(param.thisObject, "mCircleScales");
@@ -876,9 +814,6 @@ public final class PasswordInputHooks {
     private static final java.util.Map<Object, Integer> sBorderOriginalColors =
             java.util.Collections.synchronizedMap(new java.util.WeakHashMap<Object, Integer>());
 
-    // SIM 卡界面输入框(COUILockScreenPwdInputView)与确定按钮(COUILockScreenPwdInputLayout)的边框由 mBorderPaint
-    // 以 mBorderLineColor 描边。开启时把颜色置全透明并强制重建 paint -> 不可见; 关闭时还原, 门控即时生效。
-    // 注意 COUILockScreenPwdInputLayout 的 mBorderLineColor 为 final, 但反射写入运行时仍生效(值来自资源非编译期常量)。
     private static void setBorderMode(Object view, String colorField, boolean isLayout, boolean enabled) {
         try {
             int cached = isLayout ? sBorderColorLayout : sBorderColorInput;
@@ -897,7 +832,6 @@ public final class PasswordInputHooks {
         }
     }
 
-    /** SIM 卡界面: 输入框与确定按钮的内阴影 + 确定按钮的光晕, 均先补纯色背景再去掉。 */
     private static void hookPwdInputNoLightEffect(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             // 限定本类声明: onDraw 在 View 里有实现, 上溯会命中所有 View。
@@ -971,7 +905,6 @@ public final class PasswordInputHooks {
         }
     }
 
-    /** 把内阴影位图临时换成 1x1 全透明位图(apply=true)或换回原图(apply=false)。 */
     private static void swapInnerShadowBitmap(XC_MethodHook.MethodHookParam param, boolean apply) {
         try {
             if (apply) {
@@ -990,13 +923,9 @@ public final class PasswordInputHooks {
         }
     }
 
-    // 纯色背景。新界面(mPressEffectStyle==1)下这些控件没有背景色, 故去掉光效后必须补一层:
-    // 取系统配置的**完全不透明实色**, 取不到则常态 10% 白、按下 20% 白。只认不透明是因为键盘的
-    // mNumberBackgroundColor 实际为 #33ffffff(20% 白), 用它按下态就恒不变(上一版"按下不变色"的原因)。
     private static final int SOLID_BG_NORMAL = 0x1AFFFFFF;   // 10% 白
-    private static final int SOLID_BG_PRESSED = 0x33FFFFFF;  // 20% 白
+    private static final int SOLID_BG_PRESSED = 0x33FFFFFF;
 
-    // 绘制只在主线程, 复用同一个 Paint 即可。
     private static final android.graphics.Paint sFillPaint = new android.graphics.Paint(
             android.graphics.Paint.ANTI_ALIAS_FLAG);
 
@@ -1013,7 +942,6 @@ public final class PasswordInputHooks {
         return paint;
     }
 
-    /** ScenesMode: 只有 1(桌面/新界面)时这些控件才走光效绘制分支。 */
     private static int scenesMode(Object view) {
         try {
             return XposedHelpers.getIntField(view, "mScenesMode");
@@ -1022,7 +950,6 @@ public final class PasswordInputHooks {
         }
     }
 
-    /** 控件自身被设置的纯色背景(传统代码路径设置的值), 没有则返回兜底色。 */
     private static int resolveSolidBgColor(Object view, boolean pressed) {
         if (view instanceof android.view.View) {
             android.graphics.drawable.Drawable bg = ((android.view.View) view).getBackground();
@@ -1036,14 +963,10 @@ public final class PasswordInputHooks {
         return pressed ? SOLID_BG_PRESSED : SOLID_BG_NORMAL;
     }
 
-    /** 只有完全不透明的实色才算"系统给了有效背景"。 */
     private static boolean isOpaqueColor(int color) {
         return (color >>> 24) == 0xFF;
     }
 
-    // 密码按键的纯色背景。hook 点 drawInnerShadowLayer(Canvas, float cx, float cy, Cell, int tx, int ty, float alpha):
-    // 系统自己在该方法里按 (cx+tx, cy+ty) 定位、按 mNumberBackgroundRadius*mButtonScale 取半径、按 alpha*255
-    // 取透明度, 故全部沿用入参不做二次推算, 动画天然同步; 9/11 侧边键走 drawSide, 不进此方法。
     private static void drawKeySolidBackground(XC_MethodHook.MethodHookParam param) {
         Object keyboard = param.thisObject;
         Canvas canvas = (Canvas) param.args[0];
@@ -1080,7 +1003,6 @@ public final class PasswordInputHooks {
         canvas.drawCircle(cx, cy, radius, paint);
     }
 
-    /** 与 drawInnerShadowLayer / drawInnerBorder 同口径: mNumberBackgroundRadius * mButtonScale。 */
     private static float keyRadius(Object keyboard, float scale) {
         try {
             return XposedHelpers.getIntField(keyboard, "mNumberBackgroundRadius") * scale;
@@ -1098,7 +1020,6 @@ public final class PasswordInputHooks {
         return value < 0f ? 0f : (value > 1f ? 1f : value);
     }
 
-    /** SIM 输入框: 圆角矩形背景(mBackgroundPath 在 onSizeChanged 中构建)。 */
     private static void drawPwdViewSolidBackground(Object view, Canvas canvas) {
         android.graphics.Path path = (android.graphics.Path)
                 XposedHelpers.getObjectField(view, "mBackgroundPath");
@@ -1106,9 +1027,6 @@ public final class PasswordInputHooks {
         canvas.drawPath(path, fillPaint(resolveSolidBgColor(view, false)));
     }
 
-    // SIM 确定按钮: 圆形背景, 圆心与半径的计算与系统 dispatchDraw(147-155 行)完全一致。
-    // 按下判定不能用 nextIcon.isPressed(): mNextIcon 是 ImageView 且系统从不对它 setPressed, 恒 false。
-    // 改用 mLightEffectAlpha —— 它由按下动画拉起、抬起回落为 0, 是本控件唯一的按下态信号。
     private static void drawNextIconSolidBackground(Object layout, Canvas canvas) {
         android.view.View nextIcon = (android.view.View)
                 XposedHelpers.getObjectField(layout, "mNextIcon");
@@ -1139,8 +1057,7 @@ public final class PasswordInputHooks {
         return sTransparentBitmap;
     }
     public static void cleanupForHotReload() {
-        // SlideState (including animators) lives only in XposedHelpers additional fields.
-        // The global quiescing gate guarantees no callback is mutating it while that table is cleared.
+
         synchronized (sBorderOriginalColors) {
             for (java.util.Map.Entry<Object, Integer> entry :
                     new java.util.ArrayList<>(sBorderOriginalColors.entrySet())) {
@@ -1158,6 +1075,5 @@ public final class PasswordInputHooks {
         sBorderColorInput = Integer.MIN_VALUE;
         sBorderColorLayout = Integer.MIN_VALUE;
     }
-
 
 }

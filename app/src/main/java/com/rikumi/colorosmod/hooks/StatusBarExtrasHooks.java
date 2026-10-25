@@ -14,7 +14,6 @@ import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedBridge;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** 只改变 QS 运营商视图和状态栏外置电量文字，不修改共享的时钟容器。 */
 public final class StatusBarExtrasHooks {
     private static final WeakHashMap<View, Integer> carriers = new WeakHashMap<>();
     private static final WeakHashMap<TextView, CharSequence> percents = new WeakHashMap<>();

@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
-/** 仅生成显示列表与坐标；不修改控制中心保存的数据。 */
 final class IdleMediaGeometry {
     static final int CARD = 1, MEDIA = 3, VERTICAL_ONLY = 4;
     static final class Cell {

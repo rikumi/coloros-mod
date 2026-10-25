@@ -1,6 +1,5 @@
 package com.rikumi.colorosmod.hooks;
 
-/** Android 15 child-position rule, using the configured compact spacing. */
 final class LegacyGroupGeometry {
     // notification_header_height from the supplied Android 15 template is 46dp.
     static final int COLLAPSED_HEADER_DP = 46;

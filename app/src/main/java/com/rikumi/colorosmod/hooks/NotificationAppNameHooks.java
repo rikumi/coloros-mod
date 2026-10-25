@@ -12,7 +12,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Display-only application labels; retain the notification's original substitute-name extras. */
 public final class NotificationAppNameHooks {
     public static final String KEY = "notification_real_app_name_enabled";
 

@@ -25,7 +25,6 @@ import com.rikumi.colorosmod.xposed.XposedHelpers;
 
 import java.util.Set;
 
-/** 调整 ColorOS 分屏应用顶部三点菜单栏。 */
 public final class MultiWindowHooks {
     private static final float ORIGINAL_CAPTION_BAR_HEIGHT_DP = 40f;
     // 系统三点 drawable 的路径中心在 21.5dp，而 40dp 画布的几何中心是 20dp。
@@ -70,8 +69,7 @@ public final class MultiWindowHooks {
                             View child = group.getChildAt(i);
                             resizeCanvasControlChild(child, compactHeight);
                             if (child instanceof ImageButton) {
-                                // 保留系统三个点 drawable 相对几何中心的 1.5dp
-                                // 视觉校正；高亮背景本身不再跟随这个偏移。
+
                                 child.setTranslationY(-offset);
                             }
                         }

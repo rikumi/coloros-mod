@@ -7,7 +7,6 @@ import io.github.libxposed.service.XposedService
 import java.io.File
 import java.security.MessageDigest
 
-/** Publish one immutable snapshot for LSPosed's native font file redirects. */
 internal object NativeFontBridge {
     fun prepare(context: Context, service: XposedService, overrideKey: String? = null,
                 overrideValue: Int? = null, overrideFile: File? = null): String {

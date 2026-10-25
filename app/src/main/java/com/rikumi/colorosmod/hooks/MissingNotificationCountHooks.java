@@ -23,7 +23,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
 
-/** Reuses the host badge, its colors/hidden-area handling, and the synchronous native icon binder. */
 public final class MissingNotificationCountHooks {
     private static final String BASE = "com.oplus.systemui.statusbar.icon.";
     private static final String BADGE = "com.oplus.systemui.statusbar.widget.NotificationBadgeView";
@@ -232,9 +231,7 @@ public final class MissingNotificationCountHooks {
                 XposedHelpers.callMethod(keyguard, "getAreNotificationsFullyHidden"), "getValue");
         Map<String, Object> children = new LinkedHashMap<>();
         java.util.Set<Object> candidates = new LinkedHashSet<>(representatives);
-        // A local summary has no server ranking of its own. Its representative
-        // can be filtered while an eligible child (e.g. wireless ADB) still needs
-        // a status-bar icon. Re-evaluate these leaves using native eligibility.
+
         for (Object group : groups.values()) {
             Object summary = XposedHelpers.callMethod(group, "getSummary");
             if (SystemNotificationGroupHooks.localSummaryKey((String) XposedHelpers.callMethod(summary, "getKey")))

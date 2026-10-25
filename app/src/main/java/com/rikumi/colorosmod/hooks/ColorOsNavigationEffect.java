@@ -10,7 +10,6 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.function.BiConsumer;
 
-/** ViewRootImplExtImpl's native color-pick layer, owned by SystemUI. */
 final class ColorOsNavigationEffect implements AutoCloseable {
     private final Handler main;
     private final SurfaceControl parent, layer;
@@ -46,8 +45,7 @@ final class ColorOsNavigationEffect implements AutoCloseable {
             else if ("toString".equals(method.getName())) return "ColorOSMod native navigation color listener";
             return null;
         });
-        // A task leash is a bufferless container. Supply an owned buffer layer below the
-        // real app; SurfaceFlinger can then read it exactly as it reads the app's BLAST layer.
+
         Method ownerMetadata = SurfaceControl.Builder.class.getMethod("setMetadata", int.class, int.class);
         SurfaceControl.Builder source = new SurfaceControl.Builder().setName("ColorOSMod navigation source")
                 .setParent(target.surface).setBufferSize(target.bounds.width(), target.bounds.height());

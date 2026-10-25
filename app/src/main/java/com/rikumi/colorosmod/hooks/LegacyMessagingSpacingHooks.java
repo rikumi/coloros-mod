@@ -9,7 +9,6 @@ import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import static com.rikumi.colorosmod.XposedInit.*;
 
-/** Remove the current framework's extra non-conversation avatar inset on old templates. */
 final class LegacyMessagingSpacingHooks {
     private record Avatar(int width, int start) { }
     private static final WeakHashMap<View, Avatar> avatars = new WeakHashMap<>();
@@ -124,8 +123,7 @@ final class LegacyMessagingSpacingHooks {
                             int inset = avatar.getPaddingStart();
                             ViewGroup.LayoutParams params = avatar.getLayoutParams();
                             if (inset <= 0 || params == null || params.width <= inset) return;
-                            // Native setIsInConversation resets both width and padding.
-                            // Remove the same amount from both, preserving avatar size/end gap.
+
                             avatars.put(avatar, new Avatar(params.width, inset));
                             params.width -= inset;
                             avatar.setLayoutParams(params);
@@ -135,8 +133,7 @@ final class LegacyMessagingSpacingHooks {
             XposedHelpers.findAndHookMethod("com.oplus.systemui.statusbar.notification.row.wrapper.OplusNotificationMessagingTemplateViewWrapperExImpl",
                     lp.classLoader, "onContentUpdated", new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            // This OEM callback assumes the new header geometry: a
-                            // 32dp icon, centered top line and group-header height.
+
                             if (enabled()) p.setResult(null);
                         }
                         @Override protected void afterHookedMethod(MethodHookParam p) {

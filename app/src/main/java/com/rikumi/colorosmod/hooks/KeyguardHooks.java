@@ -23,9 +23,6 @@ import com.rikumi.colorosmod.xposed.XposedBridge;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
-/**
- * 锁屏 / 解锁界面(bouncer)交互相关的 SystemUI hook。
- */
 public final class KeyguardHooks {
     private static final String CLS_OPLUS_BIOMETRIC_UNLOCK_CONTROLLER =
             "com.oplus.systemui.statusbar.phone.OplusBiometricUnlockControllerExImpl";
@@ -34,7 +31,6 @@ public final class KeyguardHooks {
     private static final java.util.concurrent.atomic.AtomicInteger sFingerprintFailureCount =
             new java.util.concurrent.atomic.AtomicInteger();
 
-    /** 普通指纹失败累计三次后才允许系统自动显示密码；系统锁定错误继续走原生即时回退。 */
     public static void hookFingerprintFailureDelay(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             XposedHelpers.findAndHookMethod(
@@ -84,9 +80,6 @@ public final class KeyguardHooks {
         }
     }
 
-    // 解锁时关机无需校验密码。电源菜单的凭据校验只有一个闸门: ShutdownBiometricPrompt.isEnable(Context)
-    // —— 返回 true 才弹校验, false 则直接执行关机/重启。
-    // 故设备已解锁时把返回值改成 false 即可跳过; 锁屏/未解锁时保持系统原生行为。
     public static void hookUnlockedShutdownNoVerify(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             XposedHelpers.findAndHookMethod(
@@ -113,8 +106,6 @@ public final class KeyguardHooks {
         }
     }
 
-    // 设备是否仍处于"未解锁"状态: 锁屏显示中或当前用户尚未解锁(二者任一为真即视为未解锁, 保守不跳过校验)。
-    // 取不到状态时返回 true, 保证异常情况下退回系统原生校验行为。
     static boolean isDeviceLocked(android.content.Context ctx) {
         if (ctx == null) return true;
         try {
@@ -127,9 +118,6 @@ public final class KeyguardHooks {
         }
     }
 
-    // 锁屏通知区域下移。通知区顶部位置有三处来源: NotificationPanelViewController#getKeyguardNotification
-    // StaticPadding、OplusLockscreenShadeTransitionControllerExImpl#getNtfTopPaddingInLockscreen(NtfCenter)。
-    // 三者汇入 updateTopPadding 且参与内部差值计算, 故叠加同一偏移量以保持差值与动画起止值不变。
     private static final String CLS_NOTIFICATION_PANEL_VC =
             "com.android.systemui.shade.NotificationPanelViewController";
     private static final String CLS_LOCKSCREEN_SHADE_TRANSITION_EX_IMPL =
@@ -199,7 +187,6 @@ public final class KeyguardHooks {
         }
     }
 
-    /** 锁屏通知区域下移量(px); 功能关闭时为 0。 */
     static int keyguardNotificationOffsetPx(float density) {
         if (!readBool(KEY_KEYGUARD_NOTIFICATION_OFFSET_ENABLED, false)) return 0;
         int dp = readInt(KEY_KEYGUARD_NOTIFICATION_OFFSET_DP,
@@ -209,7 +196,6 @@ public final class KeyguardHooks {
         return Math.round(dp * density);
     }
 
-    /** 锁屏是否正在显示; 取不到该方法时不下移(保持原样最安全)。 */
     static boolean isKeyguardShowing(Object panelViewController) {
         try {
             return (Boolean) XposedHelpers.callMethod(panelViewController, "isKeyguardShowing");
@@ -218,9 +204,6 @@ public final class KeyguardHooks {
         }
     }
 
-    // 输入密码界面支持侧滑/下滑返回, 两者最终都收敛到 StatusBarKeyguardViewManager#onBackPressed。
-    // 侧滑: bouncer 显示时临时清 SideGestureDetector 的 mSysUiFlags bit64、置 bit17 以放行手势。
-    // 下滑: PIN(COUINumericKeyboard)与字母(SecurityKeyboardView)两类各 hook 一个, 自识别下滑后回调。
     private static final String CLS_SECURITY_KEYBOARD_VIEW =
             "com.oplus.securitykeyboardui.SecurityKeyboardView";
     private static final String CLS_COUI_NUMERIC_KEYBOARD =
@@ -234,15 +217,12 @@ public final class KeyguardHooks {
 
     private static final String BOUNCER_SWIPE_BACK_HINT = "下滑返回指纹解锁";
 
-    /** SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING(1<<6): 置位时侧滑被判定为 "back gesture disabled by sysui flags"。 */
     private static final long SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING = 1L << 6;
-    /** SYSUI_STATE_ALLOW_GESTURE_IGNORING_BAR_VISIBILITY(1<<17): 置位时 shouldRespondToGesture() 恒为真。 */
+
     private static final long SYSUI_STATE_ALLOW_GESTURE_IGNORING_BAR_VISIBILITY = 1L << 17;
 
-    /** 缓存 StatusBarKeyguardViewManager 实例, 供触发 onBackPressed() 使用。 */
     private static volatile Object sKeyguardViewManager;
 
-    /** Preserve the process-lifetime manager because its constructor is not replayed after reload. */
     public static Object captureHotReloadHost() {
         return sKeyguardViewManager;
     }
@@ -260,9 +240,7 @@ public final class KeyguardHooks {
     }
 
     public static void hookBouncerSwipeBack(final XC_LoadPackage.LoadPackageParam lpparam) {
-        // 0) 缓存 StatusBarKeyguardViewManager 实例, 供触发 onBackPressed() 使用。
-        //    用 hookAllConstructors(免签名) 而不是等某个方法被调用 —— 后者若总不被调用则实例为 null,
-        //    下滑会静默失效。StatusBarKeyguardViewManager 在 SystemUI 中是单例。
+
         try {
             XposedBridge.hookAllConstructors(
                     XposedHelpers.findClass(CLS_STATUS_BAR_KEYGUARD_VIEW_MANAGER, lpparam.classLoader),
@@ -441,7 +419,6 @@ public final class KeyguardHooks {
         }
     }
 
-    /** primary bouncer 是否显示; 取不到时按 false 处理(不改变原行为)。 */
     private static boolean isPrimaryBouncerShowing(Object ksc) {
         try {
             Object r = XposedHelpers.callMethod(ksc, "isPrimaryBouncerShowing");
@@ -456,9 +433,6 @@ public final class KeyguardHooks {
         }
     }
 
-    // 键盘下滑触发阈值(px), 必须随起手位置自适应: "0 两侧按钮"与删除键在键盘最底行、紧贴屏幕底部,
-    // 固定 48dp 时手指滑出屏幕也达不到(前几版 0 两侧下滑无反应的原因)。滑出 View 仍收到 MOVE、超出屏幕
-    // 则收不到, 故可用距离 = 起始点到屏幕底部; 取其 60% 为阈值(上限 48dp), 保证任何位置起手都滑得到。
     private static float bouncerSwipeThresholdPx(View v, float startY) {
         DisplayMetrics dm = v.getResources().getDisplayMetrics();
         int[] loc = new int[2];
@@ -467,9 +441,6 @@ public final class KeyguardHooks {
         return Math.min(48.0f * dm.density, toScreenBottom * 0.6f);
     }
 
-    // PIN/数字键盘下滑起点: 4 行 x 3 列网格, 索引 = row*3+col, callback(i) 中 0..8->数字 1-9、10->0、
-    // 9/11->左右侧键(11=删除); 只允许未命中、9、11 触发, 落在数字键上交给键盘。checkForNewHit 是私有方法。
-        // 主判定用私有方法 checkForNewHit(FF); 反射失败会恒 false 致功能静默失效, 故另加几何兜底。
     private static boolean isNumericKeyboardSwipeStartAllowed(Object keyboardView, MotionEvent ev) {
         boolean byCell = false;
         try {
@@ -489,8 +460,6 @@ public final class KeyguardHooks {
             // 反射失败时走下面的几何兜底
         }
 
-        // 几何兜底: 语义与主判定等价(最底行 + 左右两侧列, 排除中间的 0), 只依赖 getWidth/getHeight。
-        // 底行从 3/4 处开始, 故阈值取 0.75, 避免误判到倒数第二行的 7 / 9。
         if (!byCell && keyboardView instanceof View) {
             View v = (View) keyboardView;
             float h = v.getHeight();
@@ -502,9 +471,6 @@ public final class KeyguardHooks {
         return byCell;
     }
 
-    // 键盘下滑起点是否允许触发返回。不能用 "getKeyIndices 返回 -1" 作唯一依据: 它仅当落点在特殊符号
-    // 竖列(x <= mSpecialKeyWidth)内才返回 -1, 0 两侧按钮/删除键/空隙都返回有效索引, 首版据此误排除了它们。
-    // 改为取 mKeys[idx].codes[0]: 只排除数字键 '0'-'9', 其余(特殊符号、删除键 -5、空隙)均允许。
     private static boolean isKeyboardSwipeStartAllowed(Object keyboardView, MotionEvent ev) {
         try {
             Object idxObj = XposedHelpers.callMethod(
@@ -523,7 +489,6 @@ public final class KeyguardHooks {
         }
     }
 
-    /** 收起 bouncer 返回锁屏, 与系统 back / 背景层下滑同一入口。 */
     private static boolean dismissBouncer() {
         Object kvm = sKeyguardViewManager;
         if (kvm == null) return false;

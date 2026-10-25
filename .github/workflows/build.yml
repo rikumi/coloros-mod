@@ -11,6 +11,8 @@ permissions:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    env:
+      XPOSED_REPO_TOKEN: ${{ secrets.XPOSED_REPO_TOKEN }}
 
     steps:
       - name: Checkout (with tags)
@@ -34,7 +36,6 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      # 以项目声明版本作为发布下限，后续发布对最新正式版本做 patch +1。
       - name: Compute next version
         id: version
         run: |
@@ -56,7 +57,18 @@ jobs:
           echo "previous_tag=$LATEST" >> "$GITHUB_OUTPUT"
           echo "Next version: $VERSION (from $LATEST)"
 
-      # 同步写入 app/build.gradle 的 versionCode / versionName
+      - name: Generate release changelog
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          NOTES="docs/releases/$VERSION.md"
+          if [ -f "$NOTES" ]; then
+            cp "$NOTES" release-notes.md
+            exit 0
+          fi
+          echo "Missing release notes: $NOTES" >&2
+          exit 1
+
       - name: Bump version in app/build.gradle
         run: |
           VERSION="${{ steps.version.outputs.version }}"
@@ -116,24 +128,6 @@ jobs:
           git tag "v${{ steps.version.outputs.version }}"
           git push origin "v${{ steps.version.outputs.version }}"
 
-      - name: Generate release changelog
-        env:
-          PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          NOTES="docs/releases/$VERSION.md"
-          if [ -f "$NOTES" ]; then
-            cp "$NOTES" release-notes.md
-            exit 0
-          fi
-          if [ -n "$PREVIOUS_TAG" ]; then
-            RANGE="${PREVIOUS_TAG}..HEAD"
-          else
-            RANGE="HEAD"
-          fi
-          git log "$RANGE" --pretty=format:'- %s (%h)' \
-            --invert-grep --grep='^chore: bump version to ' > release-notes.md
-
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
@@ -154,7 +148,6 @@ jobs:
             app/build/outputs/apk/release/*.apk
           fail_on_unmatched_files: true
 
-      # 同步 README 与 release 到 Xposed-Modules-Repo 镜像仓库
       - name: Sync to Xposed-Modules-Repo
         env:
           TOKEN: ${{ secrets.XPOSED_REPO_TOKEN }}

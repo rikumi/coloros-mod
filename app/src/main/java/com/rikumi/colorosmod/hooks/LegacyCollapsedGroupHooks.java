@@ -8,7 +8,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Restore framework group headers and hybrid rows without replacing the current stack. */
 final class LegacyCollapsedGroupHooks {
     private static final java.util.WeakHashMap<View, Integer> nameInsets = new java.util.WeakHashMap<>();
     private static final java.util.WeakHashMap<View, java.lang.ref.WeakReference<android.view.ViewTreeObserver.OnPreDrawListener>> headerListeners = new java.util.WeakHashMap<>();
@@ -34,9 +33,7 @@ final class LegacyCollapsedGroupHooks {
                     "updateIntrinsicHeight", container, XposedHelpers.findClass("android.view.NotificationHeaderView", lp.classLoader),
                     int.class, int.class, int.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            // The new path snaps to collapsed height while its animation
-                            // flag is set, or subtracts the header for a single child.
-                            // The old path returns the continuously calculated body height.
+
                             if (enabled()) p.setResult(p.args[3]);
                         }
                     });
@@ -87,9 +84,7 @@ final class LegacyCollapsedGroupHooks {
         int nameId = NotificationResourceIds.get(header.getResources(), "app_name_text", "id", "android");
         View line = header.findViewById(lineId), name = header.findViewById(nameId);
         if (line == null || name == null || name.getWidth() == 0) return;
-        // The restored ordinary header has a 16dp icon inset, 14dp icon and
-        // 6dp gap: its app-name start is 36dp. Group-only outer padding must
-        // not be counted again. Adjust logical start, preserving RTL/end padding.
+
         int left = 0;
         for (View child = name; child != container;) {
             left += child.getLeft();
@@ -143,9 +138,7 @@ final class LegacyCollapsedGroupHooks {
     private static void dimensions(Object container) {
         float density = ((View) container).getResources().getDisplayMetrics().density;
         XposedHelpers.setIntField(container, "mCollapsedHeaderMargin", Math.round(LegacyGroupGeometry.COLLAPSED_BODY_DP * density));
-        // Header glyphs stay centered in the real 46dp template. The compact
-        // child list starts at 40dp independently, as before the height correction.
-        // Keep the expanded first-child position at 56dp.
+
         XposedHelpers.setIntField(container, "mAdditionalExpandedHeaderMargin", Math.round((LegacyGroupGeometry.EXPANDED_BODY_DP - LegacyGroupGeometry.COLLAPSED_BODY_DP) * density));
         XposedHelpers.setIntField(container, "mChildPadding", Math.round(4 * density));
         XposedHelpers.setFloatField(container, "mCollapsedBottomPadding", Math.round(16 * density));
@@ -173,8 +166,7 @@ final class LegacyCollapsedGroupHooks {
             nativeTitle = XposedHelpers.getObjectField(extension, "oplusExpandHeader");
         }
         if (!(nativeTitle instanceof View title)) return;
-        // A previous module version could insert a layout without registering
-        // it with the ROM's owner. Keep only that owner's current title.
+
         for (int i = header.getChildCount() - 1; i >= 0; i--) {
             View child = header.getChildAt(i);
             if (child != title && child.getId() == id) header.removeViewAt(i);
@@ -219,8 +211,7 @@ final class LegacyCollapsedGroupHooks {
             View child = header.getChildAt(i);
             if (child != title) {
                 if (child.getAlpha() != 1f - progress) child.setAlpha(1f - progress);
-                // Transformation helpers reset alpha late in the frame. At the
-                // expanded endpoint hide the compact shell as well as fading it.
+
                 if (progress >= 1f && child.getVisibility() == View.VISIBLE) child.setVisibility(View.INVISIBLE);
             }
         }
@@ -236,8 +227,7 @@ final class LegacyCollapsedGroupHooks {
             Object original = XposedHelpers.callMethod(container, "getNotificationHeaderWrapper");
             if (original == null) return;
             ViewGroup header = (ViewGroup) XposedHelpers.getObjectField(original, "mView");
-            // setVisible resets transformation state; do not call it on every
-            // expansion frame when the original header is already visible.
+
             if (header.getVisibility() != View.VISIBLE) XposedHelpers.callMethod(original, "setVisible", true);
             stackHeader((View) container, header);
             for (String name : new String[]{"icon", "notification_top_line", "app_name_text", "expand_button", "expand_button_pill", "expand_button_icon"}) {

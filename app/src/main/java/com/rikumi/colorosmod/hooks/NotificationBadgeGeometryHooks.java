@@ -11,7 +11,6 @@ import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import static com.rikumi.colorosmod.XposedInit.log;
 
-/** Size the trailing missing-icon count using the same drawing box and cell as icons. */
 final class NotificationBadgeGeometryHooks {
     private static final String BADGE = "com.oplus.systemui.statusbar.widget.NotificationBadgeView";
     private static final String[] FIELDS = {"mCircleRadius", "mRoundRectHeight", "mRoundRectWith",

@@ -14,7 +14,6 @@ import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import static com.rikumi.colorosmod.XposedInit.log;
 
-/** Keep the native count shape/geometry but replace the Android group's palette. */
 final class SystemNotificationGroupIconHooks {
     private static final WeakHashMap<FrameLayout, State> pills = new WeakHashMap<>();
     private static final WeakHashMap<ImageView, WeakReference<State>> icons = new WeakHashMap<>();

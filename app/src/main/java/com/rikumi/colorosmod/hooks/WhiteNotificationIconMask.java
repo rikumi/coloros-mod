@@ -1,6 +1,5 @@
 package com.rikumi.colorosmod.hooks;
 
-/** Extract white foreground only; preserve alpha/holes and reject empty or mostly-white plates. */
 final class WhiteNotificationIconMask {
     static int[] extract(int[] source) {
         int[] result = new int[source.length];
@@ -13,8 +12,7 @@ final class WhiteNotificationIconMask {
             if (a == 0) continue;
             int alpha;
             if (background != null) {
-                // Unmix white over the dominant colored plate. This retains the
-                // antialiasing that a hard near-white cutoff would remove.
+
                 int channel = background[0] <= background[1] && background[0] <= background[2] ? 0
                         : background[1] <= background[2] ? 1 : 2;
                 int value = channel == 0 ? r : channel == 1 ? g : b;

@@ -13,7 +13,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import static com.rikumi.colorosmod.XposedInit.MODULE_PACKAGE;
 
-/** Only the verified system notification artwork; never process arbitrary application icons. */
 final class SystemNotificationIconMasks {
     private static final Map<String, Context> contexts = new java.util.HashMap<>();
     private static final Map<String, Icon> cache = new LinkedHashMap<>(16, .75f, true) {
@@ -37,8 +36,7 @@ final class SystemNotificationIconMasks {
             String name = target.getResources().getResourceEntryName(icon.getResId());
             if (owner.equals("android") && pkg.equals("android") && name.equals("stat_sys_adb"))
                 return Icon.createWithResource(MODULE_PACKAGE, R.drawable.ic_android_debug_monochrome);
-            // The active Oplus Wi-Fi overlay contains this exact native outline
-            // as a vector alongside its blue-plate density PNGs.
+
             if (owner.equals("android") && pkg.equals("com.android.wifi.resources") && name.equals("ic_wifi_settings"))
                 return Icon.createWithResource(MODULE_PACKAGE, R.drawable.ic_hotspot_monochrome);
             if (!owner.equals("com.android.systemui") || !pkg.equals(owner)

@@ -21,7 +21,6 @@ import java.util.ArrayList;
 import java.lang.ref.WeakReference;
 import java.util.WeakHashMap;
 
-/** 合并版卡片通过约束求解器以宽度决定高度，保留原有水平约束及区域排布。 */
 public final class MergedCardRatioHooks {
     private static Class<?> containerClass, constraintParamsClass, highlightClass, mediaClass, roundRectClass, iconClass, normalTileClass;
     private static final WeakHashMap<ViewGroup, Boolean> hosts = new WeakHashMap<>();
@@ -99,8 +98,7 @@ public final class MergedCardRatioHooks {
                             View icon = (View) p.thisObject;
                             if (!ratioEnabled(icon) || mergedRoot(icon) == null) return;
                             int size = updateIconSize(icon);
-                            // 普通磁贴也使用方形的实际图形尺寸。展开态父 Frame 的旧宽度或
-                            // AT_MOST 约束不能再次将已放大的图标压窄。
+
                             p.args[0] = View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY);
                             if (icon.getParent() instanceof View frame && frame.getParent() instanceof View tile
                                     && highlightClass.isInstance(tile)) {
@@ -150,8 +148,7 @@ public final class MergedCardRatioHooks {
                     if (icon != null && iconTransforms.containsKey(icon))
                         iconTransforms.put(icon, new IconTransform(icon));
                     if (!ratioEnabled(tile)) return;
-                    // 原生资源刷新会重置 mIconFrame/mBg 的 LayoutParams 和图标 scale。
-                    // 根节点宽度、子节点身份没有变化，旧 GeometryPass 会错误地跳过修复。
+
                     geometryPasses.remove(root);
                     if (containerClass.isInstance(root)) cardScales.remove(root);
                     if (icon != null) {
@@ -373,7 +370,6 @@ public final class MergedCardRatioHooks {
         return MergedTileGridHooks.root(view);
     }
 
-    /** 只缩放合并版卡片区域内的半径，外部磁贴保持系统行为。 */
     public static float scaleRadius(View view, float radius) {
         if (Boolean.TRUE.equals(restoringRadius.get()) || !ratioEnabled(view)) return radius;
         Float surfaceScale = MergedTileGridHooks.surfaceScale(view);
@@ -477,8 +473,7 @@ public final class MergedCardRatioHooks {
 
     private static boolean isTileSurface(View view) {
         View ancestor = view.getParent() instanceof View parent ? parent : null;
-        // Highlight cards also keep their full card background in mBg (an ImageView).
-        // Exclude it from icon transforms just like the circular backgrounds of normal tiles.
+
         while (ancestor != null && !normalTileClass.isInstance(ancestor) && !highlightClass.isInstance(ancestor))
             ancestor = ancestor.getParent() instanceof View parent ? parent : null;
         return ancestor != null && (view == field(ancestor, "mIconFrame") || view == field(ancestor, "mBg"));
@@ -671,8 +666,7 @@ public final class MergedCardRatioHooks {
     private static Object outlineProvider(View view, Object source) {
         Float custom = customHighlightRadius(view);
         if (custom != null) {
-            // Like the slider's setCornerRadius, convert the design radius to the native
-            // smooth radius AND weight. Using custom directly makes 2x1 tiles rounder.
+
             Class<?> constant = XposedHelpers.findClass(
                     "com.oplus.systemui.qs.base.res.util.QSConstant", view.getClass().getClassLoader());
             return XposedHelpers.callStaticMethod(constant, "getSmoothRoundRectOutlineProvider", view.getContext(), custom);

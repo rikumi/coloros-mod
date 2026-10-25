@@ -5,7 +5,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-/** Framework/SystemUI notification IDs are configuration-independent, unlike dimensions. */
 final class NotificationResourceIds {
     private static final WeakHashMap<Resources, Map<String, Integer>> caches = new WeakHashMap<>();
     static synchronized int get(Resources resources, String name, String type, String owner) {

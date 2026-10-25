@@ -23,9 +23,6 @@ import com.rikumi.colorosmod.xposed.XposedBridge;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
-/**
- * 控制中心(Quick Settings)相关的 SystemUI hook。
- */
 public final class QsHooks {
     private static final java.util.WeakHashMap<Object, Boolean> nameHosts = new java.util.WeakHashMap<>();
     private static final android.os.Handler radiusHandler = new android.os.Handler(android.os.Looper.getMainLooper());
@@ -41,13 +38,9 @@ public final class QsHooks {
         StatusBarExtrasHooks.hookCarrier(lpparam);
     }
 
-    // 控制中心顶栏间距(经典/合并模式): 右侧状态图标簇 quick_qs_status_icons 在
-    // OplusQSFakeStatusController 展开进度回调中原地渐隐(避免先执行原生位移动画);
-    // 页脚 OplusQSFooterImpl#mSettingsContainer 让日期/设置按钮小幅下沉。
     public static void hookQsTopMargin(final XC_LoadPackage.LoadPackageParam lpparam,
                                         final int footerPx) {
-        // 真正执行顶部图标簇位移动画的是 OplusQSFakeStatusController 的展开进度监听器，
-        // 不是 OplusQuickStatusBarHeader#setExpansion（该版本没有这个方法）。
+
         try {
             XposedHelpers.findAndHookMethod(
                     "com.oplus.systemui.qs.fake.OplusQSFakeStatusController$qsPanelExpandFractionListener$1",
@@ -122,10 +115,6 @@ public final class QsHooks {
             log("HOOK FAIL OplusQSFooterImpl :: " + Log.getStackTraceString(t));
         }
 
-        // 分离模式 - 以下三个 hook 针对控制中心(QS)页的 fake 状态图标簇
-        // (fakeStatusIconContainer / statusIconsView)。通知中心页的图标簇不在 fake 容器里
-        // (通知中心展开时系统把 separateQsFakeLayout 置 GONE), 而由 OplusQSSimpleHeader 顶部
-        // 的 quick_qs_status_icons 承载, 见下方 OplusQSSimpleHeader#onInit hook。
         try {
             XposedHelpers.findAndHookMethod(
                     "com.oplus.systemui.plugins.qs.seamless.SeparateQSFakeStatusController$qsPanelExpandFractionListener$1",
@@ -188,11 +177,6 @@ public final class QsHooks {
             log("HOOK FAIL SeparateQSFakeStatusController status cluster :: " + Log.getStackTraceString(t));
         }
 
-        // 分离模式通知中心头部真实状态图标簇: OplusQSSimpleHeader#getStatusIconsContainer()
-        // (quick_qs_status_icons) 由 OplusSimpleQSFakeController 注入真实 StatusBarIconView。
-        // 通知中心展开时系统把 separateQsFakeLayout 置 GONE, fake 容器已不可见; 真正显示在
-        // 右上角的是这里 quick_qs_status_icons 里的真实图标。系统从不在展开时切换其可见性
-        // (仅做 translationX 动画), 故 onInit 后 INVISIBLE 一次即持久生效。
         try {
             XposedHelpers.findAndHookMethod(
                     "com.oplus.systemui.separate.OplusQSSimpleHeader",
@@ -229,8 +213,6 @@ public final class QsHooks {
         }
     }
 
-    // 展开回调中原生会同时移动两个不同节点: mStatusIconsView(状态栏) 与 quickStatus(QS 顶栏)。
-    // 因此在 fraction 第一次大于 0 时直接 INVISIBLE, 在原生 translation 执行前阻止移动动画可见。
     static void applyQsStatusClusterFade(Object fractionListener, float expansionFraction) {
         Object controller = XposedHelpers.getObjectField(fractionListener, "this$0");
         boolean enabled = readBool(KEY_QS_TOPMARGIN_ENABLED, false);
@@ -260,9 +242,6 @@ public final class QsHooks {
         }
     }
 
-    // 分离模式图标簇隐藏: 控制中心 fakeStatusIconContainer 与通知中心 fakeNotificationIconContainer
-    // 跟经典模式同理在展开进度回调里原地渐隐; 展开态真实状态图标在 statusIconsView, 由
-    // access$showOrHideView 的弹簧动画重新显示, 故单独取消动画后隐藏。
     static void applySeparateStatusClusterFade(Object controller, float expansionFraction) {
         boolean enabled = readBool(KEY_QS_TOPMARGIN_ENABLED, false);
         boolean hide = enabled && expansionFraction > 0f;
@@ -304,17 +283,6 @@ public final class QsHooks {
         }
     }
 
-    // 合并控制中心时间日期取消展开动画(com.android.systemui)。
-    // 页脚 OplusQSFooterImpl 承载时间(mClockView, R.id.qs_footer_clock)与日期(mQsDateView,
-    // R.id.oplus_date)。createAndUpdateExpandAnimators 里建好的动画按 QS 展开进度 fraction 驱动:
-    //   mPortAndFoldAnimator       -> 时间 scaleX/scaleY: 1 -> 2 (平板为 2.1),
-    //                                 translationX: 0 ~ qs_footer_clock_expand_translation_x,
-    //                                 translationY: 0 ~ (设置按钮半高 - mClockBaseline)(同一 builder 还带
-    //                                 设置按钮/多用户/搜索按钮的位移, 不在本功能范围内);
-    //   mDateX/YExpandTranslationAnimator -> 日期平移到放大后的时间下方。
-    // fraction=0 即"一次下拉"的初始态(小字号、未位移), fraction=1 为完全展开态(放大并移动)。
-    // 固定单行时保留原生适配后的基础倍率, 只取消二次展开的放大和时间/日期位移。
-    // FakeStatusController 的一次下拉时钟也使用该倍率; 固定为 1 会在交接时缩小。
     public static void hookQsClockNoExpandAnim(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             XposedHelpers.findAndHookMethod(
@@ -355,9 +323,6 @@ public final class QsHooks {
         }
     }
 
-    // 合并控制中心背景压暗, 承载背景的是"背后 scrim"。为什么"纯黑背景反而变灰": behind scrim 默认
-    // top=LUMINOSITY+#99333333 把亮度归一化到 ~0.2, 且该混色在 AGSL shader 里合成、位于窗口内容之下。
-    // 故 hook getPanelPlatformMixConfig 改 top 为 LUMINOSITY+近黑、bottom OVERLAY 置 0。
     public static void hookQsBackgroundDim(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             try {
@@ -389,9 +354,7 @@ public final class QsHooks {
                                         }
                                     }
                                     if (bg == null) return;
-                                    // top=LUMINOSITY(5) 把亮度归一化到该层 RGB 亮度; bottom 关闭。
-                                    // alpha=0x99(与系统默认同强度)使结果亮度直接等于 top 层 RGB 亮度。
-                                    // 亮度由滑条 qs_scrim_brightness 控制: 0=全黑, 20=系统默认(不压暗), 10≈50%。
+
                                     int brightness = readInt(KEY_QS_SCRIM_BRIGHTNESS, QS_SCRIM_BRIGHTNESS_DEFAULT);
                                     brightness = Math.max(0, Math.min(20, brightness));
                                     int gray = Math.round(brightness * QS_SCRIM_LUMIN_MAX / 20f);
@@ -415,13 +378,6 @@ public final class QsHooks {
         }
     }
 
-    // 控制中心/通知中心背景模糊半径。系统在 ScrimControllerExImp#refreshBehindDrawable 里用
-    // NotifiAndQsPlatformBlurExKt.panelBlurRadius(context) 建 BlurConfig 交给 AutoBlurDrawable。
-    // 不能 hook panelBlurRadius: 它是静态方法, 通知卡片(ViewBlurManager)与锁屏堆叠
-    // (KeyguardStackingBlurConfig)也调它, 改了会连带影响这两处。这里在 refreshBehindDrawable
-    // 建好之后只改这一份 BlurConfig 的 blurRadius(public 可写字段), 再 applyBlurConfig 生效。
-    // refreshBehindDrawable 在初始化/主题变化/UI 模式变化等多处被调用(共 4 处), 且若 drawable
-    // 已是 AutoBlurDrawable 会提前 return, 故这里必须放在 after, 对两种情形都成立。
     public static void hookQsBackgroundBlurRadius(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             Class<?> exImpClass = XposedHelpers.findClass(
@@ -432,8 +388,7 @@ public final class QsHooks {
                         protected void afterHookedMethod(MethodHookParam param) {
                             try {
                                 if (!readBool(KEY_QS_BLUR_RADIUS_ENABLED, false)) return;
-                                // 界面滑条以 10 为刻度(0-80), 写入时乘 QS_BLUR_RADIUS_SCALE 得 0-800。
-                                // clamp 是为兼容改动前已落盘的实际值(存的就是 800 之类), 否则会乘出超大半径。
+
                                 int value = readInt(KEY_QS_BLUR_RADIUS, QS_BLUR_RADIUS_DEFAULT);
                                 value = Math.max(0, Math.min(QS_BLUR_RADIUS_MAX, value));
                                 int radius = value * QS_BLUR_RADIUS_SCALE;
@@ -462,14 +417,6 @@ public final class QsHooks {
         }
     }
 
-    // 控制中心/通知中心背景缩小幅度。系统由 ScrimViewExImp#setBlurAndScaleAmount /
-    // setScaleAmount 调 NotifiAndQsPlatformBlurExKt.applyPanelMirrorScale, 把 mirrorScale
-    // 设成 z ? lerp(1.0f, 0.9f, f) : 1.0f —— 完全展开(f=1)时 0.9, 即缩小 10%; 缩小量 = 1-mirrorScale。
-    // 这个方法只被上述两处调用, 且调用前都判了 this.isBehind, 所以只作用于控制中心背景,
-    // 不会波及通知卡片 / 锁屏堆叠等其它模糊(与 panelBlurRadius 那种三处共用的静态方法不同)。
-    // 这里按滑条比例缩放"缩小量"再写回 mirrorScale: ratio=0 不缩小, 1 为系统默认, 0.5 为系统一半。
-    // 因为是对 f 的当前值做变换, 原生"随下拉逐渐缩小"的动画保留。
-    // 注意 z=false 时系统给 1.0, 缩小量为 0, 算出仍是 1.0, 无副作用。
     public static void hookQsBackgroundScale(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             Class<?> proxyClass = XposedHelpers.findClass(
@@ -506,13 +453,6 @@ public final class QsHooks {
         }
     }
 
-    // 控制中心 WLAN/蓝牙 名称单行省略, 分离版与合并版都生效。
-    // 分离版(2x1 可伸缩磁贴 OplusQSResizeableTileViewTwoXOne): WLAN 的 SSID 写在主标题
-    // labelTitle(R.id.tile_label), 由 handleTileStateChange 经 TextSwitcherExtKt.setContent 写入;
-    // 蓝牙设备名写在副标题 labelDesc(R.id.tile_label_desc), 由 updateLabelDescText 写入。
-    // 合并版(高亮磁贴 OplusQSHighlightTileView, 子类 OplusQSHighlightTileViewImpl): WLAN 的 SSID
-    // 与蓝牙设备名都经 handleStateChanged 落到 mLabel(TextSwitcher, R.id.tile_label)。
-    // 在这些方法之后对相应 TextView 强制单行+省略号。
     public static void hookQsTileNameEllipsis(final XC_LoadPackage.LoadPackageParam lpparam) {
         // WLAN/BT 等可伸缩磁贴(2x1)字段名一致; 本类没有 updateLabelText(标题在 handleTileStateChange 里直接写)。
         final String cls = "com.oplus.systemui.plugins.qs.customize.view.tile.OplusQSResizeableTileViewTwoXOne";
@@ -543,8 +483,6 @@ public final class QsHooks {
             }
         }
 
-        // 合并版控制中心: 高亮磁贴(含 Wi-Fi/蓝牙)的标签统一由基类 handleStateChanged 写入 mLabel,
-        // SSID 写 state.label, 蓝牙设备名(spec=bt 且 state==2)写 state.labelDesc, 都落在 mLabel 上。
         final String stdCls = "com.oplus.systemui.qs.base.tile.OplusQSHighlightTileView";
         try {
             XposedHelpers.findAndHookMethod(stdCls, lpparam.classLoader, "handleStateChanged",
@@ -668,15 +606,8 @@ public final class QsHooks {
         return "wifi".equals(spec) || "bt".equals(spec);
     }
 
-    // 控制中心 Wi-Fi / 蓝牙 / 音量 / 亮度 的圆角。
-    // 系统判定: FlavorTwoFeatureOption.isFlavorTwoDeviceExp() = (一加品牌) && (海外 exp 区域)。
-    // 命中(OxygenOS)时高亮磁贴(Wi-Fi/蓝牙)与滑条(音量/亮度)用 60dp 大圆角, 否则用 16dp。
-    // 关闭不覆盖，开启按短边的 0–50% 设置半径。
     public static void hookQsNormalCornerRadius(final XC_LoadPackage.LoadPackageParam lpparam) {
-        // 音量 / 亮度滑条: 合并式(com.oplus.systemui.qs.widget.OplusQsToggleSliderLayout)与分离式
-        // (com.oplus.systemui.plugins.qs.widget.OplusQsToggleSliderLayout)共同继承
-        // OplusQsBaseToggleSliderLayout, 半径最终都经它的 setCornerRadius(float) 落到 seekbar;
-        // 该方法在基类里是 final, 两处调用都会走到, 一次 hook 覆盖两种模式。
+
         try {
             XposedHelpers.findAndHookMethod(
                     "com.oplus.systemui.qs.base.seek.OplusQsBaseToggleSliderLayout",
@@ -701,9 +632,7 @@ public final class QsHooks {
         } catch (Throwable t) {
             log("HOOK FAIL OplusQsBaseToggleSliderLayout#setCornerRadius :: " + Log.getStackTraceString(t));
         }
-        // 旧版 ROM: 半径经 updateRadius(seekbar, radius) 落到 seekbar, 无 setCornerRadius。
-        // 合并式(com.oplus.systemui.qs.widget)与分离式(com.oplus.systemui.plugins.qs.widget)
-        // 都在 onShapeChanged 里调基类的它, 与上面二选一命中。
+
         try {
             Class<?> baseSliderClass = XposedHelpers.findClass(
                     "com.oplus.systemui.qs.base.seek.OplusQsBaseToggleSliderLayout", lpparam.classLoader);
@@ -731,17 +660,11 @@ public final class QsHooks {
             log("HOOK FAIL OplusQsBaseToggleSliderLayout#updateRadius :: " + Log.getStackTraceString(t));
         }
 
-        // 高亮磁贴(Wi-Fi / 蓝牙)轮廓: 合并式 StdQSTileResInteractor 与分离式 SepQSTileResInteractor
-        // 各自产出一个 RoundRectOutlineProvider, 分别写入 StdQSResPool / SepQSResPool,
-        // 再被 OplusQSHighlightTileView#onOutlineUpdate / OplusQSResizeableTileView*
-        // 当作背景 drawable 的 PathProvider, 决定磁贴可见圆角。
         hookQsHighlightTileOutline(lpparam, "com.oplus.systemui.qs.res.domain.interactor."
                 + "StdQSTileResInteractor$startHighlightTileOutlineCollection$2");
         hookQsHighlightTileOutline(lpparam, "com.oplus.systemui.qs.res.domain.interactor."
                 + "SepQSTileResInteractor$startHighlightTileOutlineCollection$2");
-        // 旧版 ROM 无上述 Interactor; 半径统一由 PersonalityManager#getHighlightRadius 产出,
-        // 判定同样是 isFlavorTwoDeviceExp() && 圆形 -> 60dp, 否则 16dp。
-        // 调用方 QsUtil(普通磁贴) / QsViewOutlineProviderKt(轮廓) 都走这里。
+
         hookQsHighlightRadius(lpparam);
     }
 
@@ -806,12 +729,6 @@ public final class QsHooks {
         }
     }
 
-    // 构造"只保留 top 层压暗"的混色对象。两类 ROM 的混色类随版本不同:
-    //   新版 MixColorWithShader(topMode, topLayerColor, bottomMode, bottomLayerColor) 四参,
-    //        bottom 需显式给 OVERLAY(2) + 0 才算关闭;
-    //   旧版 MixColor(mode, topLayerColor, bottomLayerColor) 三参, 没有 bottomMode,
-    //        一个 mode 同时作用于两层, bottomLayerColor 置 0 即关闭该层。
-    // 因此按构造器参数个数二选一, 两种构造的压暗语义一致。
     static Object newQsMixColor(Class<?> cls, int darkTop) throws Exception {
         for (java.lang.reflect.Constructor<?> c : cls.getConstructors()) {
             Class<?>[] types = c.getParameterTypes();
@@ -827,8 +744,6 @@ public final class QsHooks {
         return null;
     }
 
-    // The merged layout's local override must retain the actual native provider,
-    // not the customized provider currently published in the resource pool.
     static Object nativeMergedHighlightOutline() {
         for (java.util.Map.Entry<Class<?>, Object[]> entry : radiusOutlines.entrySet())
             if (entry.getKey().getName().equals("com.oplus.systemui.qs.base.res.StdQSResPool"))
@@ -915,8 +830,7 @@ public final class QsHooks {
         Integer percent = qsCornerRadiusPercent();
         if (percent == null) return null;
         View target = view;
-        // Vertical sliders render inside their slider child; highlight tiles
-        // render in mBgDrawable, whose bounds reflect the actual card size.
+
         try {
             Object slider = XposedHelpers.getObjectField(view, "slider");
             if (slider instanceof View child) target = child;
@@ -968,12 +882,6 @@ public final class QsHooks {
         tv.setHorizontallyScrolling(false); // 关闭横向滚动/跑马灯, 仅静态行尾省略
     }
 
-    // 分离版控制中心左右切换取消切入效果。
-    // 系统默认在通知中心/控制中心之间左右滑动切换时, 离场页会做 alpha 渐隐 + scale(0.85~1.0) 的"切变",
-    // 入场页做位移, 形成"淡入缩放"过渡。开启后改为两页直接随手指平移:
-    // 入场页保持原位移 initTranslationX + f; 离场页由"原地淡隐/缩放"改为位移 f(与入场页同量级), 并固定 alpha=1 scale=1。
-    // 切变只发生在 OplusPanelViewPagerController 的合成访问器 access$setAlphaAndTranslationXForScrollX
-    // (onScrollX 各阶段以 (controller, 离场view, 入场view, f, z) 调用), before 整体替换即可。
     public static void hookQsPanelSwitchNoCut(final XC_LoadPackage.LoadPackageParam lpparam) {
         final String cls = "com.oplus.systemui.separate.OplusPanelViewPagerController";
         try {

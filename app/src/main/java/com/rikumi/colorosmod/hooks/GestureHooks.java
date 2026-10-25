@@ -19,22 +19,16 @@ import com.rikumi.colorosmod.xposed.XposedBridge;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
-/**
- * 手势导航(SystemUI)相关 hook：手势条高度、mBack 触摸与反馈、手势带防穿透。
- */
 public final class GestureHooks {
     private static volatile boolean sImeVisible;
     // 判定为向左/右/上划动的阈值（dp），超过则放弃 MBack 接管。
     static final int MBACK_SWIPE_DP = 20;
-    // 旋转按钮到屏幕两边的边距(dp)，与系统侧边距 oplus_floating_rotation_button_side_margin 同值，
-    // 使按钮中心落在屏幕圆角的 45° 平分线上。
+
     static final float ROTATION_BUTTON_MARGIN_DP = 12f;
 
     static final java.util.WeakHashMap<Object, Boolean> sBarExtraApplied =
             new java.util.WeakHashMap<>();
 
-    // 恢复原生旋转按钮位置：按钮落在「当前屏幕底边」与「建议旋转方向下屏幕底边」的夹角，
-    // 即当前屏幕的左下角或右下角，取决于建议的旋转方向。
     public static void hookRotationButtonNativePosition(
             final XC_LoadPackage.LoadPackageParam lpparam) {
         final Class<?> buttonClass;
@@ -83,8 +77,6 @@ public final class GestureHooks {
             log("rotation button fixed position layout hook failed: " + t);
         }
 
-        // Oplus 的 updateTranslation 始终读取 mSideMargin；执行期间替换为统一边距，
-        // 右侧重力下同时取反，让按钮和任务栏切换动画都朝屏幕内侧偏移。
         try {
             XposedHelpers.findAndHookMethod(buttonClass, "updateTranslation", boolean.class,
                     new XC_MethodHook() {
@@ -130,9 +122,6 @@ public final class GestureHooks {
         }
     }
 
-    // 建议旋转方向(RotationButtonController#mLastRotationSuggestion)，由
-    // NavigationBar#onRotationProposal 在显示按钮之前写入。取不到时退回当前方向，
-    // 即保持系统默认的左下角。
     static int rotationButtonSuggestedRotation(Object button, int rotation) {
         try {
             Object controller = XposedHelpers.getObjectField(
@@ -144,10 +133,6 @@ public final class GestureHooks {
         }
     }
 
-    // rotation 值增大 = 渲染内容顺时针旋转(设备逆时针转动)，已用 onRotationProposal 的图标分支
-    // 核对: suggested == rotation + 1 走 CW 图标、rotation + 3 走 CCW 图标。内容顺时针转 90 度后
-    // 新的屏幕底边落在当前屏幕的左侧边，故 +1 时夹角在左下(系统默认的那一侧)；
-    // +3 时新的底边落在当前屏幕的右侧边，夹角在右下。相差 180 度时两条底边平行，无夹角，保持左下。
     static boolean isRotationButtonOnRight(int rotation, int suggested) {
         return (suggested - rotation + 4) % 4 == 3;
     }
@@ -201,8 +186,6 @@ public final class GestureHooks {
 
     static final long MBACK_RIPPLE_HIDE_DELAY_MS = 280L;
 
-    // 同一手势的状态: 以 MotionEvent.getDownTime() 为稳定标识(同手势 DOWN..UP 间恒定),
-    // 彻底不依赖 param.thisObject 在 libxposed 下是否每次 new 出包装壳。
     private static final class MBackGesture {
         boolean down;
         boolean cancelled;
@@ -231,8 +214,7 @@ public final class GestureHooks {
                             android.view.MotionEvent ev = (android.view.MotionEvent) param.args[0];
                             if (ev == null) return;
                             long downTime = ev.getDownTime();
-                            // mBack 仅在白条水平范围内生效; 白条外(两侧)只响应系统手势,
-                            // 不触发返回/震动, 也不接管事件(放行 handle 原逻辑)。
+
                             if (ev.getActionMasked() == android.view.MotionEvent.ACTION_DOWN) {
                                 MBACK_IN_RANGE.put(downTime, isInMBackBarRange(handle, ev));
                             }
@@ -246,10 +228,7 @@ public final class GestureHooks {
         } catch (Throwable t) {
             log("mback hook failed: " + t);
         }
-        // 以下都是 view 生命周期回调, 必须限定本类声明: 上溯到 android.view.View 会让
-        // hook 对进程内所有 View 生效, 且 addView -> dispatchAttachedToWindow 会重新
-        // 进入 onAttachedToWindow 的 hook, 直接栈溢出。缺失即放弃(旧版 ROM 无覆写),
-        // 只失去视觉反馈层, 不影响上面的触摸接管。各自独立 try, 互不连累。
+
         try {
             Class<?> handleClass = XposedHelpers.findClass(
                     "com.oplus.systemui.navigationbar.gesture.sidegesture.OplusNavigationHandle",
@@ -294,9 +273,6 @@ public final class GestureHooks {
         }
     }
 
-    // 避免手势区域点击穿透: 手势导航下 NavigationBarExImpl.updateInsetsTouchability 把导航栏窗口的
-    // touchableRegion 限制为白条区域, 手势带其余部分的事件直接透传。故把 touchableRegion 设为
-    // 「mBack 热区顶部 -> 窗口底部」这一段(设成整窗口会挡住底部整条), 并在同段内放全宽透明拦截层。
     public static void hookGestureTouchThrough(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             Class<?> navigationBarClass = findNavigationBarClass(lpparam.classLoader);
@@ -371,17 +347,14 @@ public final class GestureHooks {
                                                 navBar, "mImeVisible");
                                     } catch (Throwable ignored) { }
                                     if (navImeVisible) {
-                                        // IME 与面板沿用 SystemUI 原始 touchable insets；这里只清理
-                                        // 本功能先前创建的拦截层，不能把导航栏窗口改成整块可触摸。
+
                                         removeGestureBlockSurfaces(view);
                                         return;
                                     }
                                     syncGestureBlockSurface(view);
                                     // 通知中心/控制中心展开时保留系统原始区域, 不做任何拦截。
                                     if (!isGestureBlockActive(view)) return;
-                                    // 触摸区域决定窗口真正拦截的范围(导航栏窗口实测 179px 高,
-                                    // 设成整窗口会挡住底部整条)。只取 mBack 热区顶部到窗口
-                                    // 底部这一段; 其上方的事件照旧透传给下层应用。
+
                                     int topY = computeGestureBandTop(view, getGestureBarHeightPx(view));
                                     Object info = param.args[0];
                                     Object regionObj = XposedHelpers.getObjectField(info, "touchableRegion");
@@ -452,9 +425,7 @@ public final class GestureHooks {
         } catch (Throwable t) {
             log("gesture touch-through detach hook failed: " + t);
         }
-        // 面板展开/收起时导航栏窗口不一定重算 insets, 靠 onComputeInternalInsets 无法及时撤销
-        // 拦截。OplusNavigationBarView.updateSlippery 在 CentralSurfacesImpl 的展开 fraction
-        // 达到 0/1 以及 QS 展开变化时都会被调用, 是可靠的同步时机。
+
         try {
             XposedHelpers.findAndHookMethod(
                     "com.oplusos.systemui.navigationbar.OplusNavigationBarView",
@@ -503,10 +474,6 @@ public final class GestureHooks {
         return false;
     }
 
-    // mBack 热区留白: 手势条高度设置值(KEY_GESTURE_BAR_HEIGHT_DP, 单位 dp)的一半加 4dp, 上限 10dp。
-    // 默认值与手势条高度功能本身统一为 12dp(见 getBarLayoutParams hook 内 readInt(..., 12)):
-    // 该 key 是 sliderKey, 仅用户拖动滑块后才写入, 开启开关但未拖动时缺失, 故必须给默认 12,
-    // 否则开启功能后 padding 反而退化为 4dp, 背景边距变小。
     static float getMBackBandPaddingDp() {
         int dp = readInt(KEY_GESTURE_BAR_HEIGHT_ENABLED, 0) == 1
                 ? readInt(KEY_GESTURE_BAR_HEIGHT_DP, 12)
@@ -514,9 +481,6 @@ public final class GestureHooks {
         return Math.min(dp / 2f + 4f, 8f);
     }
 
-    // 白条厚度(mHeight)与白条底部间距(mHandleBottom)。触摸区域的 dispatch 独立于
-    // 拦截层的创建时机, 因此区域计算不能依赖拦截层: 一旦拿不到就退化成
-    // "完全不设置区域", 表现为整条穿透且 mBack 失效。
     static volatile int sGestureBarHeightPx = -1;
     static volatile int sGestureBarHandleBottomPx = -1;
 
@@ -546,8 +510,6 @@ public final class GestureHooks {
                 ? sGestureBarHandleBottomPx : Math.round(7f * readDensity());
     }
 
-    // 通知中心/控制中心是否已展开。从 view 向上找到 NavigationBarView
-    // (OplusNavigationBarView), 读其 mPanelExpansionInteractor 判断。
     static boolean isShadeExpanded(android.view.View view) {
         android.view.View v = view;
         while (v != null) {
@@ -589,9 +551,6 @@ public final class GestureHooks {
         return null;
     }
 
-    // 取 mBack 热区顶部 -> 窗口底部这一段: 返回热区顶部在 host 坐标系中的 y, 口径与 MBackSurface 一致。
-    // 白条中心 y = host 高 - mHandleBottom - mHeight/2 - 画布上移量, 热区顶部 = 白条中心 - (mHeight + 2*padding)/2。
-    // 不能用 getLocationInWindow: OplusNavigationHandle 铺满整个导航栏窗口, 其 top 相对 host 恒为 0。
     static int computeGestureBandTop(android.view.View host, int barHeight) {
         float density = readDensity();
         int padding = Math.round(getMBackBandPaddingDp() * density);
@@ -619,8 +578,7 @@ public final class GestureHooks {
         surface.setOnTouchListener(new android.view.View.OnTouchListener() {
             @Override
             public boolean onTouch(android.view.View view, android.view.MotionEvent event) {
-                // 输入法弹出后系统不一定触发一次新的 insets traversal；在事件入口再次判断，
-                // 避免旧拦截层继续吞掉导航栏的收起/切换键盘按钮。
+
                 return isGestureBlockActive(view);
             }
         });
@@ -643,9 +601,6 @@ public final class GestureHooks {
         }
     }
 
-    // 防穿透拦截层严格跟随 gesture_touch_through_enabled 运行期取值, 与 mBack 无关: 开则创建/更新,
-    // 关则立即从视图树移除(否则残留到下次 SystemUI 重启)。通知/控制中心展开时一律不生效: 面板窗口
-    // 已接管触摸, 继续吞掉手势带事件只会让面板底部区域点不动。
     static boolean isGestureBlockActive(android.view.View view) {
         return readBool(KEY_GESTURE_TOUCH_THROUGH_ENABLED, false)
                 && !isShadeExpanded(view) && !isImeVisible(view);
@@ -671,8 +626,7 @@ public final class GestureHooks {
                             .getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
             if (imm != null && imm.isAcceptingText()) return true;
         } catch (Throwable ignored) { }
-        // ColorOS 导航栏把 IME 状态保存在 NavigationBar/NavigationBarView 对象字段中，
-        // 独立窗口的 Insets 与 IMM 在部分版本均不可见；读取命名明确的布尔状态作为兜底。
+
         try {
             Object current = view;
             for (int depth = 0; current != null && depth < 5; depth++) {
@@ -817,9 +771,6 @@ public final class GestureHooks {
         }
     }
 
-    // 判断 DOWN 是否落在白条水平范围(含 8dp 留白), 与 MBackSurface 宽度口径一致。依据反编译: 系统
-    // 用 ev.getX()(屏幕坐标)与实例字段 viewScreenLeft 比较判定 inGestureXRange, 这里复刻该口径并放宽 padding。
-    // 白条外(两侧区域)不触发 mBack, 放行 handle 原逻辑。
     static boolean isInMBackBarRange(android.view.View handle,
             android.view.MotionEvent ev) {
         try {
@@ -850,9 +801,7 @@ public final class GestureHooks {
         if (host == null) return null;
         MBackSurface surface = new MBackSurface(handle, host);
         surface.setVisibility(android.view.View.INVISIBLE);
-        // 纯视觉反馈层: 不 clickable / 不 focusable / 不设 OnTouchListener。
-        // 白条 View 铺满整个导航栏窗口, 一旦这层参与触摸分发就会变成全宽拦截层,
-        // 等于在只开 mBack 时也屏蔽了手势区域穿透。
+
         android.widget.FrameLayout.LayoutParams lp =
                 new android.widget.FrameLayout.LayoutParams(1, 1);
         host.addView(surface, 0, lp);
@@ -881,8 +830,6 @@ public final class GestureHooks {
         if (surface instanceof MBackSurface) ((MBackSurface) surface).update();
     }
 
-    // mBack 反馈层严格跟随 mback_enabled 运行期取值: 开则创建/更新, 关则立即移除。
-    // 它只是一层视觉反馈(Ripple), 绝不能参与触摸拦截, 与防穿透功能完全无关。
     static void syncMBackSurface(android.view.View handle) {
         if (readBool(KEY_MBACK_ENABLED, false)) {
             ensureMBackSurface(handle);
@@ -915,7 +862,6 @@ public final class GestureHooks {
         }
         XposedHelpers.removeAdditionalInstanceField(handle, "mback_surface");
     }
-
 
     public static void cleanupForHotReload() {
         // Snapshot first: removeMBackSurface also removes entries from MBACK_GESTURES.
@@ -970,8 +916,6 @@ public final class GestureHooks {
             log("mback navigation view lookup failed: " + t);
         }
 
-        // Android 15 的手势 Home 句柄不一定提供 NavigationBarView 父链，且 InputManager
-        // 可能拒绝注入。只有注入接口明确返回成功才停止，并保留系统按钮/原生句柄回退。
         if (home) {
             if (injectHomeKey()) return;
             if (dispatchNavigationButton(navView, true)) return;
@@ -1088,10 +1032,6 @@ public final class GestureHooks {
             }
         };
 
-        // MBackSurface 完全跟随白条实际绘制位置: 与白条中心严格垂直居中, 尺寸 = 白条尺寸 + 四周各 padding。
-        // 白条在 OplusNavigationHandle 内的绘制区域为 [viewHeight - mHandleBottom - mHeight, viewHeight - mHandleBottom];
-        // 防烧屏靠 setTranslationY 平移整个 View, getLocationInWindow 经矩阵映射已含该位移。
-
         void update() {
             if (getParent() != host) return;
             int barHeight = getSourceInt("mHeight", source.getHeight());
@@ -1112,8 +1052,7 @@ public final class GestureHooks {
             source.getLocationInWindow(sourceLocation);
             host.getLocationInWindow(hostLocation);
             int barCenterXInHost = (sourceLocation[0] - hostLocation[0]) + source.getWidth() / 2;
-            // 白条绘制中心在 host 坐标系中的 y：View 顶 + 白条中心相对 View 顶的偏移，
-            // 再扣除手势条加高模块在 onDraw 中的画布上移量。
+
             int barCenterYInHost = (sourceLocation[1] - hostLocation[1])
                     + source.getHeight() - handleBottom - barHeight / 2
                     - getGestureBarCanvasLiftPx();
@@ -1131,8 +1070,6 @@ public final class GestureHooks {
         }
     }
 
-    // 全宽透明拦截层: 覆盖整条手势带(host 整宽 × 手势带高度), 消费所有触摸,
-    // 防止点击穿透到下层应用。无任何视觉效果。
     static final class GestureBlockSurface extends android.view.View {
         private final android.view.View source;
         private final android.view.ViewGroup host;
@@ -1144,8 +1081,6 @@ public final class GestureHooks {
             setWillNotDraw(true);
         }
 
-        // 覆盖 mBack 热区顶部 -> 窗口底部这一段(全宽), 消费进入窗口的触摸。
-        // 实际拦截范围由触摸区域(touchableRegion)决定, 两者必须使用同一段矩形。
         void update() {
             if (getParent() != host) return;
             int topY = computeGestureBandTop(host, getSourceInt("mHeight", source.getHeight()));
@@ -1255,8 +1190,6 @@ public final class GestureHooks {
         }
     }
 
-    // 手势条加高模块在 OplusNavigationHandle#onDraw 中的画布上移量(px)。
-    // MBackSurface 定位需扣除同一数值，两者必须保持一致。
     static int getGestureBarCanvasLiftPx() {
         if (readInt(KEY_GESTURE_BAR_HEIGHT_ENABLED, 0) != 1) return 0;
         int dp = 10;

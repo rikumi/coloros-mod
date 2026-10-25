@@ -5,7 +5,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import static com.rikumi.colorosmod.XposedInit.log;
 
-/** Work around the firmware's remove-while-indexing loop during AOD listener replacement. */
 final class AodReceiverCompatibilityHooks {
     static void hook(XC_LoadPackage.LoadPackageParam lp) {
         try {
@@ -18,8 +17,7 @@ final class AodReceiverCompatibilityHooks {
                     if (controller.isInstance(chain.getArg(0))) {
                         @SuppressWarnings("unchecked")
                         List<Object> previous = (List<Object>) XposedHelpers.getObjectField(owner, "mListenersList");
-                        // Remove via native removeListener, updating both stores.
-                        // Native add then sees no old controller to delete mid-loop.
+
                         ReceiverListenerReplacement.removePrevious(previous, controller,
                                 old -> XposedHelpers.callMethod(owner, "removeListener", old));
                     }

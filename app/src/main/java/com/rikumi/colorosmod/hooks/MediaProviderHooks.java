@@ -13,7 +13,6 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
-/** 阻止 MediaProvider 在主共享存储中创建用户选中的标准媒体目录。 */
 public final class MediaProviderHooks {
     private static final String MEDIA_PROVIDER = "com.android.providers.media.MediaProvider";
     private static final String MEDIA_VOLUME = "com.android.providers.media.MediaVolume";
@@ -35,8 +34,6 @@ public final class MediaProviderHooks {
             Class<?> provider = XposedHelpers.findClass(MEDIA_PROVIDER, lpparam.classLoader);
             Class<?> volume = XposedHelpers.findClass(MEDIA_VOLUME, lpparam.classLoader);
 
-            // 当前 ColorOS 16 MediaProvider 的 ensureDefaultFolders() 只通过该方法取得默认目录数组。
-            // 返回副本并过滤选中项，不改动 FileUtils.DEFAULT_FOLDER_NAMES 静态数组的其它用途。
             XposedHelpers.findAndHookMethod(provider, "getDefaultFolderNames",
                     new XC_MethodHook() {
                         @Override
@@ -52,8 +49,6 @@ public final class MediaProviderHooks {
                         }
                     });
 
-            // 即使 MediaProvider 已记录“默认目录创建完成”，进程启动时仍会进入此方法。
-            // 方法结束后逐项调用 File.delete()；它只会删除空目录，非空目录不会受到影响。
             XposedHelpers.findAndHookMethod(provider, "ensureDefaultFolders",
                     volume, SQLiteDatabase.class, new XC_MethodHook() {
                         @Override

@@ -13,7 +13,6 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.xmlpull.v1.XmlPullParser;
 
-/** Same config selection and package/activity variance inheritance as the native framework. */
 final class ColorOsNavigationConfig {
     private boolean loaded;
     private long version = -1;

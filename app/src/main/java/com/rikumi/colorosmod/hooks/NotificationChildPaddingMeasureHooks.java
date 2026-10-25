@@ -7,7 +7,6 @@ import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import static com.rikumi.colorosmod.XposedInit.log;
 
-/** Expand full group-child templates without consuming their original content space. */
 final class NotificationChildPaddingMeasureHooks {
     private record Padding(View view, int top, int bottom, int extra) {}
 
@@ -19,8 +18,7 @@ final class NotificationChildPaddingMeasureHooks {
                             if (!NotificationHooks.sNotifPadEnabled
                                     || !XposedHelpers.getBooleanField(p.thisObject, "mIsChildInGroup")) return;
                             ArrayList<Padding> saved = new ArrayList<>();
-                            // Save before mutation so even a failed native measure
-                            // restores the padded templates in the after callback.
+
                             p.setObjectExtra("childTemplatePadding", saved);
                             for (String field : new String[]{"mContractedChild", "mExpandedChild", "mHeadsUpChild"}) {
                                 Object object = XposedHelpers.getObjectField(p.thisObject, field);
@@ -55,8 +53,7 @@ final class NotificationChildPaddingMeasureHooks {
                                         View.MeasureSpec.makeMeasureSpec(childHeight, View.MeasureSpec.EXACTLY));
                                 height = Math.max(height, child.getMeasuredHeight());
                             }
-                            // getViewHeight, intrinsic height and group positioning
-                            // now consume these same enlarged measured template bounds.
+
                             if (height != content.getMeasuredHeight())
                                 XposedHelpers.callMethod(content, "setMeasuredDimension", content.getMeasuredWidth(), height);
                         }

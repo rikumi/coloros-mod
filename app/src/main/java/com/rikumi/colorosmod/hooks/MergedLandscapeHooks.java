@@ -13,7 +13,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Portrait-sized merged cards and icon-only tiles, preserving native landscape paging. */
 final class MergedLandscapeHooks {
     private static Class<?> containerClass;
     private static final WeakHashMap<View, Boolean> roots = new WeakHashMap<>();
@@ -83,8 +82,7 @@ final class MergedLandscapeHooks {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     if (p.hasThrowable() || p.getObjectExtra("outerWidth") == null) return;
                     ViewGroup root = (ViewGroup) p.thisObject;
-                    // Keep the shade/root and customizer full-width; only the merged
-                    // control contents use portrait width and are centered at layout.
+
                     XposedHelpers.callMethod(root, "setMeasuredDimension", (Integer) p.getObjectExtra("outerWidth"), root.getMeasuredHeight());
                     View customizer = root.findViewById(id(root, "qs_customize"));
                     if (customizer != null) customizer.measure(
@@ -103,8 +101,7 @@ final class MergedLandscapeHooks {
                             }
                         }
                     });
-            // These are the outer spacers around the clock/header and the last
-            // row. Card-region gaps and all native paging/expansion remain intact.
+
             outerGap(lp, "com.oplus.systemui.qs.OplusQuickStatusBarHeaderController", "getTopGap", true);
             outerGap(lp, "com.oplus.systemui.qs.OplusQSFooterViewController", "getTopGap", true);
             outerGap(lp, "com.oplus.systemui.qs.OplusQSBottomViewController", "getBottomGap", false);

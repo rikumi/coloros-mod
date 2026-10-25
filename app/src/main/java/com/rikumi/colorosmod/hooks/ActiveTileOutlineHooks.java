@@ -19,7 +19,6 @@ import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import java.util.WeakHashMap;
 
-/** 使用系统当前有效的质感描边参数，在激活态色块之后绘制轮廓光。 */
 public final class ActiveTileOutlineHooks {
     private static Class<?> strokeUniforms;
     private static int activeAttr, inoperableAttr;
@@ -107,8 +106,7 @@ public final class ActiveTileOutlineHooks {
                                 if (p.hasThrowable() || !readBool(KEY_QS_ACTIVE_OUTLINE_ENABLED, false)) return;
                                 Drawable drawable = (Drawable) p.thisObject;
                                 if (MergedRadiantHooks.iconOnlyBackground(drawable) || !isActive(drawable) || drawable.getAlpha() == 0) return;
-                                // Separate QS already renders the system stroke through AutoBlurDrawable.
-                                // Only supplement when it was absent or hidden by an opaque mask.
+
                                 if (!shouldSupplement(frame)) return;
                                 try { drawOverlay(drawable, (Canvas) p.args[0]); }
                                 catch (Throwable t) {
@@ -151,7 +149,6 @@ public final class ActiveTileOutlineHooks {
         } catch (Throwable t) { log("active tile outline hook failed: " + t); }
     }
 
-    /** SystemUI 15 has no gradient-stroke shader API; use its native tile background drawables. */
     private static void hookLegacy(XC_LoadPackage.LoadPackageParam pkg) {
         try {
             separateTileClass = XposedHelpers.findClassIfExists(

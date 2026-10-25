@@ -32,7 +32,6 @@ import java.util.List;
 import java.util.WeakHashMap;
 import java.lang.reflect.Field;
 
-/** ColorOS 16 mobile pipeline；复用 Flyme 的实时 Drawable 双排绘制。 */
 public final class SignalHooks {
     private static final String MOBILE = "com.oplus.systemui.statusbar.phone.signal.widget.OplusModernStatusBarMobileView";
     private static final String MODERN = "com.android.systemui.statusbar.pipeline.shared.ui.view.ModernStatusBarView";
@@ -81,8 +80,7 @@ public final class SignalHooks {
                 }
                 @Override protected void afterHookedMethod(MethodHookParam p) { leaveLayout(p); }
             });
-            // ColorOS 直接累加子视图宽度，没有 Flyme 的 getViewTotalWidth/MeasuredWidth。
-            // 仅在容器的测量及排布期间排除第二张卡，外部仍读取原生订阅可见性。
+
             XposedHelpers.findAndHookMethod(modern, "isIconVisible", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     Mobile mobile = mobiles.get(p.thisObject);
@@ -447,8 +445,7 @@ public final class SignalHooks {
     private static float density(View view) { return view.getResources().getDisplayMetrics().density; }
 
     private static void refreshRat(Mobile mobile) {
-        // 原生 ModernStatusBarViewBinding 持有 Oplus binding，后者捕获对应订阅的 VM。
-        // 按源码中捕获字段的类型查找，不依赖编译器生成的字段名；支持已有视图 hot reload。
+
         try {
             Object binding = XposedHelpers.getObjectField(mobile.root, "binding");
             Object oplus = captured(binding,

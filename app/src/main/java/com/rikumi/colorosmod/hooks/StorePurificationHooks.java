@@ -18,7 +18,6 @@ import java.util.ArrayList;
 import java.util.List;
 import static com.rikumi.colorosmod.XposedInit.*;
 
-/** Domestic Market purification hooks. */
 public final class StorePurificationHooks {
     private static final String DTO = "com.heytap.cdo.card.domain.dto.";
     private static final String PAGE = "com.heytap.cdo.client.cards.page.";
@@ -93,8 +92,6 @@ public final class StorePurificationHooks {
         hook(cl, "a.a.a.w3f", "hasSplash", true,
                 p -> { if (enabled("block_splash")) p.setResult(false); });
 
-        // Only the UI-facing structure is copied. Network/disk/default structures remain intact.
-        // 26.10.2: ރ() is TabDataPresenter#getStructDto(); ނ() returns the nav manager (o9b).
         hook(cl, PAGE + "struct.TabDataPresenter", "ރ", false, p -> {
             if (tabsFiltered()) p.setResult(filterTabs(p.getResult()));
         });
@@ -149,8 +146,6 @@ public final class StorePurificationHooks {
         hook(cl, DETAIL + "recommend.TabRecommendContentView", "ޞ", true,
                 p -> { if (enabled("hide_detail_recommendations")) p.args[0] = null; }, "a.a.a.sn2");
 
-        // Both callbacks handle only remote recommendation cards, never installed apps/tasks.
-        // Suppress the entire callback to also omit recommendation footer/padding additions.
         String base = MARKET + "appmanage.core.upgrade.upgrademgr.BaseRecyclerViewDownloadFragment";
         for (String suffix : new String[]{"$e", "$f"}) {
             hook(cl, base + suffix, "Ԫ", true, p -> {
@@ -201,8 +196,7 @@ public final class StorePurificationHooks {
 
     private static void installEmptySoftware(ClassLoader cl) {
         String normal = PAGE + "main.normal.NormalGroupFragment";
-        // k7a#ԩ creates AppGroupFragment for native main-tab ID20 (软件).
-        // Do not replace that navigation item or alter its original/restored arguments.
+
         hook(cl, normal, "onViewCreated", true, p -> {
             if (!SOFTWARE.equals(p.thisObject.getClass().getName())) return;
             boolean empty = enabled("empty_software");
@@ -216,8 +210,7 @@ public final class StorePurificationHooks {
                 }
                 return;
             }
-            // NormalGroupFragment reads its private bundle, then returns without generating
-            // pages when no GroupFragmentItem exists. Keep getArguments() intact for restore.
+
             XposedHelpers.setObjectField(p.thisObject, "ࢰ", new Bundle());
             Object manager = call(p.thisObject, "getChildFragmentManager");
             List<?> restored = new ArrayList<>((List<?>) call(manager, "getFragments"));
@@ -229,8 +222,7 @@ public final class StorePurificationHooks {
         }, "android.view.View", "android.os.Bundle");
         hook(cl, normal, "onViewCreated", false, p -> {
             if (!emptySoftware(p.thisObject)) return;
-            // Keep MainActionBar and its native search/download presenters and responsive
-            // container. Only the strip and content pager leave the attached hierarchy.
+
             for (String field : new String[]{"ࢫ", "ࢮ"}) {
                 View content = (View) XposedHelpers.getObjectField(p.thisObject, field);
                 content.setVisibility(View.GONE);
@@ -240,12 +232,10 @@ public final class StorePurificationHooks {
         hook(cl, normal, "getHeight", true, p -> {
             if (!emptySoftware(p.thisObject)) return;
             Object bar = XposedHelpers.getObjectField(p.thisObject, "ࢩ");
-            // Configuration changes can update the detached strip's visibility. Always report
-            // only the retained header, using the same measured-height fallback as native code.
+
             p.setResult(XposedHelpers.callStaticMethod(Class.forName("a.a.a.bg", false, cl), "Ԭ", bar));
         });
-        // Recreate through the normal lifecycle after changing this option. Both directions
-        // rebuild from the unmodified native arguments, rather than reviving detached views.
+
         hook(cl, "com.nearme.module.ui.fragment.BaseFragment", "onResume", false, p -> {
             if (!SOFTWARE.equals(p.thisObject.getClass().getName())) return;
             Object old = XposedHelpers.getAdditionalInstanceField(p.thisObject, SOFTWARE_MODE);

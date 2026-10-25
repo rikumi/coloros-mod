@@ -4,7 +4,6 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.function.IntUnaryOperator;
 
-/** Remap compiled XML in place before handing it to Android's native XmlBlock parser. */
 final class LegacyNotificationXml {
     static byte[] remap(byte[] original, IntUnaryOperator resource) {
         return remap(original, resource, id -> -1L);

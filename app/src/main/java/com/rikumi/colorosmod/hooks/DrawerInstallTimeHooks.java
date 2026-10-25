@@ -10,7 +10,6 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-/** 按桌面抽屉的数据排序入口切换到安装时间顺序。 */
 public final class DrawerInstallTimeHooks {
     private static final String KEY = "drawer_install_time_sort_enabled";
     private static final Map<Object, Boolean> lists = Collections.synchronizedMap(new WeakHashMap<>());
@@ -106,8 +105,7 @@ public final class DrawerInstallTimeHooks {
                     && !XposedHelpers.getBooleanField(list, "mIsCategoryPage")
                     && !XposedHelpers.getBooleanField(list, "mIsColor");
         } catch (Throwable ignored) {
-            // ColorOS 15.8.21's OplusAlphabeticalAppsList has no page flags; its activity
-            // context distinguishes the Launcher drawer from taskbar/search lists.
+
             try {
                 Object context = XposedHelpers.getObjectField(list, "mActivityContext");
                 if (context == null) return false;

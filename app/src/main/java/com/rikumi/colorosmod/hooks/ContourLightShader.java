@@ -3,7 +3,6 @@ package com.rikumi.colorosmod.hooks;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import java.util.HashMap;
 
-/** 复用 ColorOS 原生轮廓光着色器，仅绘制描边。 */
 final class ContourLightShader {
     private static Class<?> strokeStrings, cornerStrings;
     private static final HashMap<Object, String> sources = new HashMap<>();

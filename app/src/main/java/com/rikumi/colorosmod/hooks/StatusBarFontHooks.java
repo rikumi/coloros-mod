@@ -31,7 +31,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.WeakHashMap;
 
-/** 状态栏及通知、控制中心顶部信息的字体。 */
 public final class StatusBarFontHooks {
     private static final String[] FAMILIES = {"系统默认", "Inter", "Manrope", "Rubik", "Lato"};
     private static final WeakHashMap<TextView, Original> originals = new WeakHashMap<>();
@@ -176,7 +175,6 @@ public final class StatusBarFontHooks {
         return enabled && result.getSpans(0, result.length(), CenteredColonSpan.class).length == 0 ? text : result;
     }
 
-    /** 仅调整冒号的绘制基线，按当前字重和字号对齐数字的可见中心。 */
     private static final class CenteredColonSpan extends ReplacementSpan {
         @Override public int getSize(Paint paint, CharSequence text, int start, int end, Paint.FontMetricsInt fm) {
             if (fm != null) paint.getFontMetricsInt(fm);
@@ -312,7 +310,6 @@ public final class StatusBarFontHooks {
         originals.clear(); batteryDrawables.clear(); fonts.clear(); moduleContext = null;
     }
 
-    /** 模块创建的制式文字直接覆盖渲染入口，避免依赖宿主对 TextView 方法的调用。 */
     public static final class StatusBarTextView extends TextView {
         public StatusBarTextView(Context context) { super(context); }
         @Override protected void onMeasure(int width, int height) {

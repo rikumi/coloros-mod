@@ -10,7 +10,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 
-/** Local imports live in module DE storage; Xposed remote storage makes them readable at early boot. */
 internal object SystemFontStore {
     class NotMonospaceFontException : IllegalArgumentException()
     private val slots = listOf(SystemFontHooks.ZH, SystemFontHooks.LATIN, SystemFontHooks.MONO)

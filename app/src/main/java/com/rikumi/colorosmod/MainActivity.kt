@@ -161,12 +161,8 @@ class MainActivity : ComponentActivity() {
 // 设置页条目: 分组小标题或设置项。
 internal sealed interface SettingsItem
 
-// 分组小标题: 表示其后(到下一个 GroupTitleItem 或列表末尾)的 SwitchItem 开启一个新分组,
-// 可放在其它 item 之间或首个 item 前面。title 为 0 时表示仅分隔，不显示标题。
 internal data class GroupTitleItem(val title: Int) : SettingsItem
 
-// 单个设置项: key 用于持久化与 Xposed 读取, label 和 subtitle 为字符串资源 ID。sliderKey 非空时
-// 开关打开后下方显示滑条(范围 0..sliderMax 整数步进, 默认 sliderDefault, sliderUnit 为值后缀)。
 internal data class SwitchItem(
     val key: String,
     val label: Int,
@@ -186,17 +182,12 @@ internal data class SwitchItem(
     val defaultEnabled: Boolean = false,
 ) : SettingsItem
 
-// MediaProvider 默认目录屏蔽项。它不参与分类/全局主开关，只保存用户选择；开启时仅尝试
-// 删除同名空目录，目录非空则保持原样。
 internal data class FolderBlockItem(
     val key: String,
     val label: String,
     val folderName: String,
 ) : SettingsItem
 
-// 下拉选项设置项。options 为静态选项; dynamicOptions 非空时进入页面后于 IO 线程重拉(如"新应用添加到"
-// 需读桌面文件夹名), 失败则沿用 options。valueKey 非空时选中项除存下标外还把选项文本写到 valueKey ——
-// 选项会随桌面文件夹增删变化, 只存下标会在删文件夹后错位, 存文本则能自然回落到第 0 项。
 internal data class SelectItem(
     val key: String,
     val label: Int,
@@ -416,8 +407,6 @@ private val STORAGE: List<SettingsItem> = listOf(
     FolderBlockItem("media_folder_block_ringtones", "Ringtones", "Ringtones"),
 )
 
-// 首页的一个分类入口: id 用于页面栈定位, title 为首页/子页面标题资源 ID, icon 取 miuix 扩展图标。
-// subtitle 配置后显示在首页入口行右侧(不单独占第二行); hint 作为该分类子页面 group 的 header 说明。
 private data class Category(
     val id: String,
     val title: Int,
@@ -454,11 +443,8 @@ private const val DISABLED_APPS_ID = "disabled_apps"
 private const val HIDDEN_LAUNCHER_APPS_ID = "hidden_launcher_apps"
 private const val NAVIGATION_APPS_ID = "navigation_apps"
 
-// 主开关切换后、落盘前的临时视觉覆盖。
-// scope = null 表示首页的全局主开关(覆盖所有分类), 否则只覆盖该 categoryId 的分类。
 private data class MasterOverride(val scope: String?, val value: Boolean)
 
-/** 该覆盖是否作用于指定 scope(null = 首页全局): 全局覆盖对所有分类生效。 */
 private fun MasterOverride?.valueFor(scope: String?): Boolean? =
     this?.takeIf { it.scope == null || it.scope == scope }?.value
 
@@ -490,8 +476,6 @@ private val SettingsItem.settingKey: String
         is GroupTitleItem -> ""
     }
 
-// 按 GroupTitleItem 把条目切成连续的若干段, 每段渲染为一张独立卡片。
-// GroupTitleItem 可放在其它 item 之间或首个 item 前面; 连续多个时以后一个为准, 不会产生空段。
 private fun List<SettingsItem>.splitByDivider(): List<SwitchGroup> {
     if (isEmpty()) return emptyList()
     val result = mutableListOf<SwitchGroup>()
@@ -531,8 +515,6 @@ private const val MASTER_TOGGLE_ANIM_MS = 350L
 private const val PAGE_TRANSITION_MS = 300
 private val PAGE_TRANSITION_EASING: Easing = CubicBezierEasing(0.25f, 0.1f, 0.25f, 1f)
 
-// 模块设置根界面: 首页为全局一键启用 + 分类入口, 点击进入对应子页面。首页主开关作用于全部功能,
-// 子页面主开关只作用于该分类; 两者的覆盖状态与 prefs 版本号提升到此处, 保证各页面共享同一份状态。
 @Composable
 fun SettingsScreen(resumeRequest: Int = 0) {
     val missingScopes = rememberMissingScopes(resumeRequest)
@@ -542,8 +524,7 @@ fun SettingsScreen(resumeRequest: Int = 0) {
     val scope = rememberCoroutineScope()
     // version 变化时强制重读 prefs 同步所有开关状态。
     var version by remember { mutableStateOf(0) }
-    // masterOverride: 主开关切换后、落盘前的临时视觉覆盖(null = 无覆盖, 直接读 prefs)。
-    // 带 scope, 保证只有触发它的那个主开关(首页全局 / 某个分类)受影响。
+
     var masterOverride by remember { mutableStateOf<MasterOverride?>(null) }
 
     // 当前打开的分类 id; null 表示停在首页。
@@ -594,8 +575,7 @@ fun SettingsScreen(resumeRequest: Int = 0) {
                     }
                 }
             }
-            // 清除临时覆盖, 各开关回到以 prefs 为准(此时已与 target 一致, 无跳变)。
-            // 仅当覆盖未被其它主开关的后续操作取代时才清除。
+
             if (masterOverride == MasterOverride(targetScope, target)) {
                 masterOverride = null
                 version++
@@ -661,7 +641,6 @@ fun SettingsScreen(resumeRequest: Int = 0) {
     }
 }
 
-/** 首页: 分组标题 + 一键启用(全局) + 分类入口列表（每个分组一张卡片）。 */
 @Composable
 private fun HomeScreen(
     missingScopes: Boolean,
@@ -741,8 +720,6 @@ private fun HomeScreen(
     }
 }
 
-// 子页面的"一键启用"主开关: 文案与绘制集中在此一处配置, 各分类子页面复用;
-// 只控制当前分类内的设置项, 不带副标题(滑块说明在该页第二个 group 的 header 上)。
 @Composable
 private fun CategoryMasterToggle(
     checked: Boolean,
@@ -755,7 +732,6 @@ private fun CategoryMasterToggle(
     )
 }
 
-/** 分类子页面: 带返回的标题栏 + 该分类的一键启用 + 该分类的全部设置项。 */
 @Composable
 private fun CategoryScreen(
     category: Category,
@@ -853,8 +829,6 @@ private fun CategoryScreen(
     }
 }
 
-// 隐藏模块桌面图标: 通过禁用 LAUNCHER 别名(.MainActivityLauncher)实现,
-// 状态由 PackageManager 持有(不写入模块 prefs, 不受一键启用影响), 图标隐藏后只能从 LSPosed 进入。
 private fun isLauncherIconHidden(ctx: Context): Boolean {
     return when (ctx.packageManager.getComponentEnabledSetting(
         ComponentName(ctx, "${ctx.packageName}.MainActivityLauncher")
@@ -874,7 +848,6 @@ private fun setLauncherIconHidden(ctx: Context, hidden: Boolean) {
     )
 }
 
-/** 首页首个 group 顶部的“隐藏模块桌面图标”开关行。 */
 @Composable
 private fun HideLauncherIconRow(ctx: Context) {
     var hidden by remember { mutableStateOf(isLauncherIconHidden(ctx)) }
@@ -889,16 +862,11 @@ private fun HideLauncherIconRow(ctx: Context) {
     )
 }
 
-// 设备名称: 用户在设置里改过的名字存在 Settings.Global["device_name"](该机为 "Rikumi X8s"),
-// 未设置时退回 Build.MODEL(如 PKT110)。
 private fun deviceName(ctx: Context): String {
     val name = Settings.Global.getString(ctx.contentResolver, Settings.Global.DEVICE_NAME)
     return if (name.isNullOrBlank()) Build.MODEL else name
 }
 
-// ROM 大版本: Oplus 系把版本写在这几个只读属性里(该机 oplusrom.display=16.0.10、
-// oplusrom=V16.1.0), 取前两个数字段作为大版本(16.0)。属性只能通过 getprop 读, 故走 root shell。
-// 逐个尝试: 新版 oplusrom.display -> oplusrom -> 旧版 opporom -> realme 分支的 realmeui。
 private fun romVersion(): String? {
     for (key in arrayOf(
         "ro.build.version.oplusrom.display",
@@ -916,8 +884,6 @@ private fun romVersion(): String? {
 private fun getProp(key: String): String? =
     runRoot("getprop $key")?.trim()?.takeIf { it.isNotEmpty() }
 
-// 是否国行: persist.sys.oplus.region 是 Oplus 全系通用的销售区域属性(该机实测 CN);
-// 取不到时退一步看 ota 版本号里的地区段(该机 PKT110_16.0.10.500(CN01)), 仍取不到按国行处理。
 private fun isCnRegion(): Boolean {
     val region = getProp("persist.sys.oplus.region")
     if (region != null) return region.equals("CN", ignoreCase = true)
@@ -925,9 +891,6 @@ private fun isCnRegion(): Boolean {
     return ota == null || ota.contains("CN01", ignoreCase = true)
 }
 
-// 系统名: 名称取自 ro.product.brand(公开 API Build.BRAND, 该机为 OPPO), 版本取自系统属性(见上),
-// 都不做其它推测; 品牌不在 Oplus 三家里则不显示该行。
-// 一加国内版刷的是 ColorOS、只有海外版才是 OxygenOS, 故一加额外看销售区域。
 private fun systemName(): String? = when {
     Build.BRAND.contains("oneplus", ignoreCase = true) -> if (isCnRegion()) "ColorOS" else "OxygenOS"
     Build.BRAND.contains("oppo", ignoreCase = true) -> "ColorOS"
@@ -935,9 +898,6 @@ private fun systemName(): String? = when {
     else -> null
 }
 
-// 首页机型横幅的系统行: "<系统名> <地区标识> <版本>", 如 "ColorOS CN 16.0"。
-// 地区标识只在版本取到时才插入 —— 单独一个 "ColorOS CN" 既没有信息量也不好看,
-// 且 romVersion() 取不到时说明属性读取整体失败, 地区判断同样不可信。
 private fun systemLabel(): String? {
     val name = systemName() ?: return null
     val version = romVersion() ?: return name
@@ -945,17 +905,11 @@ private fun systemLabel(): String? {
     return "$name $region $version"
 }
 
-// 销售地区标识: 国行 CN、海外 EX。判定复用一加分支那套 isCnRegion(见上)。
-// OxygenOS 本身就只有海外版(一加国内版刷的是 ColorOS), 再标 EX 是废话, 故返回 null 省略。
 private fun regionLabel(name: String): String? {
     if (name == "OxygenOS") return null
     return if (isCnRegion()) "CN" else "EX"
 }
 
-/**
- * 首页首个 group 下方的两个快捷启动行: 拉起 KernelSU / LSPosed 管理器。
- * 两者均需在 root shell 中启动 —— 普通 app 进程受后台启动限制, 也无权发 SECRET_CODE 广播。
- */
 @Composable
 private fun LaunchAppsRows(ctx: Context) {
     // root shell 启动会阻塞到命令结束(冷启动管理器可达秒级), 放到 IO 线程避免卡住 UI。
@@ -972,8 +926,6 @@ private fun LaunchAppsRows(ctx: Context) {
 // KernelSU 管理器有正常的应用入口, 直接拉起其主界面。
 private const val KERNELSU_LAUNCH = "am start -n me.weishu.kernelsu/.ui.MainActivity"
 
-// LSPosed 管理器不常驻应用列表, 由模块 action.sh 以 SECRET_CODE 5776733 唤起(Android 10 起
-// 广播 action 从 android.provider.Telephony 迁到 android.telephony.action)。
 internal fun lsposedLaunchCmd(): String {
     val action = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         "android.telephony.action.SECRET_CODE"
@@ -1249,7 +1201,6 @@ private fun showHotReloadToast(ctx: Context, text: String) {
     Handler(ctx.mainLooper).post { Toast.makeText(ctx, text, Toast.LENGTH_SHORT).show() }
 }
 
-/** 标题栏右侧的重启菜单（首页与子页面共用）。 */
 @Composable
 internal fun RestartMenu(ctx: Context) {
     CouixActionMenu(
@@ -1267,9 +1218,6 @@ internal fun RestartMenu(ctx: Context) {
     )
 }
 
-// 读取桌面上全部文件夹名, 供"新应用添加到"下拉使用。桌面数据库为 launcher.db(4x4 布局为
-// launcher_4x4.db), 条目表按桌面模式分三张, 文件夹 itemType=3、堆栈 105; 三张表都查并按 _id 去重。
-// 只读: 连同 -wal/-shm 拷到本应用 cache 后以 OPEN_READONLY 打开, 让 SQLite 自己合并 WAL。
 private fun desktopFolderNames(ctx: Context): List<String> {
     val db = File(ctx.cacheDir, "launcher_folders.db")
     val src = "/data/user_de/0/com.android.launcher/databases/launcher.db"
@@ -1306,13 +1254,10 @@ private fun desktopFolderNames(ctx: Context): List<String> {
     }.getOrDefault(emptyList())
 }
 
-// 设置存到设备加密(DE)存储: 开机到首次解锁前 SystemUI 就在读设置, 而 CE 存储此时尚未挂载,
-// 读到的是空设置(表现为"重启后模块失效, 重启作用域才恢复")。DE 存储在锁定态即可读写。
 internal fun Context.settingsPrefs(): SharedPreferences {
     val de = createDeviceProtectedStorageContext()
         .getSharedPreferences("settings", Context.MODE_PRIVATE)
-    // 迁移也是 push model 的一个 writer: 实际写入成功才通知被 hook 进程刷新,
-    // 否则 initial fetch 成功(snapshot={})后迁移会被跳过, 设置永远不生效。
+
     if (de.all.isEmpty() && migrateLegacyPrefs(this, de)) {
         SettingsProvider.notifySettingsChanged(this)
     }
@@ -1361,8 +1306,6 @@ internal fun Context.settingsPrefs(): SharedPreferences {
     return de
 }
 
-// 旧版本把设置写在 CE 存储, 升级后首次读取时搬一次, 避免用户设置丢失。
-// 返回是否真正写入了数据(供调用方决定是否需要 notifyChange)。
 private fun migrateLegacyPrefs(ctx: Context, de: SharedPreferences): Boolean {
     val legacy = runCatching { ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).all }
         .getOrDefault(emptyMap())
@@ -1396,8 +1339,6 @@ internal fun setInt(ctx: Context, key: String, value: Int) {
     SettingsProvider.notifySettingsChanged(ctx)
 }
 
-// 需要系统权限的设置直接由 root 写入系统 Settings。动画倍率以 0..20 的整数保存，
-// 对应 0.00..1.00，避免浮点数在 SharedPreferences 中产生跨进程类型差异。
 internal fun applySystemSetting(key: String, enabled: Boolean, value: Int) {
     when (key) {
         "disable_rotation_suggestions" -> {
@@ -1450,8 +1391,7 @@ internal fun deleteEmptyMediaFolder(folderName: String) {
             "Movies", "Audiobooks", "Recordings",
         )
     ) return
-    // /storage/emulated/0 经过 MediaProvider/FUSE，root shell 也可能被拒绝删除顶层目录；
-    // /data/media/0 是同一共享存储的底层路径。两次都只调用 rmdir，非空时均不会删除。
+
     runRoot("rmdir /data/media/0/$folderName 2>/dev/null; " +
             "rmdir /storage/emulated/0/$folderName 2>/dev/null")
 }
@@ -1468,7 +1408,6 @@ internal fun createMediaFolder(folderName: String) {
             "chmod 0771 /data/media/0/$folderName 2>/dev/null")
 }
 
-
 private fun restartScope(ctx: Context) {
     runCatching {
         Runtime.getRuntime().exec("su").also { p ->
@@ -1483,8 +1422,6 @@ private fun restartScope(ctx: Context) {
     }
 }
 
-// 重启 Zygote（对齐 KernelSU 实现）：通过 init 的 ctl.restart 属性重启 zygote 服务。
-// 只重启 Android 用户空间，Linux 内核不重启，因此 KernelSU 与 LSPosed Zygisk 依然生效。
 private fun softRebootSystem(ctx: Context) {
     runCatching {
         Runtime.getRuntime().exec("su").also { p ->
@@ -1499,9 +1436,6 @@ private fun softRebootSystem(ctx: Context) {
     }
 }
 
-// 读取 ColorOS 主题色。SystemUI 在 OpUtils#getThemeAccentColor 里 resolve R.attr.couiColorPrimary
-// 并落盘到 Settings.Secure["sysui_type_accent_color"], 直接读该 key 即可(与莫奈动态色是两套体系)。
-// 兜底退而读 theme_customization_overlay_packages JSON 里的 accent_color / system_palette。
 internal fun colorOSAccentColor(context: Context, fallback: Long): Color {
     return try {
         // 首选: SystemUI 计算并缓存的 ColorOS 主题色。
@@ -1516,8 +1450,6 @@ internal fun colorOSAccentColor(context: Context, fallback: Long): Color {
     }
 }
 
-// 兜底: 从 theme_customization_overlay_packages JSON 里取 monet 强调色(通常与 couiColorPrimary 一致)。
-// 返回可直接交给 Color.parseColor 的 "#RRGGBB"/"#AARRGGBB" 字符串。
 private fun colorOSMonetAccent(context: Context): String? {
     return try {
         val raw = Settings.Secure.getString(context.contentResolver, "theme_customization_overlay_packages")
@@ -1532,8 +1464,6 @@ private fun colorOSMonetAccent(context: Context): String? {
     }
 }
 
-// 以 root 执行 shell 命令并返回 stdout(无 root / su 不存在 / 出错时返回 null)。
-// 全程静默: 任何异常都吞掉、绝不向上抛, 保证首次安装无权限时不崩溃。
 internal fun runRoot(command: String): String? {
     return runCatching {
         val p = Runtime.getRuntime().exec("su")
@@ -1548,14 +1478,10 @@ internal fun runRoot(command: String): String? {
     }.getOrNull()
 }
 
-/** 是否有可用的 root(su 可用且以 uid=0 运行)。 */
 private fun hasRootAccess(): Boolean {
     return runRoot("id -u")?.trim() == "0"
 }
 
-// 模块是否已在 LSPosed 中启用。状态存在 SQLite 库 modules_config.db 的 modules_state 表,
-// 但变更常驻留在 -wal 里未 checkpoint, 故不能只读主 .db(会读到旧的 enabled=1), 必须连同
-// -wal/-shm 一起拷出后只读打开, 让 SQLite 自动合并 WAL。判定: 有本模块记录且 enabled=1。
 private fun isModuleEnabledInLsposed(ctx: Context, pkg: String): Boolean {
     val db = File(ctx.cacheDir, "lspd_modules_config.db")
     // 先删旧拷贝再重新拷出(连同 wal/shm), 避免上次残留的旧数据库造成误判。

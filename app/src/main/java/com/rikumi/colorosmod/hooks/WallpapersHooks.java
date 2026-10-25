@@ -14,7 +14,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Hooks for com.oplus.wallpapers (desktop/theme customization screens). */
 public final class WallpapersHooks {
     // Fixed desktop customization background: very dark blue-black (#0A0C10).
     private static final int NEUTRAL_DARK = Color.rgb(10, 12, 16); // #0A0C10
@@ -32,8 +31,7 @@ public final class WallpapersHooks {
             background = copyDrawable(view.getBackground(), view);
             if (view instanceof ImageView) {
                 ImageView imageView = (ImageView) view;
-                // setImageDrawable() replaces rather than mutates the original drawable, so
-                // retain the exact host instance and its current level/state for restoration.
+
                 image = imageView.getDrawable();
                 colorFilter = imageView.getColorFilter();
             } else {
@@ -98,11 +96,6 @@ public final class WallpapersHooks {
         hookThemeEditActivity(lpparam);
     }
 
-    /**
-     * 桌面自定义页: uiautomator 显示当前页面为 ThemeEditActivity, 背景由
-     * background_wallpaper 与 background_wallpaper_mask 两个全屏 ImageView 叠加。
-     * 开启后把它们稳定压成 #0A0C10, 避免原背景随壁纸/遮罩变成偏蓝灰。
-     */
     private static void hookThemeEditActivity(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             XposedHelpers.findAndHookMethod(
@@ -243,7 +236,6 @@ public final class WallpapersHooks {
         return currentColor == null ? appliedColor == null : currentColor.equals(appliedColor);
     }
 
-    /** Preserve host values whenever they differ from the exact values applied last frame. */
     private static void refreshDecorBaseline(View view) {
         synchronized (sViewBaselines) {
             ViewBaseline baseline = baselineFor(view);
@@ -308,7 +300,6 @@ public final class WallpapersHooks {
         }
     }
 
-    /** Capture all tracked decor hosts; activity recreation can leave more than one entry. */
     public static Object captureHotReloadHosts() {
         java.util.ArrayList<Object> hosts = new java.util.ArrayList<>();
         XposedHelpers.forEachTrackedOwner("colorosmod_wallpaper_bg_predraw", owner -> {
@@ -364,6 +355,5 @@ public final class WallpapersHooks {
         }
         sDecorActivities.clear();
     }
-
 
 }

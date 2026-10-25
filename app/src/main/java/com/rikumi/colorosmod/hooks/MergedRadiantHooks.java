@@ -26,7 +26,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.WeakHashMap;
 
-/** Merged-shade colorful icons; highlight-card activation is confined to the icon circle. */
 public final class MergedRadiantHooks {
     private static Class<?> highlightClass, normalClass, blurProvider, seekBarBlurManager, colorUtil, iconColorState, tileState, qsHelper;
     private static Class<?> volumeIconClass, colorfulUtil;
@@ -273,8 +272,7 @@ public final class MergedRadiantHooks {
         Card card = new Card();
         cards.put(tile, card);
         tile.addOnLayoutChangeListener(card.listener);
-        // Existing tiles survive a module hot reload without running init again.
-        // Reuse both native callbacks, including the secondary target's click gate.
+
         View indicator = (View) XposedHelpers.getObjectField(tile, "mIndicatorContainer");
         View.OnClickListener primary = clickListener(tile);
         View.OnClickListener secondary = indicator == null ? null : clickListener(indicator);
@@ -333,8 +331,7 @@ public final class MergedRadiantHooks {
                     : (Integer) XposedHelpers.callMethod(XposedHelpers.callStaticMethod(qsHelper, "getInstance"),
                             "getActiveColorWithDarkMode", tile.getContext());
             card.shape.setColor(state == 2 ? activeColor : 0x1affffff);
-            // Flyme's circle_qs_icon_size is 38dp. Leave 12dp on each side of
-            // the circle instead of anchoring a 42dp disk against the card edge.
+
             int size = Math.max(1, Math.round(38f * unit));
             Drawable leafBackground = backgroundLeaf(tile);
             boolean mix = leafBackground != null && leafBackground.getClass().getSimpleName().equals("MixColorTileDrawable");
@@ -353,8 +350,7 @@ public final class MergedRadiantHooks {
                     Object proxy = XposedHelpers.callMethod(activeShape, "getViewBlurProxy");
                     Object config = XposedHelpers.callMethod(proxy, "getBlurConfig");
                     XposedHelpers.callMethod(config, "setCornerRadius", size / 2f);
-                    // Seek bars clip the active drawable externally. This standalone
-                    // circle needs the native static-blur corner clipping enabled.
+
                     XposedHelpers.callMethod(config, "setEnableStaticBlurCorner", true);
                     XposedHelpers.callMethod(proxy, "applyBlurConfig");
                     card.activeSize = size;
@@ -423,8 +419,7 @@ public final class MergedRadiantHooks {
         if (state != null && XposedHelpers.getIntField(state, "state") == 2) {
             String spec = (String) XposedHelpers.getObjectField(state, "spec");
             boolean network = "wifi".equals(spec) || "bt".equals(spec);
-            // Highlight Bluetooth cards render labelDesc (including device counts),
-            // while State.label can remain the generic Bluetooth title.
+
             CharSequence label = "bt".equals(spec) ? ((TextView) title.getCurrentView()).getText()
                     : (CharSequence) XposedHelpers.getObjectField(state, "label");
             boolean connected = network && !TextUtils.isEmpty(label) && !TextUtils.equals(label,
@@ -444,17 +439,13 @@ public final class MergedRadiantHooks {
         ColorStateList color = tile.getContext().getColorStateList(resource(tile,
                 "status_bar_qs_highlight_tile_label_second_color_active", "color"));
         TextView titleText = (TextView) title.getCurrentView();
-        // Both switchers share a start edge; do not let the description's
-        // full-width container inherit centered text alignment from its theme.
+
         if (subtitle.getPaddingStart() != title.getPaddingStart() || subtitle.getPaddingEnd() != title.getPaddingEnd())
             subtitle.setPaddingRelative(title.getPaddingStart(), subtitle.getPaddingTop(),
                     title.getPaddingEnd(), subtitle.getPaddingBottom());
         LinearLayout.LayoutParams subtitleParams = (LinearLayout.LayoutParams) subtitle.getLayoutParams();
         LinearLayout.LayoutParams titleParams = (LinearLayout.LayoutParams) title.getLayoutParams();
-        // A MATCH_PARENT child does not contribute its desired width to a
-        // WRAP_CONTENT vertical LinearLayout. Let the English Wi-Fi status
-        // size the text column, rather than inherit a shorter title's width.
-        // Borrow 4dp from the card's 12dp trailing inset without moving its icon.
+
         boolean englishWifi = state != null && "wifi".equals(XposedHelpers.getObjectField(state, "spec"))
                 && "en".equals(tile.getResources().getConfiguration().getLocales().get(0).getLanguage());
         int subtitleWidth = englishWifi ? ViewGroup.LayoutParams.WRAP_CONTENT : ViewGroup.LayoutParams.MATCH_PARENT;

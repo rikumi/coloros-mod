@@ -20,7 +20,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Default clock digits in the legacy host and the current base-clock plugin. */
 public final class KeyguardClockFontHooks {
     private static final String HOST = "com.oplus.systemui.shared.clocks.SingleClockView";
     private static final String PLUGIN_TIME = "com.oplus.keyguard.clock.base.ui.view.ClockTimeView";
@@ -85,8 +84,7 @@ public final class KeyguardClockFontHooks {
                     TextView view = (TextView) p.thisObject;
                     String text = view.getText().toString();
                     if (text.isEmpty()) return;
-                    // Center the colon's visible ink against the digits, rather than
-                    // the font's line box. Colon and numerals have different ink centers.
+
                     view.getPaint().getTextBounds("0123456789", 0, 10, original.digitBounds);
                     view.getPaint().getTextBounds(text, 0, text.length(), original.symbolBounds);
                     if (original.digitBounds.isEmpty() || original.symbolBounds.isEmpty()) return;
@@ -126,15 +124,13 @@ public final class KeyguardClockFontHooks {
         if (host == null) return false;
         boolean plugin = PLUGIN_TIME.equals(host.getClass().getName());
         if (!plugin && !HOST.equals(host.getClass().getName())) return false;
-        // The vendor isDefaultKeyguardInSettings helper also accepts third-party
-        // smooth-transition themes. Read its underlying setting strictly instead.
+
         int user = (Integer) XposedHelpers.callStaticMethod(updateMonitor, "getCurrentUser");
         String owner = (String) XposedHelpers.callStaticMethod(Settings.System.class, "getStringForUser",
                 host.getContext().getContentResolver(), "oplus_customize_unlock_change_pkg", user);
         if (!TextUtils.isEmpty(owner) && !"com.android.systemui".equals(owner)) return false;
         if (plugin) {
-            // The current ROM reports key_user_apply_default_theme=false even for
-            // its base clock. Use the actual plugin owner and default style instead.
+
             Object config = XposedHelpers.callMethod(configRecord, "getKeyguardStyleConfig");
             Object clock = XposedHelpers.callMethod(configRecord, "getClockStyleConfig");
             return config != null && clock != null

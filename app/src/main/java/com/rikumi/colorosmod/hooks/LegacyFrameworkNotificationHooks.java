@@ -10,7 +10,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Restore the real framework RemoteViews templates, including nested include layouts. */
 final class LegacyFrameworkNotificationHooks {
     static final String ASSET = "legacy_framework_notifications_15.zip";
     private static volatile LegacyFrameworkNotificationTemplates templates;
@@ -30,9 +29,7 @@ final class LegacyFrameworkNotificationHooks {
                     try {
                         Resources current = (Resources) p.thisObject;
                         String name = current.getResourceEntryName(id);
-                        // Android 16 NotificationExpandButton casts its internal container to
-                        // LinearLayout. The Android 15 XML uses RelativeLayout and aborts
-                        // notification inflation; retain the matching current widget internals.
+
                         if ("notification_expand_button".equals(name)) return;
                         if (!name.startsWith("notification_") && !name.equals("conversation_face_pile_layout")) return;
                         LegacyFrameworkNotificationTemplates bundle = templates();
@@ -56,8 +53,7 @@ final class LegacyFrameworkNotificationHooks {
                     }
                 }
             });
-            // Android 16 still contains the legacy generation branch. Generate actions for
-            // that branch, and keep the old header rather than binding a headerless card.
+
             XposedHelpers.findAndHookMethod("android.app.Flags", lp.classLoader,
                     "notificationsRedesignTemplates", new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
@@ -71,8 +67,7 @@ final class LegacyFrameworkNotificationHooks {
                             if (mode == 2 || (mode == 1 && !LegacyMessagingSpacingHooks.usesCompactShell())) p.args[0] = false;
                         }
                     });
-            // The hook helper deoptimizes its target. Deoptimize this caller as well so its
-            // compiled body cannot retain an inlined headerless(true) assignment.
+
             XposedHelpers.findAndHookMethod("android.app.Notification$Builder", lp.classLoader,
                     "applyStandardTemplate", int.class,
                     XposedHelpers.findClass("android.app.Notification$StandardTemplateParams", lp.classLoader),
@@ -82,8 +77,7 @@ final class LegacyFrameworkNotificationHooks {
             XposedHelpers.findAndHookMethod(wrapper, lp.classLoader, "resolveContentMargin", boolean.class,
                     new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            // The new wrapper replaces the old 42dp content offset with its
-                            // compact-card offset, pulling the title toward the app-name row.
+
                             if (legacyRoot(p.thisObject) != null) p.setResult(null);
                         }
                     });
@@ -139,11 +133,7 @@ final class LegacyFrameworkNotificationHooks {
                             if (readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) == 0
                                     || Boolean.TRUE.equals(p.args[4])) return;
                             View target = (View) p.args[3];
-                            // The new headerless-card branch casts to FrameLayout.LayoutParams.
-                            // Restored messaging headers place this control in a LinearLayout
-                            // (other legacy headers use RelativeLayout). Preserve their XML
-                            // positioning; assigning FrameLayout params would break the parent.
-                            // The true branch only adjusts padding and has no such cast.
+
                             if (target != null && !(target.getLayoutParams() instanceof FrameLayout.LayoutParams))
                                 p.setResult(null);
                         }

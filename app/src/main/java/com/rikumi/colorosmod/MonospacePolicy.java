@@ -4,7 +4,6 @@ import android.graphics.Typeface;
 import java.lang.reflect.Field;
 import java.util.Locale;
 
-/** The ColorOS font replacer must preserve these semantic font families and their derived styles. */
 public final class MonospacePolicy {
     private static final Field familyName;
     private static final Field derivedFrom;

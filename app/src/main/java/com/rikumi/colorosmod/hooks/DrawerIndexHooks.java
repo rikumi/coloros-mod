@@ -12,7 +12,6 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-/** 处理新旧桌面抽屉中的字母索引显示与命中入口。 */
 public final class DrawerIndexHooks {
     private static final String DRAWER_VIEW = "colorosmod_drawer_index_view";
     private static final Map<Object, Boolean> helpers = Collections.synchronizedMap(new WeakHashMap<>());

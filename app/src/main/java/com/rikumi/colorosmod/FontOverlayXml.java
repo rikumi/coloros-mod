@@ -9,7 +9,6 @@ import javax.xml.transform.stream.StreamResult;
 import org.w3c.dom.*;
 import org.xml.sax.InputSource;
 
-/** Shared XML representation for Android/Minikin and Chromium's Android font manager. */
 public final class FontOverlayXml {
     public static final class Source {
         public final String path;
@@ -106,7 +105,7 @@ public final class FontOverlayXml {
             family.appendChild(font);
         }
     }
-    /** Kept free of Android dependencies for host-side generation tests. */
+
     public static final class MonospaceNames {
         public static boolean matches(String name) {
             return name != null && Arrays.asList("monospace", "sans-serif-monospace", "serif-monospace",

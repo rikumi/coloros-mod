@@ -4,7 +4,6 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.PackageManager;
 
-/** Tile availability belongs to the installed module, independently of SystemUI hooks. */
 public final class HomeControlsTileSettings {
     public static final String KEY = "module_home_controls_tile_enabled";
     public static final String SERVICE = "com.rikumi.colorosmod.HomeControlsTileService";

@@ -19,12 +19,6 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import io.github.libxposed.api.XposedInterface;
 
-/**
- * 旧版 XposedHelpers 的等价实现, 底层换成新版 libxposed API:
- * 反射查找仍是 java.lang.reflect, 而方法/构造的 hook 走 XposedInterface 的拦截器链。
- * 抛出的异常类型与旧版保持一致(ClassNotFoundError / NoSuchFieldError / NoSuchMethodError,
- * 均为 Error), 业务代码里清一色 catch Throwable, 语义不变。
- */
 public final class XposedHelpers {
 
     private static final Object QUIESCE_LOCK = new Object();
@@ -55,7 +49,6 @@ public final class XposedHelpers {
 
     // ------------------------------------------------------------------ Hook
 
-    /** Chain-style hook with the same generation admission gate as the compatibility hooks. */
     public static XposedInterface.HookHandle hookChainMethod(Method method, XposedInterface.Hooker hooker) {
         XposedInterface framework = XposedBridge.framework();
         method.setAccessible(true);
@@ -67,7 +60,6 @@ public final class XposedHelpers {
         });
     }
 
-    /** 只能 hook 方法或构造方法; 字段等 Member 会直接抛异常(与旧版一致)。 */
     static void hookMethod(Member hookMethod, XC_MethodHook callback) {
         if (!(hookMethod instanceof Executable)) {
             throw new IllegalArgumentException("Only methods and constructors can be hooked: " + hookMethod);
@@ -115,17 +107,6 @@ public final class XposedHelpers {
         findAndHookMethod(findClass(className, classLoader), methodName, parameterTypesAndCallback);
     }
 
-    /**
-     * 只在目标类自己声明的方法里找, 不上溯父类、不查接口; 找不到直接抛 NoSuchMethodError。
-     *
-     * 用于 hook view / 框架生命周期回调(onAttachedToWindow、onDraw、onTouchEvent 等):
-     * 这些方法在 android.view.View 里都有实现, 一旦某个 ROM 版本的目标类没有覆写它,
-     * findMethodExact 会沿父类链一路找到 View, 于是 hook 变成对该进程内所有 View 生效。
-     * 更严重的是回调里若再 addView, 会触发 dispatchAttachedToWindow 重新进入同一个 hook,
-     * 直接栈溢出崩溃(实测 SystemUI 每 90s 崩一次、循环不停)。
-     * 因此"本意就是 hook 该类自己的覆写"的场景必须用这个版本, 缺失即放弃 hook。
-     * 需要靠上溯覆盖子类的场景(如 final 方法) 仍用 findAndHookMethod。
-     */
     public static Method findMethodDeclared(Class<?> clazz, String methodName, Class<?>... parameterTypes) {
         Class<?>[] types = (parameterTypes == null) ? new Class<?>[0] : parameterTypes;
         try {
@@ -177,7 +158,6 @@ public final class XposedHelpers {
         return unhooks;
     }
 
-    /** Hook 目标类自己声明的全部同名方法, 用于 OEM 重载签名不稳定的系统服务入口。 */
     public static Set<XC_MethodHook.Unhook> hookAllMethods(Class<?> hookClass, String methodName,
                                                             XC_MethodHook callback) {
         Set<XC_MethodHook.Unhook> unhooks = new LinkedHashSet<XC_MethodHook.Unhook>();
@@ -189,8 +169,6 @@ public final class XposedHelpers {
         return unhooks;
     }
 
-    // Successful lookups are immutable for a loaded Class. Keep exact/best
-    // matches separate, including Class identity (not only its name).
     private record MethodKey(Class<?> owner, String name, List<Class<?>> types) { }
     private static final Map<MethodKey, Method> EXACT_METHODS = new ConcurrentHashMap<>();
     private static final Map<MethodKey, Method> MATCHED_METHODS = new ConcurrentHashMap<>();
@@ -236,10 +214,6 @@ public final class XposedHelpers {
         }
     }
 
-    /**
-     * 先按精确签名找, 找不到再按实参类型做宽松匹配(含装箱/拆箱与父类兼容)。
-     * 实参里出现 null 时无法精确匹配, 直接落到宽松匹配 —— 与旧版 findMethodBestMatch 同口径。
-     */
     public static Method findMethodBestMatch(Class<?> clazz, String methodName, Class<?>... parameterTypes) {
         Class<?>[] types = (parameterTypes == null) ? new Class<?>[0] : parameterTypes;
         MethodKey key = new MethodKey(clazz, methodName, Arrays.asList(types.clone()));
@@ -445,7 +419,6 @@ public final class XposedHelpers {
 
     private static final Map<String, Field> FIELD_CACHE = new ConcurrentHashMap<String, Field>();
 
-    /** 沿类继承链查找字段(含父类), 并打开访问开关。 */
     private static Field findField(Class<?> clazz, String fieldName) {
         String key = clazz.getName() + '#' + fieldName;
         Field cached = FIELD_CACHE.get(key);
@@ -465,18 +438,6 @@ public final class XposedHelpers {
         throw new NoSuchFieldError(clazz.getName() + '.' + fieldName);
     }
 
-    // ------------------------------------------------------------------ 附加实例字段
-    //
-    // 旧版是往目标类里注入一个真实字段; 这里改用弱引用表, 效果等价
-    // (值的生命周期与对象一致, 且被 hook 的类不会被改写)。
-    // key 走 identity 语义, 避免目标对象重写 equals/hashCode 时串数据。
-
-    // 以目标对象本身为 WeakHashMap 的 key(弱引用指向真实对象): 对象存活期间(含跨多次
-    // hook 调用的场景, 如 mBack 的 DOWN->UP)条目保留; 对象被 GC 时条目自动回收, 不泄漏。
-    // 注意: 此前误用 IdentityWeakKey 包装对象做 key —— 包装对象本身也被 WeakHashMap 弱引用,
-    // 方法返回后即无强引用, 很快被 GC, 导致条目在两次调用之间丢失, 表现为依赖附加实例字段
-    // 跨调用存状态的功能(如 mBack)整体失效; 单次 hook 调用内读写(如浮窗挂机的 LAST_SHOWING)
-    // 因包装对象仍在栈上而幸存, 故其他功能看似正常。这是 libxposed 迁移后兼容层引入的回归。
     private static final Map<Object, Map<String, Object>> ADDITIONAL_FIELDS =
             java.util.Collections.synchronizedMap(new WeakHashMap<Object, Map<String, Object>>());
     private static final Map<String, List<TrackedPreDrawListener>> PREPARED_PRE_DRAW =
@@ -527,8 +488,6 @@ public final class XposedHelpers {
         return fields.remove(key);
     }
 
-
-    /** Stop admitting module callbacks and wait for callbacks already inside old code. */
     public static boolean beginQuiescing(long timeoutMs) {
         long deadline = android.os.SystemClock.uptimeMillis() + timeoutMs;
         synchronized (QUIESCE_LOCK) {
@@ -574,7 +533,6 @@ public final class XposedHelpers {
         }
     }
 
-
     public interface TrackedOwnerConsumer { void accept(Object owner); }
 
     public static void forEachTrackedOwner(String key, TrackedOwnerConsumer consumer) {
@@ -586,7 +544,6 @@ public final class XposedHelpers {
         }
     }
 
-    /** Detach tracked listeners without dropping bookkeeping so a rejected reload can restore them. */
     public static boolean prepareTrackedPreDrawListeners(String key) {
         synchronized (ADDITIONAL_FIELDS) {
             if (PREPARED_PRE_DRAW.containsKey(key)) return false;
@@ -616,7 +573,6 @@ public final class XposedHelpers {
         }
     }
 
-    /** Restore listeners detached by a rejected hot-reload preflight. */
     public static boolean cancelTrackedPreDrawListenerPreflight(String key) {
         synchronized (ADDITIONAL_FIELDS) {
             boolean restored = cancelTrackedPreDrawListenerPreflightLocked(key);
@@ -673,7 +629,6 @@ public final class XposedHelpers {
         main.postDelayed(retry, 1000L);
     }
 
-    /** Finalize a successful preflight without attempting to detach the same listeners twice. */
     public static boolean commitTrackedPreDrawListenerPreflight(String key) {
         synchronized (ADDITIONAL_FIELDS) {
             if (!PREPARED_PRE_DRAW.containsKey(key)) return false;
@@ -689,7 +644,6 @@ public final class XposedHelpers {
             return true;
         }
     }
-
 
     public static void removeTrackedViewChildren(String... keys) {
         synchronized (ADDITIONAL_FIELDS) {
@@ -743,7 +697,6 @@ public final class XposedHelpers {
         }
     }
 
-    /** Drop Java-only generation state. UI/Animator cleanup is committed on main beforehand. */
     public static void clearGenerationState() {
         EXACT_METHODS.clear();
         MATCHED_METHODS.clear();
@@ -769,7 +722,6 @@ public final class XposedHelpers {
         return classes;
     }
 
-    /** 由实参推导形参类型; null 实参对应 null(宽松匹配时视为匹配任意非基本类型)。 */
     private static Class<?>[] parameterTypes(Object[] args) {
         if (args == null || args.length == 0) return new Class<?>[0];
         Class<?>[] types = new Class<?>[args.length];

@@ -6,7 +6,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Release the native touch clip before switching contracted/expanded templates. */
 final class NotificationExpansionTouchHooks {
     static void hook(XC_LoadPackage.LoadPackageParam lp) {
         try {
@@ -47,8 +46,7 @@ final class NotificationExpansionTouchHooks {
             if (!"clip_width_touch_scale".equals(source)) return;
             Object viewExtension = XposedHelpers.getObjectField(row, "mExpandableViewEx");
             if (viewExtension != null) {
-                // Native touch animator deliberately ignores updates while the stack is
-                // expanding. Clear only its clip-width request, preserving other animation sources.
+
                 XposedHelpers.callMethod(viewExtension, "resetTouchScaleImmediately", "notification template expansion");
                 XposedHelpers.callMethod(state, "applyToView", row);
                 ((View) row).invalidate();

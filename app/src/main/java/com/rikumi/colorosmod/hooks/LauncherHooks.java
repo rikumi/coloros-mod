@@ -30,9 +30,6 @@ import com.rikumi.colorosmod.xposed.XposedBridge;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
-/**
- * Launcher(com.android.launcher) 作用域的全部 hook：桌面布局、文件夹、编辑模式、弹窗尺寸、多任务。
- */
 public final class LauncherHooks {
     // 修改安全中心"隐藏应用"对电话本的处理: 系统原生是整包禁用(会连拨号一起失效), 这里让
     private static final Object sHiddenSettingsLock = new Object();
@@ -41,7 +38,6 @@ public final class LauncherHooks {
     private static boolean sInitialModelReloadPending;
     private static java.util.Set<android.content.ComponentName> sLastHiddenComponents = java.util.Collections.emptySet();
 
-    /** 隐藏集合改变或冷启动首次取得非空集合时刷新 Launcher 模型。 */
     public static void onSettingsSnapshotPublished(java.util.Map<String, Integer> settings) {
         DrawerInstallTimeHooks.onSettingsSnapshotPublished(settings);
         refreshPowerSaveTaskLocks(settingValue(settings, KEY_POWER_SAVE_KEEP_LOCKED_TASKS_ENABLED) == 1);
@@ -140,10 +136,6 @@ public final class LauncherHooks {
         }
     }
 
-    /**
-     * 保存已应用到 Launcher 模型的隐藏开关, 让新 generation 在设置未变时跳过 forceReload(避免桌面闪烁)。
-     * 若仍有未完成的刷新(cleanup 会取消它), 返回 null, 让新 generation 首个 snapshot 重新刷新。
-     */
     public static Object captureHotReloadSettings() {
         synchronized (sHiddenSettingsLock) {
             if (!sHiddenSettingsInitialized || sPendingModelReloads > 0 || sInitialModelReloadPending) return null;
@@ -154,7 +146,6 @@ public final class LauncherHooks {
         }
     }
 
-    /** 必须在新 generation 启动设置加载之前调用, 否则首个 snapshot 可能先于种子值发布。 */
     public static void restoreHotReloadSettings(Object saved) {
         synchronized (sHiddenSettingsLock) {
             if (!(saved instanceof String[])) {
@@ -177,8 +168,6 @@ public final class LauncherHooks {
         return value != null && value.intValue() == 1 ? 1 : 0;
     }
 
-    // 以下为检测"桌面是否处于正常状态(NORMAL)"所需的反射缓存; 仅在 NORMAL 状态才响应手势,
-    // 编辑状态(长按桌面进入)下的 pinch-out 交由系统处理(回到正常状态), 不触发本功能。
     static volatile Class<?> sLauncherClass;
 
     static volatile ClassLoader sLauncherClassLoader;
@@ -196,8 +185,6 @@ public final class LauncherHooks {
     private static final float RECENTS_TASK_BORDER_WIDTH_DP = 1f;
     private static final Paint sRecentsTaskBorderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
-    // 最近任务壁纸模糊的混色临时清零/恢复: setBlur 用 mBlurBlendColor * blur 构造 COLORMIX
-    // 混色, 是背景发灰/提亮的来源; 仅在进入/处于最近任务的那次 setBlur 里清零, 调用后恢复。
     private static final String EXTRA_RECENTS_BLEND = "recentsBlendColor";
     private static final float[] RECENTS_CLEAR_BLEND = new float[]{0f, 0f, 0f, 0f};
 
@@ -235,14 +222,8 @@ public final class LauncherHooks {
             java.util.Collections.synchronizedMap(
                     new java.util.WeakHashMap<android.view.View, int[]>());
 
-    // 缩小桌面图标长按菜单。该菜单尺寸由布局与主题属性决定, 不在运行时经 Resources.getDimension* 解析
-    // (实测长按时无相关 dimen 被读取), 故资源钩子无效; 改为监听菜单根容器 deep_shortcuts_container 的
-    // onAttachedToWindow, 对内部卡片容器做整体 scaleX/scaleY。
     static volatile Class<?> sPopupContainerClass = null;
 
-    // 缩小桌面图标长按菜单: 对 OplusPopupContainerWithArrow 内部的卡片容器(mAllPopupShortcutContainer)
-    // 做整体 scaleX/scaleY。该容器承载卡片背景与所有菜单项, 而 popup 打开动画只缩放外层容器、不触碰它,
-    // 所以变换恒定生效。"更多功能"使用独立 PopupWindow；保留其动画外层, 只缩放内部视觉卡片。
     public static void hookPopupMenuDimens(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             final Class<?> popupClass = XposedHelpers.findClass(
@@ -270,9 +251,7 @@ public final class LauncherHooks {
                                     () -> scalePopupContainer(v));
                         }
                     });
-            // "更多功能"的二级菜单属于独立 PopupWindow, 并不在 mAllPopupShortcutContainer 内。
-            // 构造完成后子菜单 ListView 和外层卡片均已初始化。hook 全部构造函数可避免依赖
-            // OplusPopupContainerWithArrow#setSubPopWindow 的具体签名, 提高 Launcher 小版本兼容性。
+
             try {
                 final Class<?> subPopupClass = XposedHelpers.findClass(
                         "com.android.launcher3.popup.MoreFunctionsPopupListWindow",
@@ -363,9 +342,6 @@ public final class LauncherHooks {
         int w = target.getWidth();
         int h = target.getHeight();
 
-    // 轴心 = 箭头位置。用 launcher 自带的 calculatePivotX() 得外层坐标系下箭头 x, 再用屏幕坐标差换算到
-    // 被缩放的内层卡片坐标系(对任意嵌套都鲁棒), 保证左/右/居中弹出时菜单都围绕箭头缩放而不整体偏移。
-    // 垂直方向: 弹出在图标上方(mIsAboveIcon)则箭头在卡片底边 -> pivotY=h, 否则在顶边 -> 0。
         boolean above = false;
         float pivotX = w / 2.0f;
         float pivotY = h / 2.0f;
@@ -398,10 +374,6 @@ public final class LauncherHooks {
                 + " pivotY=" + pivotY + " above=" + above);
     }
 
-    // 外层 RoundFrameLayout 是 COUI 原生动画直接控制的对象, 不能缩放它。保持外层的位置、裁切、
-    // translation 与动画完全不变, 仅缩放内部 ListView。把卡片背景移到 ListView 后, 视觉上仍是整张
-    // 卡片缩小。原生窗口左上角已与一级卡片的原始左上角对齐, 因此使用同一个局部缩放矩阵
-    // (pivot=0,0), 菜单项的内距也会按相同比例变化；无需追踪或补偿任何其它元素的位置。
     static void scalePopupSubMenu(android.view.View wrapper, android.view.View content) {
         if (!readBool(KEY_SHRINK_POPUP_MENU, false)) {
             return;
@@ -421,8 +393,7 @@ public final class LauncherHooks {
                 content.setOutlineProvider(outlineProvider);
                 content.setClipToOutline(true);
                 syncPopupSubMenuOutline(wrapper, content, outlineProvider);
-                // RoundFrameLayout.dispatchDraw() 无空值检查地调用 background.setBounds(),
-                // 因此外层必须保留一个非空背景；透明 ColorDrawable 不参与视觉绘制。
+
                 wrapper.setBackground(new android.graphics.drawable.ColorDrawable(
                         android.graphics.Color.TRANSPARENT));
             }
@@ -439,9 +410,6 @@ public final class LauncherHooks {
                 + " h=" + content.getHeight() + " pivotX=" + pivotX + " pivotY=0.0");
     }
 
-    // RoundFrameLayout 的原生动画会更新自身 Outline, 但复用同一 provider 的 ListView 不会自动收到
-    // invalidateOutline。通过公开 View API 比较它自己的轮廓, 仅在矩形或透明度变化时刷新内层缓存；
-    // 不依赖 COUI 动画控制器的混淆方法名和字段名, 动画结束后也不会持续触发重绘。
     static void syncPopupSubMenuOutline(android.view.View wrapper, android.view.View content,
                                         android.view.ViewOutlineProvider outlineProvider) {
         final java.lang.ref.WeakReference<android.view.View> wrapperRef =
@@ -592,8 +560,7 @@ public final class LauncherHooks {
                     float[] savedBlend = ((float[]) state[2]).clone();
                     float[] blend = (float[]) XposedHelpers.getObjectField(
                             depthController, "mBlurBlendColor");
-                    // Older generations kept this array cleared for the entire gesture.
-                    // Restore the original; the new hooks clear it only during setBlur.
+
                     System.arraycopy(savedBlend, 0, blend, 0,
                             Math.min(blend.length, savedBlend.length));
                 } catch (Throwable t) {
@@ -766,9 +733,6 @@ public final class LauncherHooks {
         }
     }
 
-    // 每个 DeepShortcutView 内的 R.id.divider 是列表项之间的分割线, 其高度来自
-    // @dimen/coui_list_divider_height(物理 1px)。整体被 scaleX/Y 缩小 scale 后渲染成 sub-pixel 不可见。
-    // 把它改大为 1px / scale(向上取整), 缩小后恰好渲染成约 1px 的细线。
     static void fixPopupDividerThickness(android.view.View root, float scale) {
         int dividerId;
         try {
@@ -779,8 +743,7 @@ public final class LauncherHooks {
         if (dividerId <= 0) {
             return;
         }
-        // 目标: 整体缩小 scale 后分割线仍渲染出 1px。
-        // 故预先把高度设为 1px / scale, 向上取整保证缩小后至少 1px(整数布局高度)。
+
         final int oneDp = Math.max(1, (int) Math.ceil(1.0f / Math.max(scale, 0.01f)));
         fixPopupDividerRecursive(root, dividerId, oneDp);
     }
@@ -919,8 +882,7 @@ public final class LauncherHooks {
                         }
                     });
         } catch (Throwable t) {
-            // ColorOS 15.8.21 constructs a flat SystemShortcut list and has no MoreFunctions
-            // wrapper or secondary popup. Its native menu already has no secondary layer.
+
             log("launcher secondary menu wrapper unavailable on this Launcher: " + t);
         }
     }
@@ -929,8 +891,7 @@ public final class LauncherHooks {
         log(">>> matched launcher, classLoader=" + lpparam.classLoader);
         sLauncherClassLoader = lpparam.classLoader;
         try {
-            // A locked/cold Launcher can finish loading after the bounded readiness poll.
-            // Its real first bind re-arms the one-shot, without refreshing on every resume.
+
             XposedHelpers.findAndHookDeclaredMethod("com.android.launcher3.Launcher", lpparam.classLoader,
                     "finishBindingItems", XposedHelpers.findClass("com.android.launcher3.util.IntSet", lpparam.classLoader),
                     new XC_MethodHook() {
@@ -950,29 +911,19 @@ public final class LauncherHooks {
         // Feature 12 — 缩小长按菜单: 在 launcher 进程内拦截 Resources.getDimension*, 对菜单 dimen 缩放。
         hookPopupMenuDimens(lpparam);
 
-        // Feature 24/25 — 桌面长按菜单背景: 动态模糊 + 自定义背景亮度。
-        // 始终注入, 运行时按各自开关门控。
         hookPopupBgBlur(lpparam);
 
-
-        // Feature 1 — 图标间距: 始终注入, 运行时按 KEY_ICON_GAP_ENABLED 门控(关闭返回原值),
-        // 间距值由 KEY_ICON_GAP_DP(0-8dp, 默认 4dp) 在运行时读取, App 内拖滑条即时生效。
         hookPxRuntime(lpparam, "com.android.launcher.layoutparam.IconParam",
                 "getIconDrawablePaddingPx", density, KEY_ICON_GAP_ENABLED, KEY_ICON_GAP_DP, ICON_GAP_DP, 8, 1);
         hookPxRuntime(lpparam, "com.android.launcher.layoutparam.AllAppsParam",
                 "getAllAppsIconDrawablePaddingPx", density, KEY_ICON_GAP_ENABLED, KEY_ICON_GAP_DP, ICON_GAP_DP, 8, 1);
 
-        // 调整抽屉图标大小与间距: 始终注入, 运行时按 KEY_DRAWER_LAYOUT_ENABLED 门控。
-        // 只改抽屉尺寸和间距，列数保持系统设置。
         hookDrawerLayout(lpparam);
 
         // 字母索引滚动定位: 始终注入, 运行时按 KEY_DRAWER_LETTER_SCROLL_ENABLED 门控。
         hookDrawerLetterScroll(lpparam);
         DrawerInstallTimeHooks.hook(lpparam);
 
-        // Feature 2 — 页面与 Dock 间距: 始终注入, 运行时按 KEY_INDICATOR_ENABLED 门控。
-        // 系统会把 hotseat 高度变化按 workspaceTopPercentage 分摊到页面位置，
-        // 因此不能直接减 requestedDp；hook 中会反推实际需要的 hotseat 高度变化。
         hookIndicatorHotseatSize(lpparam, density);
 
         // Feature 4 — 多任务显示隐藏应用: 始终注入, 运行时按 KEY_RECENTS_SHOW_HIDDEN_ENABLED 门控。
@@ -986,9 +937,6 @@ public final class LauncherHooks {
         // 多任务上划彻底结束进程: 始终注入, 运行时按 KEY_RECENTS_SWIPE_UP_KILL_ENABLED 门控。
         hookRecentsSwipeUpKill(lpparam);
 
-        // 隐藏应用文件夹标题显示用户自定义文件夹名: 标题由 DeepProtectedAppsManager
-        // #createVirtualFolder() 硬编码为 R.string.app_hidden_title, hook 它并在返回后把
-        // folderInfo.title 替换为用户在 OplusFavoritesProvider 中自定义的名称。
         try {
             Class<?> mgrClass = XposedHelpers.findClass(
                     "com.android.launcher.filter.DeepProtectedAppsManager", lpparam.classLoader);
@@ -1016,8 +964,6 @@ public final class LauncherHooks {
             log("HOOK FAIL launcher createVirtualFolder: " + t);
         }
 
-        // Feature 11 — 从桌面隐藏指定的单个 LAUNCHER 活动(按设置中的组件列表):
-        // hook LauncherApps.getActivityList, 在结果中剔除已开启门控的目标组件。
         try {
             Class<?> launcherAppsClass = XposedHelpers.findClass(
                     "android.content.pm.LauncherApps", lpparam.classLoader);
@@ -1082,9 +1028,6 @@ public final class LauncherHooks {
             log("HOOK FAIL launcher OplusAppFilter#shouldShowApp: " + t);
         }
 
-        // 桌面双指张开(pinch-out)手势打开隐藏应用文件夹: 在 DragLayer 上挂被动 ScaleGestureDetector
-        // (不消费事件), 用"当前 span - 起始 span > 阈值"判定而非累计比例, 避免轻微张开误触发;
-        // 要求累计放大 > 1.2 做方向校验。仅 NORMAL 状态响应, 编辑态交由系统处理。
         try {
             Class<?> dragLayerClass = XposedHelpers.findClass(
                     "com.android.launcher3.dragndrop.DragLayer", lpparam.classLoader);
@@ -1164,7 +1107,6 @@ public final class LauncherHooks {
         hookEditModeBgBlur(lpparam);
     }
 
-    /** Feature 9 — 通过 launcher 内部 API 打开隐藏应用(深度保护)文件夹。 */
     static void openHideAppsFolder(android.content.Context ctx) {
         try {
             Class<?> mgr = XposedHelpers.findClass(
@@ -1178,8 +1120,6 @@ public final class LauncherHooks {
         }
     }
 
-    // 判断桌面是否处于 NORMAL 状态。DragLayer 的 context 即 Launcher 实例, 通过
-    // Launcher#isInState(LauncherState.NORMAL) 判定。反射结果做缓存; 任何异常均保守返回 false(不响应手势)。
     static boolean isLauncherInNormalState(android.content.Context ctx) {
         try {
             if (sLauncherClass == null) {
@@ -1200,9 +1140,6 @@ public final class LauncherHooks {
         }
     }
 
-    // 桌面文件夹展开背景透明化: 展开时系统对壁纸施加 blur=1.0 + mBlurBlendColor 暗色。
-    // 所有壁纸模糊都汇入 OplusDepthController.setBlur(float, boolean)(唯一收口点), hook 它在有
-    // 文件夹打开(含动画)且停留在桌面时把模糊强制为 0。
     public static void hookFolderOpenBgBlur(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             Class<?> depthClass = XposedHelpers.findClass(
@@ -1216,13 +1153,7 @@ public final class LauncherHooks {
                                 Object launcher = XposedHelpers.getObjectField(param.thisObject, "mLauncher");
                                 if (launcher == null) return;
                                 if (!isLauncherFolderOpen(launcher, lpparam.classLoader)) return;
-                                // 只在停留/前往桌面时生效, 否则(详见 isLauncherOnWorkspace)打开文件夹后
-                                // 上滑进多任务会连多任务的遮罩一起去掉。
-                                // 进入后台(BACKGROUND_APP)时同样必须归零: 从文件夹点应用启动时
-                                // setState 仍按"文件夹开着"把 blur 取成 getFolderBlur()=1.0,
-                                // 若不归零, 这个 1.0 会留在 mBlur 里; 从应用返回桌面时若正好
-                                // handleInvalidSurface 成立(直接 return, 且 onDraw 里 surface
-                                // 设置失败会再按文件夹开着置回 1.0), 模糊就被带了回来。
+
                                 if (!isLauncherOnWorkspace(launcher, lpparam.classLoader)
                                         && !isLauncherBackgroundApp(launcher, lpparam.classLoader)) return;
                                 param.args[0] = 0f;
@@ -1231,9 +1162,7 @@ public final class LauncherHooks {
                             }
                         }
                     });
-            // 从最近任务返回桌面时，文件夹仍保持打开：setState 会再次把目标 blur 算作 1.0，
-            // 但若进入最近任务时 mBlur 已经是 1.0，它不会调用 setBlur，导致文件夹页面保留遮罩。
-            // 在 NORMAL 状态切换完成后显式归零，覆盖有动画和无动画两条状态切换路径。
+
             Class<?> launcherStateClass = XposedHelpers.findClass(
                     "com.android.launcher3.LauncherState", lpparam.classLoader);
             Class<?> stateConfigClass = XposedHelpers.findClass(
@@ -1270,12 +1199,6 @@ public final class LauncherHooks {
         }
     }
 
-    // 桌面是否停在/正在前往 NORMAL(桌面)状态。
-    // OplusDepthController#setState 中, 只要 getOpenFolder() != null 就把 blur 取成 1.0, 与切到哪个
-    // 状态无关: 因此打开文件夹后上滑进多任务, 系统会按"文件夹开着"给多任务也加模糊, 而我们无条件
-    // 归零就会把多任务的遮罩一并去掉。故这里加一层状态判定, 只在桌面上才让文件夹背景透明。
-    // 状态取 OPlusBaseState#getTargetLauncherState(静态, StateManager#goToState 一进来就写入目标状态,
-    // 切换动画期间它已是新状态, 而 mLauncher 的当前状态此时还是旧的), 取不到时退回 StateManager#getState。
     static boolean isLauncherOnWorkspace(Object launcher, ClassLoader cl) {
         Object state = launcherTargetState(cl);
         if (state == null) state = launcherCurrentState(launcher);
@@ -1283,8 +1206,6 @@ public final class LauncherHooks {
         return state == launcherNormalState(cl);
     }
 
-    // 桌面是否停在/正在前往最近任务(OVERVIEW)。上滑手势进入最近任务的过渡期间,
-    // target 在 goToState(OVERVIEW) 后生效；尚未提交状态的手势需另读 RecentsView 的原生标记。
     static boolean isLauncherInOverview(Object launcher, ClassLoader cl) {
         Object state = launcherTargetState(cl);
         if (state == null) state = launcherCurrentState(launcher);
@@ -1292,8 +1213,6 @@ public final class LauncherHooks {
         return state == launcherOverviewState(cl);
     }
 
-    // 桌面是否正在进入后台(BACKGROUND_APP: 从文件夹启动应用, 或按 Home 离开桌面)。
-    // 此时 Launcher 窗口被应用盖住, 模糊值本身没有视觉影响, 但会被记进 mBlur。
     static boolean isLauncherBackgroundApp(Object launcher, ClassLoader cl) {
         Object state = launcherTargetState(cl);
         if (state == null) state = launcherCurrentState(launcher);
@@ -1371,9 +1290,6 @@ public final class LauncherHooks {
         }
     }
 
-    // 调整桌面文件夹展开/收起动画持续时间。ColorOS 有两条路径, 只 hook Resources.getInteger 不够: 普通
-    // 动画用 spring 物理动画(时长由 response 决定), light 动画用 ObjectAnimator + setDuration(150/400ms)。
-    // 故分别覆盖 spring response、getAnimDuration、getLightFolderContentAnimation, 并保留 getInteger 覆盖。
     public static void hookFolderAnimDuration(final XC_LoadPackage.LoadPackageParam lpparam) {
         hookFolderSpringDuration(lpparam);
         hookFolderLightDuration(lpparam);
@@ -1388,8 +1304,6 @@ public final class LauncherHooks {
         return ms;
     }
 
-    // 普通 spring 路径: 文件夹子图标/标题/页脚动画全部经 RtSpringAnimatorWrapper 包装,
-    // spring force 的 response(响应时间, 秒)决定动画时长, 这里统一改为 ms/1000。
     public static void hookFolderSpringDuration(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             final Class<?> wrapperClass = XposedHelpers.findClass(
@@ -1430,8 +1344,7 @@ public final class LauncherHooks {
                     });
             log("HOOK OK launcher RtSpringAnimatorWrapper (folder spring duration)");
         } catch (Throwable newerPathMissing) {
-            // ColorOS 15.8.21 builds folder motion as ValueAnimator sets in
-            // OplusFolderAnimationManager instead of RtSpringAnimatorWrapper springs.
+
             try {
                 Class<?> managerClass = XposedHelpers.findClass(
                         "com.android.launcher3.folder.OplusFolderAnimationManager",
@@ -1518,8 +1431,7 @@ public final class LauncherHooks {
                             }
                         }
                     });
-            // 隐藏应用文件夹(AppHiddenFolder)在动画 props 无效时回退的超轻量动画:
-            // getAnimator() 中跳过 spring 路径后走这里, 硬编码 360/300ms, 统一覆盖。
+
             XposedHelpers.findAndHookMethod(animUtilClass, "getSuperLightFolderContentAnimation",
                     boolean.class, folderClass, new XC_MethodHook() {
                         @Override
@@ -1606,11 +1518,6 @@ public final class LauncherHooks {
         }
     }
 
-    // 多任务背景保留壁纸模糊, 但去掉两处"变灰/提亮"的来源: 一是 OplusDepthController#setBlur
-    // 里用 mBlurBlendColor(深蓝灰) 注入的 COLORMIX 混色, 二是动态 blur 不可用时 OplusOverviewScrim
-    // 绘制的纯色遮罩回退。混色只在进入/处于最近任务时临时清零, 调用结束即恢复, 不影响其它场景。
-    // 截图由 OplusTaskThumbnailViewImpl 以平滑圆角 Path 绘制；复用该 Path 仅为截图区域描边，
-    // 并与系统的各角形状、动画裁切范围完全一致。
     public static void hookRecentsBackgroundTransparent(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             Class<?> overviewScrimClass = XposedHelpers.findClass(
@@ -1628,8 +1535,6 @@ public final class LauncherHooks {
             XposedHelpers.findAndHookMethod(overviewScrimClass, "setScrimProgress", float.class,
                     int.class, clearScrim);
 
-            // Scrim.draw reads cached mScrimAlpha directly. Suppress drawing as well so a
-            // previously nonzero progress cannot survive a guarded or skipped setter call.
             XposedHelpers.findAndHookMethod(
                     "com.android.launcher3.graphics.Scrim", lpparam.classLoader,
                     "draw", Canvas.class, new XC_MethodHook() {
@@ -1642,8 +1547,6 @@ public final class LauncherHooks {
                         }
                     });
 
-            // 保留模糊本身(blur 半径), 只把模糊附带的混色清零: setBlur 内部用
-            // mBlurBlendColor * blur 构造 COLORMIX 混色, 是背景发灰/提亮的根源。
             Class<?> depthClass = XposedHelpers.findClass(
                     "com.android.launcher3.uioverrides.states.OplusDepthController", lpparam.classLoader);
             XposedHelpers.findAndHookMethod(depthClass, "setBlur", float.class, boolean.class,
@@ -1681,8 +1584,6 @@ public final class LauncherHooks {
                         }
                     });
 
-            // Gesture cancellation may leave the blur value unchanged, so the native state
-            // switch skips setBlur. Reapply its current value after the native flags clear.
             XposedHelpers.findAndHookMethod(
                     "com.android.quickstep.touch.SwipeToRecentAnimationHelper", lpparam.classLoader,
                     "clearState", new XC_MethodHook() {
@@ -1718,9 +1619,6 @@ public final class LauncherHooks {
         }
     }
 
-    // Launcher-side swipes mark recentAnimateDragging in initState and clear it in clearState.
-    // App-side Quickstep gestures set mGestureActive before the finger is released, and clear
-    // it in onGestureAnimationEnd. Neither depends on pause detection or the OVERVIEW target.
     private static boolean isLauncherRecentsGestureActive(Object launcher) {
         try {
             Object recents = XposedHelpers.callMethod(launcher, "getOverviewPanel");
@@ -1762,9 +1660,6 @@ public final class LauncherHooks {
         }
     }
 
-    // 取消桌面编辑模式的背景遮罩: ToggleBarState / PagePreviewState 把编辑态壁纸 blur 固定为 1.0f。
-    // 只改最终 setBlur 会错过状态切换动画, 因此直接在状态提供目标值的方法上返回 0,
-    // 进入和退出编辑态都保持幂等。
     public static void hookEditModeBgBlur(final XC_LoadPackage.LoadPackageParam lpparam) {
         String[] stateClasses = {
                 "com.android.launcher3.states.ToggleBarState",
@@ -1870,9 +1765,6 @@ public final class LauncherHooks {
         }
     }
 
-    // 多任务(quickstep)显示被系统隐藏的应用: 系统"隐藏应用"经 OplusPrivacyManager.isHiddenPkg 判定,
-    // 最近任务在 OplusRecentTasksFilter.filterTaskInfo 据此剔除隐藏任务, OplusRecentsViewImpl 据此跳过 stub。
-    // 这里加 beforeHook: 调用方位于 com.android.quickstep 多任务渲染/手势路径时返回 false。应用锁不受影响。
     static final java.util.concurrent.atomic.AtomicInteger sRecentsBypassLogCount =
             new java.util.concurrent.atomic.AtomicInteger(0);
 
@@ -1902,9 +1794,6 @@ public final class LauncherHooks {
         }
     }
 
-    // 多任务不显示小窗应用: OplusRecentTasksFilter#filterTaskInfo 逐任务过滤(返回 true 即剔除),
-    // hook 它在开关开启且任务为小窗(isFlexibleFloatingWindow)时 setResult(true) 剔除卡片。
-    // 应用本身仍在前台运行, 不受影响。
     public static void hookRecentsHideFreeform(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             Class<?> groupedTaskInfo = findLauncherGroupedTaskInfo(lpparam.classLoader);
@@ -1936,11 +1825,6 @@ public final class LauncherHooks {
         }
     }
 
-    // 多任务隐藏未在运行的应用: 剔除已经没有存活 Activity 的任务卡片。
-    // 判据 android.app.TaskInfo#isRunning(PUBLIC boolean, 已 dexdump 核对):
-    // system_server 侧 Task#fillTaskInfo 里 info.isRunning = (top != null), 即任务是否还有
-    // 存活的 Activity; 应用被杀/任务被销毁后为 false, 卡片留在最近任务里但已不"运行"。
-    // 分屏任务(taskInfo2 != null)要求两个任务都不在运行才隐藏, 避免误杀掉一半的组合。
     public static void hookRecentsHideNotRunning(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             Class<?> groupedTaskInfo = findLauncherGroupedTaskInfo(lpparam.classLoader);
@@ -1983,8 +1867,6 @@ public final class LauncherHooks {
         }
     }
 
-    // 该 GroupedTaskInfo 里指定的那一半任务是否还在运行; 取不到(单任务时 taskInfo2 为 null)
-    // 视为不在运行, 由调用方决定是否隐藏。
     private static boolean isTaskInfoRunning(Object groupedTaskInfo, String getter) {
         try {
             Object taskInfo = XposedHelpers.callMethod(groupedTaskInfo, getter);
@@ -1994,25 +1876,6 @@ public final class LauncherHooks {
         return false;
     }
 
-    // 多任务上划彻底结束进程。
-    // 上划卡片的完整链路(网格/栈/堆叠三种布局统一):
-    //   TaskViewTouchController(上划) -> OplusRecentsViewImpl#createTaskDismissAnimation
-    //   -> delegate(Stack/Grid/Tile) -> RecentsViewAnimUtil 的 dismiss 动画结束监听
-    //   -> handleSuccessfulDismiss -> createTaskRemovalRunnable -> OplusRecentsViewImpl#removeTask
-    //   -> KillAppWrapper.forceStopTasks(ctx, task) -> (异步执行器)
-    //   -> KillAppWrapper#forceStopAppList(ctx, list, null, false) -> athena type=13(STOP)。
-    // forceStopAppList 是唯一收口, 末位 boolean 决定请求类型: false=13(STOP, 只停任务)、
-    // true=11(KILL_OR_STOP, 杀进程)。两条下发路径(Osense 新 API 与 startService 老 API)都读它。
-    // 注意 forceStopTasks 是提交到 OplusExecutors 异步执行的, ThreadLocal/调用栈都跨不了线程,
-    // 所以只能在 forceStopAppList 本身上按开关改写入参。
-    //
-    // 真正结束进程不在这里做: Launcher 没权限(见下文 requestForceStop)。本方法只负责
-    //   (a) 补调 removeTask 让卡片消失(newApiSupport 时系统自己会跳过),
-    //   (b) 决定要不要强杀、杀整包还是只杀这一个任务。
-    // 判定口径:
-    //   主任务 + 附属开关开 -> 连同该包剩余附属任务一起移除, 并整包强杀;
-    //   附属任务           -> 只定向杀它自己所在进程, 主进程要留着;
-    //   两者都判定不了     -> 退回"同包没有别的卡片才整包强杀"。
     private static final ThreadLocal<String> sPendingKillPkg = new ThreadLocal<>();
     private static final ThreadLocal<Integer> sPendingKillUser = new ThreadLocal<>();
     // 本次被划掉的任务 id(不论杀不杀进程, 卡片都必须移除, 否则划不掉)
@@ -2070,9 +1933,7 @@ public final class LauncherHooks {
                                     collectTaskIdsOfPkg(param.thisObject, pkg, userId, others, taskId);
                                     if (!others.isEmpty()) {
                                         sPendingExtraTaskIds.set(others);
-                                        // 清完附属任务后该包一个不剩, 整包强杀。
-                                        // 本开关的语义就是 "kill + 从最近任务移除", 所以不额外
-                                        // 再要求"彻底结束进程"开关; 没有附属任务时才退回那个开关。
+
                                         sPendingKillPkg.set(pkg);
                                         return;
                                     }
@@ -2104,9 +1965,7 @@ public final class LauncherHooks {
                                 if (removeId == null) return;
                                 Context ctx = (Context) XposedHelpers.callMethod(
                                         param.thisObject, "getContext");
-                                // newApiSupport()==true 时系统自己跳过 removeTask, 只把请求
-                                // 交给 athena(不执行), 卡片不消失, 这里补调一次。
-                                // 不论后面要不要杀进程, 卡片都必须移除, 否则划掉它不会消失。
+
                                 Object amw = XposedHelpers.callStaticMethod(
                                         XposedHelpers.findClass(
                                                 "com.android.systemui.shared.system.ActivityManagerWrapper",
@@ -2166,8 +2025,7 @@ public final class LauncherHooks {
                                     all.add(target);
                                     if (isLockedTaskView(tv, lpparam)) keep.add(target);
                                 }
-                                // 附属任务与主任务同包, 只要该包有未锁定的卡片, 全部清除就会
-                                // 把它们一起划掉, 清完之后整包一个不剩 -> 杀。
+
                                 for (String target : all) {
                                     if (keep.contains(target)) continue;
                                     int separator = target.indexOf(':');
@@ -2203,8 +2061,6 @@ public final class LauncherHooks {
         }
     }
 
-    // RecentsView 里该包还剩下几张卡片(getTaskViewCount/getTaskViewAt 均为 OplusRecentsViewImpl
-    // 的公开方法, 已 dexdump 核对)。
     private static int countTaskViewsOfPkg(Object recentsView, String pkg, int userId) {
         int count = 0;
         try {
@@ -2243,11 +2099,6 @@ public final class LauncherHooks {
         } catch (Throwable ignored) { }
     }
 
-    // 该任务是不是主任务: 任务的根组件是否属于该包的 launcher 入口。
-    // 用 LauncherApps.getActivityList() 拿该包全部入口(alias 也在内), 所以 splash/alias 启动的
-    // 应用其主任务仍判为主任务; 而小程序这类任务的根组件不在入口列表里 -> 判为附属。
-    // 与系统 OplusTaskUtils#getTitle 的比对方式一致: key.baseIntent.getComponent()。
-    // 返回 null 表示判定不了(此时调用方会退回保守逻辑, 不做附属清理)。
     private static Boolean isMainTask(Context ctx, Object key) {
         try {
             String pkg = (String) XposedHelpers.callMethod(key, "getPackageName");
@@ -2279,8 +2130,6 @@ public final class LauncherHooks {
         return null;
     }
 
-    // 卡片是否被锁定(锁定的卡片上划不掉、清除全部时也会保留)。复用系统自己的判定,
-    // 与 createAllTasksDismissAnimation 决定是否给它消失动画用的是同一个方法。
     private static boolean isLockedTaskView(Object taskView,
             XC_LoadPackage.LoadPackageParam lpparam) {
         try {
@@ -2293,10 +2142,6 @@ public final class LauncherHooks {
         return false;
     }
 
-    // 请求彻底结束进程。Launcher 是普通应用, 没有 FORCE_STOP_PACKAGES, 反射调
-    // ActivityManager#forceStopPackage 必被 SecurityException 拒(KernelSU 也不给 app root),
-    // 所以借道 ActivityManager#killBackgroundProcesses 把包名送进 system_server ——
-    // 那边的 hook 会拦下这次调用并升级成 AMS#forceStopPackage(见 SystemServerHooks)。
     private static void requestForceStop(Context ctx, String pkg, int userId) {
         if (ctx == null || pkg == null || userId < 0) return;
         try {
@@ -2306,9 +2151,6 @@ public final class LauncherHooks {
         } catch (Throwable ignored) { }
     }
 
-    // 定向杀掉某个任务所在的进程(用于划掉小程序: 只关这一个, 不能整包强杀)。
-    // 与 requestForceStop 走同一个通道, 用 "cmtask:<taskId>" 前缀区分; 两端都是本模块的 hook,
-    // 且 system_server 侧会 setResult 跳掉原方法, 不会真的去杀这个"不存在的包名"。
     private static void requestKillTask(Context ctx, int taskId) {
         if (ctx == null) return;
         try {
@@ -2341,8 +2183,6 @@ public final class LauncherHooks {
         return false;
     }
 
-    // 判断本次 isHiddenPkg 的调用方是否位于 quickstep 多任务渲染/手势路径
-    // (最近任务列表过滤与 recents 视图均在 com.android.quickstep 包下; 应用锁不调此方法)
     static boolean callerInQuickstepPath() {
         for (StackTraceElement e : new Throwable().getStackTrace()) {
             String cn = e.getClassName();
@@ -2355,8 +2195,6 @@ public final class LauncherHooks {
         return false;
     }
 
-    // 系统布局把 hotseat 高度变化按 workspaceTopPercentage 分摊到 Workspace 顶部 padding, hotseat 缩短
-    // x 像素时页面实际只移动 x*(1-percentage)。这里反推缩短量, 使设置中的 dp 值对应真实页面到 Dock 的间距变化。
     public static void hookIndicatorHotseatSize(final XC_LoadPackage.LoadPackageParam lpparam,
                                                   final float density) {
         try {
@@ -2408,8 +2246,6 @@ public final class LauncherHooks {
     static final float DRAWER_ICON_GAP_KEEP = 0.875f;
     static final int DISPLAY_ALL_APPS = 1;
 
-    // 只在当前页面实际显示右侧字母条时应用抽屉布局调整。
-    // 分类页没有字母条，保留系统原来的尺寸与边距。
     static boolean drawerHasVisibleLetterScroller(android.view.View anchor) {
         int id = anchor.getResources().getIdentifier(
                 "coui_fast_scroller", "id", "com.android.launcher");
@@ -2419,16 +2255,12 @@ public final class LauncherHooks {
                 && scroller.isShown();
     }
 
-    // 用系统右侧 padding(未改过)反推左侧并扣掉字母条宽度。
-    // 字母条布局写死 28dp, 不能按 View.getWidth() 取 —— 第一次 apply 时还没 layout。
     static int drawerAdjustedLeftPadding(int systemPx, float density) {
         int minLeft = Math.round(4f * density);
         int letterBar = Math.round(28f * density);
         return Math.max(minLeft, systemPx - letterBar);
     }
 
-    // onLayout 时抽屉及字母条的父容器可能仍不可见，不能在这里固化边距。
-    // 绘制前再按最终可见状态调整；边距改变时取消这一帧，等图标重新布局后再显示。
     static void ensureDrawerPaddingPreDraw(android.view.View recyclerView) {
         if (XposedHelpers.getAdditionalInstanceField(
                 recyclerView, "colorosmod_launcher_predraw") != null) return;
@@ -2546,8 +2378,7 @@ public final class LauncherHooks {
             final Class<?> btv = XposedHelpers.findClass(
                     "com.android.launcher3.BubbleTextView", lpparam.classLoader);
             sDrawerBubbleTextViewClass = btv;
-            // 测量可能发生在页签暂时隐藏时，沿用该 RecyclerView 最后确认的状态。
-            // 状态只在绘制前更新；未知状态留给首次 pre-draw，避免隐藏/显示时反复恢复尺寸。
+
             XposedHelpers.findAndHookDeclaredMethod(btv, "onMeasure",
                     int.class, int.class, new XC_MethodHook() {
                         @Override
@@ -2568,7 +2399,7 @@ public final class LauncherHooks {
     }
 
     // isShown() 不区分 pager 中的屏幕外页面；共享字母条在滚动中也会临时 GONE。
-    // 已确认状态只允许在 pager 停稳后由当前页更新，不能用目标页的字母条改动其它页。
+
     static Boolean drawerLayoutForPage(android.view.View recyclerView) {
         if (!drawerLayoutEnabled()) return Boolean.FALSE;
         android.view.ViewParent parent = recyclerView.getParent();
@@ -2591,8 +2422,6 @@ public final class LauncherHooks {
         return recyclerView.isShown() ? drawerLayoutActive(recyclerView) : null;
     }
 
-    // 首次打开抽屉时预备 work，防止它滑入后才缩小。仅在当前字母条已显示、
-    // 系统确认这是启用中的 work RecyclerView 时执行；分类页不会使用这条路径。
     static Boolean drawerInitialWorkLayout(android.view.View recyclerView, android.view.View pager) {
         if (!drawerHasVisibleLetterScroller(recyclerView)) return null;
         android.view.ViewParent parent = pager.getParent();
@@ -2620,7 +2449,6 @@ public final class LauncherHooks {
         return null;
     }
 
-    // 每页独立保存已确认状态；未挂载或隐藏中的测量不会改变页面状态。
     static Boolean drawerLayoutForMeasure(android.view.View view) {
         if (!drawerLayoutEnabled()) return Boolean.FALSE;
         android.view.View current = view;
@@ -2714,9 +2542,6 @@ public final class LauncherHooks {
         }
     }
 
-    // 抽屉右侧字母索引: 系统点字母走 ClusterAppsContainer, 弹出该字母的图标分组;
-    // 同时 injectScrollToPositionAtProgress 在桌面抽屉(mLauncher != null)里故意不滚动。
-    // 开启后拦下分组切换, 并把列表滚到对应分区。
     public static void hookDrawerLetterScroll(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             XposedHelpers.findAndHookMethod(
@@ -2757,8 +2582,7 @@ public final class LauncherHooks {
                                 }
                                 Object info = param.args[0];
                                 if (info == null) return;
-                                // 不用 smoothScrollToSection 的像素累加: 格子高度和实际行高
-                                // 对不齐时会多滚一行, 每字母差不多一行时就变成点 A 出 B。
+
                                 int pos = XposedHelpers.getIntField(info, "position");
                                 if (pos < 0) return;
                                 Object lm = XposedHelpers.callMethod(
@@ -2776,9 +2600,7 @@ public final class LauncherHooks {
                                     }
                                 }
                                 XposedHelpers.callMethod(rv, "stopScroll");
-                                // 复用桌面自己的 TopSmoothScroller。START + margin 会让目标行
-                                // 平滑停在浮动 header/顶部虚化层下方，同时避免按估算行高累加
-                                // 导致字母定位偏一行。
+
                                 Object scroller = XposedHelpers.getObjectField(
                                         param.thisObject, "mSmoothScroller");
                                 int topOffset = drawerLetterScrollTopOffset(rv);
@@ -2786,9 +2608,7 @@ public final class LauncherHooks {
                                         android.view.Gravity.START);
                                 XposedHelpers.callMethod(scroller, "setMargin", topOffset);
                                 XposedHelpers.callMethod(scroller, "setTargetPosition", pos);
-                                // LinearSmoothScroller 的减速阶段约为线性滚动时间 / 0.3356。
-                                // 按目标距离动态提速，使完整的近距离减速动画最长为 350ms；
-                                // 长距离寻位阶段也会随距离同比提速。
+
                                 int currentY = (Integer) XposedHelpers.callMethod(
                                         param.thisObject, "getCurrentScrollY");
                                 int targetY = (Integer) XposedHelpers.callMethod(
@@ -2837,8 +2657,7 @@ public final class LauncherHooks {
         }
 
         try {
-            // 不写死 RecyclerView 打包后可能变化的父类混淆名（当前版本为 c0）。
-            // findAndHookMethod 会从稳定的桌面入口 TopSmoothScroller 向上查找声明类。
+
             final Class<?> topSmoothScroller = XposedHelpers.findClass(
                     "com.android.launcher.locateaction.TopSmoothScroller", lpparam.classLoader);
             XposedHelpers.findAndHookMethod(
@@ -2950,10 +2769,6 @@ public final class LauncherHooks {
         }
     }
 
-    // ColorOS 抽屉把 personal/work 切换条(以及 header 里其它行)浮在 RecyclerView 上,
-    // paddingTop 是 0。只按 tabs.getHeight() 不够: 系统真正留给内容的是
-    // FloatingHeaderView#getMaxTranslation(含 header 内边距/底部调整)。
-    // 用遮挡层在 RV 坐标系里的底边做 offset, 把目标行顶到可见区域。
     static int drawerLetterScrollTopOffset(android.view.View rv) {
         android.content.res.Resources res = rv.getResources();
         android.view.View root = rv.getRootView();
@@ -2997,8 +2812,6 @@ public final class LauncherHooks {
         return loc[1] + h;
     }
 
-    // 通用像素增量 hook: delta 在运行时按 dpKey 滑条值(默认 dpDef)计算, sign 为 +1 叠加 / -1 缩减;
-    // 开关(gateKey)关闭则返回原值。与 hookPx 的区别是增量值不在注入时固定, App 内拖滑条即时生效。
     public static void hookPxRuntime(XC_LoadPackage.LoadPackageParam lpparam,
                                       String className, String methodName, final float density,
                                       final String gateKey, final String dpKey, final int dpDef,
@@ -3025,17 +2838,12 @@ public final class LauncherHooks {
     // 动态模糊的最大半径(px), 与系统 PopupScrimView.BLUR_RADIUS / WorkSpaceScrimView 高斯上限一致。
     private static final float POPUP_DYNAMIC_BLUR_MAX_RADIUS = 80f;
 
-
-    // Feature 25 动态模糊 + Feature 24 背景亮度。系统把"预烘焙模糊壁纸 + dragLayer 截图(半径 4)"装进
-    // PopupBlurView 后只做 ALPHA 渐显, 模糊量恒定。动态模糊需三处配合(详见各 hook 处): WallpaperBlur
-    // #getBlurredWallpaper 半径改 0 并作废缓存(命中缓存时不再模糊)、PopupBlurHelper#blurBitmap 半径改 0。
     public static void hookPopupBgBlur(final XC_LoadPackage.LoadPackageParam lpparam) {
         hookPopupBgBlurSource(lpparam);
         hookPopupWallpaperBlurRadius(lpparam);
         hookPopupBlurAnim(lpparam);
     }
 
-    /** 壁纸: 动态模糊时半径置 0; 两者任一开启都要作废预烘焙缓存, 让 blurBitmap 每次都跑。 */
     private static void hookPopupWallpaperBlurRadius(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             Class<?> launcherClass = XposedHelpers.findClass(
@@ -3053,8 +2861,7 @@ public final class LauncherHooks {
                                 float k = popupBgBrightnessScale();
                                 if (!dynamic && k >= 1f) return;
                                 if (dynamic) param.args[1] = Float.valueOf(0f);
-                                // 缓存里存的是系统预烘焙的模糊壁纸(且混入的是未调整亮度的颜色),
-                                // 命中时原方法直接返回、完全不走 blurBitmap, 故必须作废。
+
                                 Object cache = XposedHelpers.getObjectField(
                                         param.thisObject, "mBlurCache");
                                 if (cache != null) {
@@ -3073,8 +2880,6 @@ public final class LauncherHooks {
         }
     }
 
-    // dragLayer 截图(半径 4.0)置 0, 图标层交给动态模糊; 壁纸层缩放混入色以调整背景亮度。
-    // 两个功能都落在这里 —— 这是壁纸与截图两条路径唯一的公共入口。
     private static void hookPopupBgBlurSource(final XC_LoadPackage.LoadPackageParam lpparam) {
         XC_MethodHook hook = new XC_MethodHook() {
             @Override
@@ -3118,7 +2923,6 @@ public final class LauncherHooks {
         }
     }
 
-    /** 把系统的 ALPHA 渐显换成半径渐增的高斯模糊。 */
     private static void hookPopupBlurAnim(final XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             XposedHelpers.findAndHookMethod(
@@ -3142,9 +2946,7 @@ public final class LauncherHooks {
                                         anim.setInterpolator(origin.getInterpolator());
                                     }
                                 }
-                                // 打开时背景保持可见(动态模糊由半径体现, 不靠透明度渐显);
-                                // 关闭时让 alpha 跟随 progress 淡出, 这样长按后拖动取消菜单时能
-                                // 透出后面真实图标、看到其它图标的避让运动。
+
                                 target.opening = open;
                                 view.setAlpha(open ? 1f : target.progress);
                                 applyPopupBgEffect(view, target.progress);
@@ -3163,7 +2965,6 @@ public final class LauncherHooks {
         }
     }
 
-    /** createBlurAnim 的驱动目标: 借 ObjectAnimator 的 Property 机制, 避开反射 setter 的兼容问题。 */
     public static final class PopupBlurTarget {
         public final View view;
         public float progress;
@@ -3185,8 +2986,7 @@ public final class LauncherHooks {
                 public void set(PopupBlurTarget target, Float value) {
                     target.progress = value;
                     applyPopupBgEffect(target.view, value);
-                    // 打开时背景始终可见(动态模糊由半径体现); 关闭时 alpha 随 progress 淡出,
-                    // 透出后面真实图标与避让运动。
+
                     target.view.setAlpha(target.opening ? 1f : value);
                 }
             };
@@ -3201,7 +3001,6 @@ public final class LauncherHooks {
         return target;
     }
 
-    /** 对 PopupBlurView 施加动态高斯模糊; progress=0 时清空效果。 */
     private static void applyPopupBgEffect(View view, float progress) {
         if (Build.VERSION.SDK_INT < 31) return;
         float radius = Math.max(0f, progress) * POPUP_DYNAMIC_BLUR_MAX_RADIUS;
@@ -3211,9 +3010,6 @@ public final class LauncherHooks {
         view.setRenderEffect(effect);
     }
 
-    // 长按背景亮度: 壁纸层以 blendMode=1(ONLY_MASK) 混入 popup_blur_blend_color, 结果
-    // out = wp*(1-a) + blendRGB*a, blendRGB 即系统硬加的"最低亮度"。把 blendRGB 缩放到 k 倍即可线性抵消。
-    // 走系统自己的混合链路(与模糊正交), 而非外叠颜色滤镜 —— 后者依赖合成顺序且实测无效。
     private static void applyPopupBlendBrightness(Object[] args) {
         float k = popupBgBrightnessScale();
         if (k >= 1f) return;
@@ -3224,7 +3020,6 @@ public final class LauncherHooks {
                 blend.alpha());
     }
 
-    /** 背景亮度系数 k: 1 = 系统默认, 0 = 完全去掉系统抬的最低亮度。开关关闭时为 1。 */
     private static float popupBgBrightnessScale() {
         if (!popupBgBrightnessOn()) return 1f;
         int brightness = Math.max(0, Math.min(DESKTOP_POPUP_BG_BRIGHTNESS_MAX,

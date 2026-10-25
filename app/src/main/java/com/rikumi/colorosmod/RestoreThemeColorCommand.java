@@ -10,7 +10,6 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.Properties;
 
-/** 只恢复旧版全局主题色备份，不提供启用或自定义主题色的入口。 */
 public final class RestoreThemeColorCommand {
     private static final String[] FILES = {"ux_custom_color.xml", "ux_custom_color_night.xml"};
 

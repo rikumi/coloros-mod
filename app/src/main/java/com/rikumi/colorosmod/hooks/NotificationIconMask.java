@@ -1,6 +1,5 @@
 package com.rikumi.colorosmod.hooks;
 
-/** Native alpha masks may contain gray antialiasing/shadows as well as a flat tinted glyph. */
 final class NotificationIconMask {
     static boolean accepts(int[] pixels) {
         int occupied = 0, transparent = 0;

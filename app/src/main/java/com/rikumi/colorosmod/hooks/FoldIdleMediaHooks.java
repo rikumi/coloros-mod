@@ -21,7 +21,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.WeakHashMap;
 
-/** 分离控制中心的显示列表投影，编辑和拖拽时恢复原生列表。 */
 public final class FoldIdleMediaHooks {
     private static final String LAYOUT = "com.oplus.systemui.qs.base.widget.recyclerview.StaggeredPagerLayoutManager";
     private static final String ADAPTER = "com.oplus.systemui.plugins.qs.customize.view.EditTileAdapter";
@@ -198,7 +197,6 @@ public final class FoldIdleMediaHooks {
         } catch (Throwable t) { log("HOOK FAIL control center reflow: " + t); }
     }
 
-    /** SystemUI 15 keeps the classic media panel and its three controls in one view. */
     private static void hookLegacyMediaControls(XC_LoadPackage.LoadPackageParam pkg) {
         try {
             Class<?> media = XposedHelpers.findClass("com.oplus.systemui.qs.media.OplusQsMediaPanelView",
@@ -282,8 +280,7 @@ public final class FoldIdleMediaHooks {
         }
     }
     private static void syncNative(Host host) {
-        // 未投影时原生列表和坐标仍可能在首次挂载之后到达，不能保留初始空快照。
-        // 投影期间不回读，避免把补位后的显示列表当成用户原始排列。
+
         if (host.displayedData != null || host.adapter.get() == null || host.manager.get() == null) return;
         host.data = copy(XposedHelpers.callMethod(host.adapter.get(), "getDataList"));
         host.locs = copy(XposedHelpers.callMethod(host.config(), "getSpecifyLoc"));

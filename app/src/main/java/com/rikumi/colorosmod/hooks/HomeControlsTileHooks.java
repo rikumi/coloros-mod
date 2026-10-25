@@ -14,7 +14,6 @@ import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import static com.rikumi.colorosmod.XposedInit.*;
 
-/** Uses the shared controls graph without creating or enabling a native tile. */
 final class HomeControlsTileHooks {
     static void hook(XC_LoadPackage.LoadPackageParam lp) {
         try {
@@ -37,8 +36,7 @@ final class HomeControlsTileHooks {
                                 Object starter = XposedHelpers.getObjectField(p.thisObject, "mActivityStarter");
                                 Handler main = (Handler) XposedHelpers.getObjectField(p.thisObject, "mUiHandler");
                                 Executor background = (Executor) XposedHelpers.getObjectField(listing.get(), "backgroundExecutor");
-                                // Initial service discovery is asynchronous. Resolve only after
-                                // a current-user reload on the listing controller's own executor.
+
                                 background.execute(() -> {
                                     try {
                                         XposedHelpers.callMethod(listing.get(), "forceReload");

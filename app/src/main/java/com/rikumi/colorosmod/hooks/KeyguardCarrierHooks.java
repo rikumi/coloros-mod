@@ -10,7 +10,6 @@ import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import static com.rikumi.colorosmod.XposedInit.*;
 
-/** Hide only the lock-screen carrier label, retaining native requested visibility. */
 public final class KeyguardCarrierHooks {
     private static final String KEY = "keyguard_hide_carrier_enabled";
     private static final String CARRIER = "com.oplus.systemui.statusbar.widget.OplusStatCarrierText";

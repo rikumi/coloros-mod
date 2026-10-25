@@ -20,7 +20,6 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.lang.reflect.Method;
 
-/** Restores the Android 15 SystemUI single-line and conversation notification templates. */
 public final class LegacyNotificationLayoutHooks {
     private static final String SYSTEMUI_PACKAGE = "com.android.systemui";
     private static final String TEMPLATE_ASSET = "legacy_notification_templates_15.99.13.apk";
@@ -94,8 +93,7 @@ public final class LegacyNotificationLayoutHooks {
     private static final Runnable APPLY_SETTINGS = LegacyNotificationLayoutHooks::applySettingsSnapshot;
 
     public static void onSettingsSnapshotPublished() {
-        // Settings snapshots arrive on ColorOSMod-SettingsWorker. All restoration,
-        // including padding/removing header views, belongs to the UI thread.
+
         MAIN.removeCallbacks(APPLY_SETTINGS);
         MAIN.post(APPLY_SETTINGS);
     }

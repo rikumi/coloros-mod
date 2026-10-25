@@ -9,7 +9,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 private val themeRestoreStarted = AtomicBoolean(false)
 
-/** 仅清理已移除功能留下的系统配色；没有备份时不调用 root。 */
 internal fun restoreRemovedThemeColor(context: Context) {
     val ctx = context.applicationContext
     val backup = java.io.File(ctx.createDeviceProtectedStorageContext().filesDir, "theme-color-backup")

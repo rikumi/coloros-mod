@@ -14,7 +14,6 @@ import java.lang.reflect.Method;
 import java.util.function.IntConsumer;
 import java.util.function.Consumer;
 
-/** Uses Shell's existing task surfaces; never releases the organizer's own leash. */
 final class AppNavigationTaskSurface {
     private static final String SHELL = "com.android.wm.shell.ShellTaskOrganizer";
     private final Field lock, tasks, configuration, windowConfiguration, visible, displayId, topActivityInfo,

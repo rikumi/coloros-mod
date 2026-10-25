@@ -13,7 +13,6 @@ internal data class ManagedAppEntry(
     val icon: Bitmap?,
 )
 
-/** 仅用户点击操作时执行写命令；保留 root 授权失败、系统策略拒绝及真实 stderr。 */
 private fun runManagedAppCommand(ctx: Context, command: String): String {
     val process = ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
     try {

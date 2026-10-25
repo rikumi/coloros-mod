@@ -17,7 +17,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Notification-panel glyphs: the Messages trace and verified native system masks. */
 final class MessagesNotificationIconHooks {
     private static final WeakHashMap<ImageView, State> views = new WeakHashMap<>();
     private static final WeakHashMap<ImageView, Selection> selections = new WeakHashMap<>();
@@ -130,9 +129,7 @@ final class MessagesNotificationIconHooks {
             if (state != null && state.selection != selection) { restore(view, state); state = null; }
             if (state == null) { state = new State(view, selection.glyph(), selection); views.put(view, state); }
             if (view.getDrawable() != state.replacement) view.setImageDrawable(state.replacement);
-            // Native app icons use a dark tint over a colored plate. Once the plate
-            // is removed, follow the actual notification text, including OEM dark
-            // cards shown independently of the system-wide night-mode setting.
+
             if (state.replacement.getColorFilter() != null) state.replacement.clearColorFilter();
             int tint = foregroundColor(row);
             if (state.tint == null || state.tint != tint) {

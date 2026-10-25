@@ -1,6 +1,5 @@
 package com.rikumi.colorosmod
 
-/** 与 Flyme 入口相同：相邻点击间隔小于一秒，五次触发；不持久化解锁状态。 */
 internal class AppManagementEntryGate {
     private var taps = 0
     private var lastTap: Long? = null
@@ -25,7 +24,6 @@ internal data class ManagedAppLists(
     val uninstalled: List<ManagedPackage>,
 )
 
-/** Shell 输出只接受完整包名和路径；错误行不得伪装成空列表。 */
 internal object AppManagementPolicy {
     const val USER_ID = 0
     private val packagePattern = Regex("[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)*")

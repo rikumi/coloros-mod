@@ -13,7 +13,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Full native headers in both content states, without forcing group or long-content expansion. */
 final class RelaxedNotificationHooks {
     private static boolean enabled() { return readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) == 2; }
     private static final WeakHashMap<View, IconAnchor> anchors = new WeakHashMap<>();
@@ -66,8 +65,7 @@ final class RelaxedNotificationHooks {
                             if (enabled() && hasRedundantBigText(p.thisObject)) p.setResult(null);
                         }
                     });
-            // Messaging wrappers run their own icon geometry update after the
-            // common header callback, restoring CENTER_VERTICAL and zero margins.
+
             XposedHelpers.findAndHookMethod("com.oplus.systemui.statusbar.notification.row.wrapper.OplusNotificationMessagingTemplateViewWrapperExImpl",
                     lp.classLoader, "onContentUpdated", new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
@@ -76,9 +74,7 @@ final class RelaxedNotificationHooks {
                             if (wrapper != null) anchorIcon(XposedHelpers.getObjectField(wrapper, "mIcon"));
                         }
                     });
-            // A full shell also needs the full-header binding/margin branch.
-            // Keep makeContentView's native action suppression and bind only one
-            // message line via setIsCollapsed before setData builds message groups.
+
             Class<?> params = XposedHelpers.findClass("android.app.Notification$StandardTemplateParams", lp.classLoader);
             int normal = (Integer) XposedHelpers.getStaticObjectField(params, "VIEW_TYPE_NORMAL");
             int expanded = (Integer) XposedHelpers.getStaticObjectField(params, "VIEW_TYPE_EXPANDED");
@@ -110,8 +106,7 @@ final class RelaxedNotificationHooks {
                             if (enabled()) p.args[0] = false;
                         }
                     });
-            // Substitute only this firmware's standard collapsed shells. Keeping the
-            // Builder's style binding preserves short/long content and group metadata.
+
             java.util.Map<String, String> shells = java.util.Map.of(
                     "notification_2025_template_collapsed_base", "notification_2025_template_expanded_base",
                     "notification_2025_template_heads_up_base", "notification_2025_template_expanded_base",
@@ -140,8 +135,7 @@ final class RelaxedNotificationHooks {
                             p.setObjectExtra("smallHeight", XposedHelpers.getIntField(p.thisObject, "mSmallHeight"));
                             p.setObjectExtra("headsUpHeight", XposedHelpers.getIntField(p.thisObject, "mHeadsUpHeight"));
                             int limit = XposedHelpers.getIntField(p.thisObject, "mNotificationMaxHeight");
-                            // Let wrap_content include the real full header; retain native
-                            // maximum bounds and restore these limits after measurement.
+
                             XposedHelpers.setIntField(p.thisObject, "mSmallHeight", limit);
                             XposedHelpers.setIntField(p.thisObject, "mHeadsUpHeight", limit);
                         }
@@ -163,8 +157,7 @@ final class RelaxedNotificationHooks {
                             LegacyExpandAlignmentHooks.centerArrow(button);
                             int id = button.getResources().getIdentifier("expand_button_pill", "id", "android");
                             View pill = id == 0 ? null : button.findViewById(id);
-                            // z is computed by NotificationContentView from the actual
-                            // contracted/expanded heights, not merely the presence of a big view.
+
                             if (pill != null) pill.setVisibility(Boolean.TRUE.equals(p.args[0]) ? View.VISIBLE : View.GONE);
                         }
                     });
@@ -173,8 +166,7 @@ final class RelaxedNotificationHooks {
 
     private static boolean hasRedundantBigText(Object builder) {
         android.app.Notification notification = (android.app.Notification) XposedHelpers.getObjectField(builder, "mN");
-        // Content equality, rather than an application/channel allowlist, determines
-        // whether a second template would expose any additional information.
+
         if (notification.contentView != null || notification.bigContentView != null
                 || (notification.actions != null && notification.actions.length != 0)) return false;
         android.os.Bundle extras = notification.extras;
@@ -190,8 +182,7 @@ final class RelaxedNotificationHooks {
 
     static void anchorIcon(Object object) {
         if (!enabled() || !(object instanceof View icon)) return;
-        // Compact group icons live inside their own fixed-size FrameLayout;
-        // the full notification template's outer margin would clip them.
+
         if (icon.getClass().getName().equals("com.oplus.systemui.notification.row.oplusgroup.OplusGroupNotificationRowIconView")) return;
         ViewGroup.LayoutParams params = icon.getLayoutParams();
         if (!(params instanceof ViewGroup.MarginLayoutParams margins)) return;

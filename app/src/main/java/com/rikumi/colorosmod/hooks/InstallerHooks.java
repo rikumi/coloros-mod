@@ -13,7 +13,6 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Current ColorOS OppoPackageInstaller, extracted from the connected PKT110. */
 public final class InstallerHooks {
     public static final String DISABLE_SCAN = "installer_disable_virus_scan";
     public static final String HIDE_SUGGESTIONS = "installer_hide_finish_suggestions";
@@ -26,8 +25,7 @@ public final class InstallerHooks {
 
     public static void hook(XC_LoadPackage.LoadPackageParam lp) {
         try {
-            // Y1() treats an unresolved scan Intent as an unavailable engine and executes
-            // its own confirmation fallback. Do not bind a service or forge an IPC result.
+
             XposedHelpers.findAndHookMethod("e1.k", lp.classLoader, "v", Context.class, Intent.class,
                     new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
@@ -89,9 +87,7 @@ public final class InstallerHooks {
         int layout = activity.getResources().getIdentifier("appbar_with_divider_layout", "layout", activity.getPackageName());
         View bar = LayoutInflater.from(activity).inflate(layout, root, false);
         Object toolbar = bar.findViewById(id(activity, "toolbar"));
-        // This activity already owns a window-decor ActionBar. setSupportActionBar
-        // rejects a second one, unlike the install-completion activity's theme.
-        // Use the same native toolbar as a standalone view instead.
+
         int back = activity.getResources().getIdentifier("coui_back_arrow", "drawable", activity.getPackageName());
         XposedHelpers.callMethod(toolbar, "setNavigationIcon", back);
         XposedHelpers.callMethod(toolbar, "setNavigationOnClickListener", (View.OnClickListener) v -> activity.onBackPressed());

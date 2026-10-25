@@ -12,7 +12,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.zip.ZipFile;
 
-/** 按桌面入口保存；旧的包级特殊规则只用于一次性迁移。 */
 public final class HiddenLauncherApps {
     public static final String COMPONENTS = "hidden_launcher_components";
     public static final String ENABLED = "hidden_launcher_apps_enabled";
