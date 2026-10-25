@@ -57,6 +57,29 @@ public final class LegacyFrameworkNotificationTemplatesTest {
         check(bundle.layout("not_a_notification", false) == null, "Unrelated layouts untouched");
         long dimensions = bundle.resources.values().stream().filter(r -> r.dimension() != null).count();
         check(dimensions == 47, "Original 47 dimension values preserved");
+        if (args.length > 4) try (ZipFile hybrids = new ZipFile(args[4])) {
+            for (String name : new String[]{"hybrid_notification", "hybrid_conversation_notification"}) {
+                byte[] xml;
+                try (var input = hybrids.getInputStream(hybrids.getEntry("res/layout/" + name + ".xml"))) {
+                    xml = input.readAllBytes();
+                }
+                LegacyNotificationXml.remap(xml, id -> {
+                    if ((id >>> 24) != 1 || id == 0) return id;
+                    // Public attributes have stable framework IDs; private styles,
+                    // IDs and layouts must resolve through the real old index.
+                    if (((id >>> 16) & 255) == 1) return id;
+                    var resource = bundle.resources.get(id);
+                    check(resource != null, "Hybrid private framework ID indexed: " + Integer.toHexString(id));
+                    Integer mapped = current.get(resource.type() + "/" + resource.name());
+                    check(mapped != null, "Hybrid private resource exists on current framework: " + resource);
+                    return mapped;
+                }, bundle::dimension);
+            }
+            check(bundle.resources.get(0x01030392).name().equals("TextAppearance.DeviceDefault.Notification.Title"),
+                    "Hybrid title uses notification typography rather than an unrelated Holo style");
+            check(bundle.resources.get(0x01030483).name().equals("Widget.DeviceDefault.Notification.Text"),
+                    "Hybrid text uses the notification widget style");
+        }
         System.out.println("PASS: " + checks + " original framework template and current-ID checks");
     }
 }

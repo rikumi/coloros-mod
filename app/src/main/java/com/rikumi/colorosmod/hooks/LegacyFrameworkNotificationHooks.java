@@ -67,7 +67,8 @@ final class LegacyFrameworkNotificationHooks {
             XposedHelpers.findAndHookMethod("android.app.Notification$StandardTemplateParams", lp.classLoader,
                     "headerless", boolean.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) != 0) p.args[0] = false;
+                            int mode = readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT);
+                            if (mode == 2 || (mode == 1 && !LegacyMessagingSpacingHooks.usesCompactShell())) p.args[0] = false;
                         }
                     });
             // The hook helper deoptimizes its target. Deoptimize this caller as well so its
@@ -181,7 +182,7 @@ final class LegacyFrameworkNotificationHooks {
         }
     }
 
-    private static LegacyFrameworkNotificationTemplates templates() throws Exception {
+    static LegacyFrameworkNotificationTemplates templates() throws Exception {
         LegacyFrameworkNotificationTemplates cached = templates;
         if (cached != null) return cached;
         synchronized (LegacyFrameworkNotificationHooks.class) {

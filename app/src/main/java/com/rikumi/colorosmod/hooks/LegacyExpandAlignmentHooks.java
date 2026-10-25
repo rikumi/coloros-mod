@@ -32,7 +32,7 @@ final class LegacyExpandAlignmentHooks {
         } catch (Throwable error) { log("legacy notification expand alignment hook failed: " + error); }
     }
 
-    private static void centerArrow(View button) {
+    static void centerArrow(View button) {
         int arrowId = NotificationResourceIds.get(button.getResources(), "expand_button_icon", "id", "android");
         int pillId = NotificationResourceIds.get(button.getResources(), "expand_button_pill", "id", "android");
         View arrow = arrowId == 0 ? null : button.findViewById(arrowId);
@@ -41,7 +41,8 @@ final class LegacyExpandAlignmentHooks {
             line.setGravity((line.getGravity() & ~Gravity.VERTICAL_GRAVITY_MASK) | Gravity.CENTER_VERTICAL);
         if (pill != null && pill.getParent() instanceof LinearLayout line)
             line.setGravity((line.getGravity() & ~Gravity.VERTICAL_GRAVITY_MASK) | Gravity.CENTER_VERTICAL);
-        if (arrow != null && arrow.getLayoutParams() instanceof LinearLayout.LayoutParams params) {
+        if (arrow != null && arrow.getLayoutParams() instanceof LinearLayout.LayoutParams params
+                && (params.topMargin != 0 || params.bottomMargin != 0 || params.gravity != Gravity.CENTER_VERTICAL)) {
             params.topMargin = 0;
             params.bottomMargin = 0;
             params.gravity = Gravity.CENTER_VERTICAL;

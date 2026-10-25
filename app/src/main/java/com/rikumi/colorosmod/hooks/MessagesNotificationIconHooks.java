@@ -93,20 +93,20 @@ final class MessagesNotificationIconHooks {
                 if (view.getDrawable() != state.replacement) state.original = view.getDrawable();
                 if (view.getBackground() != null) state.background = view.getBackground();
             }
-            boolean legacy = readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) == 1;
-            View row = (legacy || MonochromeNotificationHooks.enabled() || NotificationAppNameHooks.enabled()) ? notificationRow(view) : null;
+            boolean standardHeader = readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) != 0;
+            View row = (standardHeader || MonochromeNotificationHooks.enabled() || NotificationAppNameHooks.enabled()) ? notificationRow(view) : null;
             if (row == null) {
                 if (state != null) { restore(view, state); views.remove(view); }
                 return;
             }
             Object entry = XposedHelpers.callMethod(row, "getEntry");
             StatusBarNotification sbn = (StatusBarNotification) XposedHelpers.callMethod(entry, "getSbn");
-            if (!legacy && !MonochromeNotificationHooks.enabled() && !SystemNotificationGroupHooks.androidSummary(sbn)) {
+            if (!standardHeader && !MonochromeNotificationHooks.enabled() && !SystemNotificationGroupHooks.androidSummary(sbn)) {
                 if (state != null) { restore(view, state); views.remove(view); }
                 return;
             }
             Icon source = SystemNotificationIconMasks.source(sbn);
-            String key = legacy + ":" + MonochromeNotificationHooks.enabled() + ':'
+            String key = standardHeader + ":" + MonochromeNotificationHooks.enabled() + ':'
                     + SystemNotificationGroupHooks.androidSummary(sbn) + ':' + sbn.getPackageName() + ':'
                     + source + ':' + sbn.getNotification().iconLevel + ':'
                     + view.getResources().getConfiguration().hashCode();
@@ -115,8 +115,8 @@ final class MessagesNotificationIconHooks {
                     || !selection.key().equals(key)) {
                 Icon glyph = null;
                 try {
-                    glyph = legacy ? MonochromeNotificationHooks.notificationMask(view.getContext(), sbn) : iconFor(sbn);
-                    if (glyph == null && !legacy) glyph = SystemNotificationIconMasks.resolve(view.getContext(), sbn, source);
+                    glyph = standardHeader ? MonochromeNotificationHooks.notificationMask(view.getContext(), sbn) : iconFor(sbn);
+                    if (glyph == null && !standardHeader) glyph = SystemNotificationIconMasks.resolve(view.getContext(), sbn, source);
                 } catch (Throwable error) {
                     if (!failed) { failed = true; log("notification panel glyph resolve failed: " + error); }
                 }

@@ -13,7 +13,7 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
-/** Add only the application name to the native compact, collapsed group header. */
+/** Keep application names aligned while native group icons change between two sizes. */
 final class RelaxedGroupHeaderHooks {
     private static final WeakHashMap<View, WeakReference<TextView>> names = new WeakHashMap<>();
     private static final WeakHashMap<View, HeaderLine> headerLines = new WeakHashMap<>();
@@ -27,6 +27,7 @@ final class RelaxedGroupHeaderHooks {
             this.button = new WeakReference<>(button);
         }
     }
+    private static final WeakHashMap<View, Integer> expandedLinePaddings = new WeakHashMap<>();
     private static final WeakHashMap<View, int[]> iconPositions = new WeakHashMap<>();
     private static final WeakHashMap<View, int[]> headerPaddings = new WeakHashMap<>();
     private static final WeakHashMap<TextView, WeakReference<Object>> transformations = new WeakHashMap<>();
@@ -41,6 +42,19 @@ final class RelaxedGroupHeaderHooks {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             HeaderLine line = headerLines.get((View) p.thisObject);
                             if (line != null && enabled()) alignTime((View) p.thisObject, line);
+                        }
+                    });
+            XposedHelpers.findAndHookMethod("android.view.NotificationHeaderView", lp.classLoader,
+                    "onMeasure", int.class, int.class, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            if (enabled()) alignExpandedHeader((View) p.thisObject, false);
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(container,
+                    "onLayout", boolean.class, int.class, int.class, int.class, int.class, new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            if (enabled() && XposedHelpers.getObjectField(p.thisObject, "mGroupHeader") instanceof View header)
+                                alignExpandedHeader(header, true);
                         }
                     });
             String group = "com.oplus.systemui.notification.row.oplusgroup.OplusNotificationGroupExtImpl";
@@ -71,16 +85,6 @@ final class RelaxedGroupHeaderHooks {
                             if (!enabled()) return;
                             Object view = XposedHelpers.getObjectField(p.thisObject, "opusGroupView");
                             if (view instanceof FrameLayout header) alignHeader(p.args[0], p.thisObject, header);
-                        }
-                    });
-            XposedHelpers.findAndHookMethod("com.oplus.systemui.statusbar.notification.stack.OplusNotificationChildrenContainerOverlayExImpl",
-                    lp.classLoader, "updateOverlayClipping", float.class, new XC_MethodHook() {
-                        @Override protected void afterHookedMethod(MethodHookParam p) {
-                            if (!enabled()) return;
-                            Object icon = XposedHelpers.getObjectField(p.thisObject, "iconContainer");
-                            // Native animation aligns this with the first child's
-                            // vertical center. Relaxed headers keep it at the top.
-                            if (icon instanceof View view) view.setTranslationY(0f);
                         }
                     });
             XposedHelpers.findAndHookMethod("com.oplus.systemui.statusbar.notification.stack.OplusNotificationChildrenContainerOverlayExImpl",
@@ -212,11 +216,39 @@ final class RelaxedGroupHeaderHooks {
         int id = header.getResources().getIdentifier("icon_container", "id", "com.android.systemui");
         View iconContainer = id == 0 ? null : header.findViewById(id);
         if (iconContainer == null) return;
-        alignIcon(iconContainer, Gravity.TOP | Gravity.START,
-                XposedHelpers.getIntField(owner, "groupCollapsedTopPadding") + padding);
+        // Native compact header centers its 32dp icon over the message body.
+        // Keep the name row above it, rather than anchoring both at the same top.
+        alignIcon(iconContainer, Gravity.CENTER_VERTICAL | Gravity.START, 0);
         id = header.getResources().getIdentifier("icon", "id", "com.android.systemui");
         View icon = id == 0 ? null : iconContainer.findViewById(id);
-        if (icon != null) alignIcon(icon, Gravity.TOP | Gravity.CENTER_HORIZONTAL, 0);
+        if (icon != null) alignIcon(icon, Gravity.CENTER, 0);
+    }
+
+    private static void alignExpandedHeader(View header, boolean laidOut) {
+        if (!(header.getParent() instanceof View container) || !names.containsKey(container)
+                || NotificationHooks.isMinimizedGroup(container)
+                || XposedHelpers.getObjectField(container, "mGroupHeader") != header) return;
+        Object extension = XposedHelpers.callMethod(container, "getExt");
+        Object owner = XposedHelpers.getObjectField(extension, "oplusNotificationGroupExtImpl");
+        int lineId = NotificationResourceIds.get(header.getResources(), "notification_top_line", "id", "android");
+        View line = header.findViewById(lineId);
+        if (line == null) return;
+        if (!laidOut) {
+            expandedLinePaddings.putIfAbsent(line, line.getPaddingStart());
+            int start = XposedHelpers.getIntField(owner, "contentPaddingStart");
+            if (line.getPaddingStart() != start)
+                line.setPaddingRelative(start, line.getPaddingTop(), line.getPaddingEnd(), line.getPaddingBottom());
+            return;
+        }
+        TextView compactName = names.get(container).get();
+        int nameId = NotificationResourceIds.get(header.getResources(), "app_name_text", "id", "android");
+        View appName = header.findViewById(nameId);
+        if (compactName == null || appName == null || compactName.getHeight() == 0) return;
+        View compactHeader = (View) compactName.getParent();
+        // Both shells keep the same text baseline, including the module's inset.
+        int target = compactHeader.getTop() + compactName.getTop() + compactName.getBaseline();
+        int current = header.getTop() + line.getTop() + appName.getTop() + appName.getBaseline();
+        line.offsetTopAndBottom(target - current);
     }
 
     private static void alignIcon(View icon, int gravity, int top) {
@@ -261,6 +293,11 @@ final class RelaxedGroupHeaderHooks {
             body.requestLayout();
         }
         lineEndPaddings.clear();
+        for (var entry : expandedLinePaddings.entrySet()) {
+            View line = entry.getKey();
+            line.setPaddingRelative(entry.getValue(), line.getPaddingTop(), line.getPaddingEnd(), line.getPaddingBottom());
+        }
+        expandedLinePaddings.clear();
         for (View header : headerLines.keySet()) header.requestLayout();
         headerLines.clear();
         for (var entry : transformations.entrySet()) {

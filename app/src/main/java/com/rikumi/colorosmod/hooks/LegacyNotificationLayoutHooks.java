@@ -19,9 +19,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.lang.reflect.Method;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
 
 /** Restores the Android 15 SystemUI single-line and conversation notification templates. */
 public final class LegacyNotificationLayoutHooks {
@@ -30,28 +27,12 @@ public final class LegacyNotificationLayoutHooks {
     private static final String TEMPLATE_CACHE_FILE = "legacy_notification_templates_15.99.13.apk";
     private static final int ANDROID_PACKAGE_ID = 0x01;
     private static final int SYSTEMUI_PACKAGE_ID = 0x7f;
-    private static final Map<Integer, String[]> LEGACY_ANDROID_RESOURCES;
-
     private static volatile AssetManager sLegacyAssets;
     private static Class<?> sRowClass;
     private static Integer sAppliedMode;
     private static Boolean sAppliedRealAppName;
     private static final android.os.Handler MAIN = new android.os.Handler(android.os.Looper.getMainLooper());
     private static final Runnable REFRESH = LegacyNotificationLayoutHooks::refreshRows;
-
-    static {
-        Map<Integer, String[]> names = new HashMap<>();
-        // The old HybridConversationNotificationView expects colemak and clip_to_padding_tag;
-        // those Android resource ids are conversation_icon and conversation_face_pile today.
-        names.put(0x01020288, new String[] { "id", "conversation_icon" });
-        names.put(0x01020283, new String[] { "id", "conversation_face_pile" });
-        names.put(0x01090068, new String[] { "layout", "conversation_face_pile_layout" });
-        names.put(0x01050119, new String[] {
-                "dimen", "conversation_icon_container_top_padding_small_avatar" });
-        names.put(0x01030392, new String[] { "style", "TextAppearance.Holo.Light.Small.Inverse" });
-        names.put(0x01030483, new String[] { "style", "Widget.Holo.CompoundButton" });
-        LEGACY_ANDROID_RESOURCES = Collections.unmodifiableMap(names);
-    }
 
     private LegacyNotificationLayoutHooks() { }
 
@@ -231,7 +212,16 @@ public final class LegacyNotificationLayoutHooks {
             byte[] buffer = new byte[4096];
             int length;
             while ((length = input.read(buffer)) != -1) output.write(buffer, 0, length);
-            xml = LegacyNotificationXml.remap(output.toByteArray(), id -> mapResourceId(id, legacy, current));
+            LegacyFrameworkNotificationTemplates framework = LegacyFrameworkNotificationHooks.templates();
+            xml = LegacyNotificationXml.remap(output.toByteArray(),
+                    id -> mapResourceId(id, legacy, current, framework), id -> {
+                        if ((id >>> 24) == ANDROID_PACKAGE_ID) return framework.dimension(id);
+                        if ((id >>> 24) != SYSTEMUI_PACKAGE_ID) return -1L;
+                        android.util.TypedValue value = new android.util.TypedValue();
+                        legacy.getValue(id, value, true);
+                        return value.type == android.util.TypedValue.TYPE_DIMENSION
+                                ? (5L << 32) | (value.data & 0xffffffffL) : -1L;
+                    });
         }
         return parseXml(xml);
     }
@@ -254,7 +244,7 @@ public final class LegacyNotificationLayoutHooks {
     }
 
     private static int mapResourceId(int resourceId, Resources legacyResources,
-            Resources currentResources) {
+            Resources currentResources, LegacyFrameworkNotificationTemplates framework) {
         String packageName;
         String typeName;
         String entryName;
@@ -265,11 +255,11 @@ public final class LegacyNotificationLayoutHooks {
                 typeName = legacyResources.getResourceTypeName(resourceId);
                 entryName = legacyResources.getResourceEntryName(resourceId);
             } else if (packageId == ANDROID_PACKAGE_ID) {
-                String[] name = LEGACY_ANDROID_RESOURCES.get(resourceId);
-                if (name == null) return resourceId;
+                LegacyFrameworkNotificationTemplates.Resource resource = framework.resources.get(resourceId);
+                if (resource == null) return resourceId;
                 packageName = "android";
-                typeName = name[0];
-                entryName = name[1];
+                typeName = resource.type();
+                entryName = resource.name();
             } else {
                 return resourceId;
             }

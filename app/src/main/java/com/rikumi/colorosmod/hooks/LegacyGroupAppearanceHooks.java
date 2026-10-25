@@ -10,7 +10,8 @@ import com.rikumi.colorosmod.xposed.XposedHelpers;
 
 /** Drive the original backgrounds and compact header with the same expansion progress. */
 final class LegacyGroupAppearanceHooks {
-    private static final WeakHashMap<View, Float> originalAlphas = new WeakHashMap<>();
+    private record Background(float alpha, int visibility) { }
+    private static final WeakHashMap<View, Background> originalBackgrounds = new WeakHashMap<>();
 
     static void hook(XC_LoadPackage.LoadPackageParam lp) {
         try {
@@ -72,6 +73,8 @@ final class LegacyGroupAppearanceHooks {
             Object original = XposedHelpers.callMethod(container, "getNotificationHeaderWrapper");
             if (original == null) return;
             View header = (View) XposedHelpers.getObjectField(original, "mView");
+            if (header instanceof android.view.ViewGroup group)
+                LegacyCollapsedGroupHooks.applyHeaderProgress(container, group, progress);
             // The expanded legacy header is a standalone application heading.
             // Only the summary/child cards crossfade; the heading has no card.
             if (XposedHelpers.getObjectField(header, "mBackground") != null)
@@ -82,14 +85,17 @@ final class LegacyGroupAppearanceHooks {
     private static void fadeBackground(Object row, float alpha) {
         Object object = XposedHelpers.getObjectField(row, "mBackgroundNormal");
         if (object instanceof View background) {
-            originalAlphas.putIfAbsent(background, background.getAlpha());
+            originalBackgrounds.putIfAbsent(background, new Background(background.getAlpha(), background.getVisibility()));
             background.setAlpha(alpha);
             background.setVisibility(alpha > 0f ? View.VISIBLE : View.INVISIBLE);
         }
     }
 
     static void cleanup() {
-        for (var entry : originalAlphas.entrySet()) entry.getKey().setAlpha(entry.getValue());
-        originalAlphas.clear();
+        for (var entry : originalBackgrounds.entrySet()) {
+            entry.getKey().setAlpha(entry.getValue().alpha());
+            entry.getKey().setVisibility(entry.getValue().visibility());
+        }
+        originalBackgrounds.clear();
     }
 }

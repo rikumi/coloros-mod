@@ -11,6 +11,8 @@ import com.rikumi.colorosmod.xposed.XposedHelpers;
 /** Restore framework group headers and hybrid rows without replacing the current stack. */
 final class LegacyCollapsedGroupHooks {
     private static final java.util.WeakHashMap<View, Integer> nameInsets = new java.util.WeakHashMap<>();
+    private static final java.util.WeakHashMap<View, java.lang.ref.WeakReference<android.view.ViewTreeObserver.OnPreDrawListener>> headerListeners = new java.util.WeakHashMap<>();
+    private static final java.util.WeakHashMap<View, Boolean> boundButtons = new java.util.WeakHashMap<>();
     private static boolean enabled() { return readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) == 1; }
 
     static void hook(XC_LoadPackage.LoadPackageParam lp) {
@@ -28,14 +30,6 @@ final class LegacyCollapsedGroupHooks {
             XposedHelpers.findAndHookMethod(container, "initDimens$2", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) { if (enabled()) dimensions(p.thisObject); }
             });
-            XposedHelpers.findAndHookMethod("com.oplus.systemui.statusbar.notification.stack.NotificationChildrenContainerExtImp", lp.classLoader,
-                    "updateNotificationSummary", container, XposedHelpers.findClass("android.view.NotificationHeaderView", lp.classLoader), new XC_MethodHook() {
-                        @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (!enabled()) return;
-                            stackHeader((View) p.args[0], (ViewGroup) p.args[1]);
-                            p.setResult(null);
-                        }
-                    });
             XposedHelpers.findAndHookMethod("com.oplus.systemui.statusbar.notification.stack.NotificationChildrenContainerExtImp", lp.classLoader,
                     "updateIntrinsicHeight", container, XposedHelpers.findClass("android.view.NotificationHeaderView", lp.classLoader),
                     int.class, int.class, int.class, new XC_MethodHook() {
@@ -113,6 +107,13 @@ final class LegacyCollapsedGroupHooks {
     }
 
     static void cleanup() {
+        for (var item : headerListeners.entrySet()) {
+            var listener = item.getValue().get();
+            if (listener != null && item.getKey().getViewTreeObserver().isAlive())
+                item.getKey().getViewTreeObserver().removeOnPreDrawListener(listener);
+        }
+        headerListeners.clear();
+        boundButtons.clear();
         for (var item : nameInsets.entrySet()) {
             View line = item.getKey();
             line.setPaddingRelative(item.getValue(), line.getPaddingTop(), line.getPaddingEnd(), line.getPaddingBottom());
@@ -165,24 +166,64 @@ final class LegacyCollapsedGroupHooks {
     private static void stackHeader(View container, ViewGroup header) {
         int id = NotificationResourceIds.get(container.getResources(), "oplus_notification_expand_group_header", "id", "com.android.systemui");
         if (id == 0) return;
-        View metrics = header.findViewById(id);
-        if (metrics == null) {
-            metrics = new View(header.getContext());
-            metrics.setId(id);
-            header.addView(metrics, 0, ViewGroup.LayoutParams.MATCH_PARENT);
-        } else {
-            ViewGroup.LayoutParams params = metrics.getLayoutParams();
-            if (params.width != 0 || params.height != ViewGroup.LayoutParams.MATCH_PARENT) {
-                params.width = 0;
-                params.height = ViewGroup.LayoutParams.MATCH_PARENT;
-                metrics.setLayoutParams(params);
+        Object extension = XposedHelpers.callMethod(container, "getExt");
+        Object nativeTitle = XposedHelpers.getObjectField(extension, "oplusExpandHeader");
+        if (!(nativeTitle instanceof View view) || view.getParent() != header) {
+            XposedHelpers.callMethod(extension, "updateNotificationSummary", container, header);
+            nativeTitle = XposedHelpers.getObjectField(extension, "oplusExpandHeader");
+        }
+        if (!(nativeTitle instanceof View title)) return;
+        // A previous module version could insert a layout without registering
+        // it with the ROM's owner. Keep only that owner's current title.
+        for (int i = header.getChildCount() - 1; i >= 0; i--) {
+            View child = header.getChildAt(i);
+            if (child != title && child.getId() == id) header.removeViewAt(i);
+        }
+        int nameId = NotificationResourceIds.get(header.getResources(), "app_name_text", "id", "android");
+        int labelId = NotificationResourceIds.get(container.getResources(), "oplus_notification_expand_group_header_title", "id", "com.android.systemui");
+        View source = header.findViewById(nameId), target = title.findViewById(labelId);
+        if (source instanceof android.widget.TextView name && target instanceof android.widget.TextView label
+                && !android.text.TextUtils.equals(name.getText(), label.getText())) label.setText(name.getText());
+        int buttonId = NotificationResourceIds.get(container.getResources(), "oplus_notification_expand_group_header_button", "id", "com.android.systemui");
+        int expandId = NotificationResourceIds.get(header.getResources(), "expand_button", "id", "android");
+        View button = title.findViewById(buttonId), expand = header.findViewById(expandId);
+        if (button != null && expand != null && !boundButtons.containsKey(button)) {
+            button.setOnClickListener(v -> expand.performClick());
+            boundButtons.put(button, true);
+        }
+        if (!headerListeners.containsKey(header)) {
+            android.view.ViewTreeObserver.OnPreDrawListener listener = () -> {
+                if (enabled()) applyHeaderProgress(container, header, LegacyGroupAppearanceHooks.progress(container));
+                return true;
+            };
+            headerListeners.put(header, new java.lang.ref.WeakReference<>(listener));
+            header.getViewTreeObserver().addOnPreDrawListener(listener);
+        }
+        applyHeaderProgress(container, header, LegacyGroupAppearanceHooks.progress(container));
+    }
+
+    static void applyHeaderProgress(Object container, ViewGroup header, float progress) {
+        int id = NotificationResourceIds.get(((View) container).getResources(), "oplus_notification_expand_group_header", "id", "com.android.systemui");
+        View title = id == 0 ? null : header.findViewById(id);
+        if (title == null) return;
+        if (title.getAlpha() != progress) title.setAlpha(progress);
+        int titleVisibility = progress > 0f ? View.VISIBLE : View.INVISIBLE;
+        if (title.getVisibility() != titleVisibility) title.setVisibility(titleVisibility);
+        for (String name : new String[]{"icon", "notification_top_line", "alternate_expand_target", "expand_button"}) {
+            int childId = NotificationResourceIds.get(header.getResources(), name, "id", "android");
+            View compact = childId == 0 ? null : header.findViewById(childId);
+            int visibility = progress >= 1f ? View.INVISIBLE : View.VISIBLE;
+            if (compact != null && compact.getVisibility() != visibility) compact.setVisibility(visibility);
+        }
+        for (int i = 0; i < header.getChildCount(); i++) {
+            View child = header.getChildAt(i);
+            if (child != title) {
+                if (child.getAlpha() != 1f - progress) child.setAlpha(1f - progress);
+                // Transformation helpers reset alpha late in the frame. At the
+                // expanded endpoint hide the compact shell as well as fading it.
+                if (progress >= 1f && child.getVisibility() == View.VISIBLE) child.setVisibility(View.INVISIBLE);
             }
         }
-        // Current stacked ruler unconditionally reads this ID's height during expansion.
-        // Keep the compact header's height without rendering the new large title.
-        metrics.setVisibility(View.INVISIBLE);
-        metrics.setClickable(false);
-        metrics.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
     }
 
     private static void showHeader(Object owner, Object container) {
@@ -225,6 +266,7 @@ final class LegacyCollapsedGroupHooks {
             }
             XposedHelpers.callMethod(header, "setHeaderBackgroundDrawable", (Object) null);
             header.setVisibility(View.VISIBLE);
+            applyHeaderProgress(container, header, LegacyGroupAppearanceHooks.progress(container));
         } catch (Throwable error) { log("legacy notification group header failed: " + error); }
     }
 }

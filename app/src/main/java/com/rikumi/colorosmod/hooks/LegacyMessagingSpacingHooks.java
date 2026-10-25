@@ -14,11 +14,104 @@ final class LegacyMessagingSpacingHooks {
     private record Avatar(int width, int start) { }
     private static final WeakHashMap<View, Avatar> avatars = new WeakHashMap<>();
     private static final WeakHashMap<View, Integer> headers = new WeakHashMap<>();
+    private static final WeakHashMap<View, Boolean> groupLayouts = new WeakHashMap<>();
+    private static final WeakHashMap<View, Integer> avatarVisibility = new WeakHashMap<>();
+    private static final ThreadLocal<Boolean> compactShell = new ThreadLocal<>();
+    static boolean usesCompactShell() { return Boolean.TRUE.equals(compactShell.get()); }
+    private static Class<?> groupClass;
+    private static Boolean poolLegacy;
     private static boolean enabled() {
         return readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) == 1;
     }
     static void hook(XC_LoadPackage.LoadPackageParam lp) {
         try {
+            groupClass = XposedHelpers.findClass("com.android.internal.widget.MessagingGroup", lp.classLoader);
+            XposedHelpers.findAndHookMethod("android.app.Notification$MessagingStyle", lp.classLoader,
+                    "getMessagingLayoutResource", boolean.class, boolean.class, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            if (!enabled()) return;
+                            if (compactShell.get() != null)
+                                compactShell.set(!Boolean.TRUE.equals(p.args[0]) && Boolean.TRUE.equals(p.args[1]));
+                            Object builder = XposedHelpers.getObjectField(p.thisObject, "mBuilder");
+                            android.content.Context context = (android.content.Context) XposedHelpers.getObjectField(builder, "mContext");
+                            String name = Boolean.TRUE.equals(p.args[0]) ? "notification_template_material_conversation"
+                                    : Boolean.TRUE.equals(p.args[1]) ? "notification_template_material_messaging"
+                                    : "notification_template_material_big_messaging";
+                            int id = context.getResources().getIdentifier(name, "layout", "android");
+                            if (id != 0) p.setResult(id);
+                        }
+                    });
+            XposedHelpers.findAndHookMethod("android.app.Notification$MessagingStyle", lp.classLoader,
+                    "makeMessagingView", int.class, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            if (!enabled()) return;
+                            p.setObjectExtra("legacyCompactShell", usesCompactShell());
+                            compactShell.set(false);
+                        }
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            Object previous = p.getObjectExtra("legacyCompactShell");
+                            if (previous == null) return;
+                            if (Boolean.TRUE.equals(previous)) compactShell.set(true); else compactShell.remove();
+                        }
+                    });
+            String template = "com.oplus.systemui.statusbar.notification.row.wrapper.OplusNotificationTemplateViewWrapperExImpl";
+            XposedHelpers.findAndHookMethod(template, lp.classLoader, "setIsChildInGroup", boolean.class, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (!enabled()) return;
+                    Object base = XposedHelpers.callMethod(p.thisObject, "getBase");
+                    Object root = base == null ? null : XposedHelpers.getObjectField(base, "mView");
+                    if (!(root instanceof View view) || !view.getClass().getName().equals("com.android.internal.widget.MessagingLayout")) return;
+                    Object target = XposedHelpers.getObjectField(p.thisObject, "actionListMarginTarget");
+                    if (target instanceof View body && body.getLayoutParams() instanceof ViewGroup.MarginLayoutParams params) {
+                        p.setObjectExtra("legacyMessageBody", body);
+                        p.setObjectExtra("legacyMessageTop", params.topMargin);
+                    }
+                }
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (!(p.getObjectExtra("legacyMessageBody") instanceof View body)
+                            || !(p.getObjectExtra("legacyMessageTop") instanceof Integer top)
+                            || !(body.getLayoutParams() instanceof ViewGroup.MarginLayoutParams params)) return;
+                    if (params.topMargin != top) { params.topMargin = top; body.setLayoutParams(params); }
+                }
+            });
+            XposedHelpers.findAndHookMethod(groupClass, "getMessagingGroupLayoutResource", new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (!enabled()) return;
+                    int id = android.content.res.Resources.getSystem().getIdentifier(
+                            "notification_template_messaging_group", "layout", "android");
+                    if (id != 0) p.setResult(id);
+                }
+            });
+            XposedHelpers.findAndHookMethod(groupClass, "createGroup",
+                    XposedHelpers.findClass("com.android.internal.widget.MessagingLinearLayout", lp.classLoader), new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            boolean legacy = enabled();
+                            if (poolLegacy == null || poolLegacy != legacy) {
+                                XposedHelpers.callStaticMethod(groupClass, "dropCache");
+                                poolLegacy = legacy;
+                            }
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(groupClass, "setShowingAvatar", boolean.class, new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (!enabled()) return;
+                    View avatar = (View) XposedHelpers.getObjectField(p.thisObject, "mMessagingIconContainer");
+                    avatarVisibility.putIfAbsent(avatar, avatar.getVisibility());
+                    int visible = Boolean.TRUE.equals(p.args[0]) ? View.VISIBLE : View.GONE;
+                    if (avatar.getVisibility() != visible) avatar.setVisibility(visible);
+                }
+            });
+            XposedHelpers.findAndHookMethod(groupClass, "onFinishInflate", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    groupLayouts.put((View) p.thisObject, enabled());
+                }
+            });
+            XposedHelpers.findAndHookMethod(groupClass, "recycle", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    Boolean legacy = groupLayouts.get((View) p.thisObject);
+                    if (legacy == null || legacy != enabled()) XposedHelpers.callStaticMethod(groupClass, "dropCache");
+                }
+            });
             XposedHelpers.findAndHookMethod("com.android.internal.widget.MessagingGroup", lp.classLoader,
                     "setIsInConversation", boolean.class, new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
@@ -41,6 +134,11 @@ final class LegacyMessagingSpacingHooks {
                     });
             XposedHelpers.findAndHookMethod("com.oplus.systemui.statusbar.notification.row.wrapper.OplusNotificationMessagingTemplateViewWrapperExImpl",
                     lp.classLoader, "onContentUpdated", new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            // This OEM callback assumes the new header geometry: a
+                            // 32dp icon, centered top line and group-header height.
+                            if (enabled()) p.setResult(null);
+                        }
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             if (!enabled()) return;
                             Object base = XposedHelpers.callMethod(p.thisObject, "getBase");
@@ -60,6 +158,9 @@ final class LegacyMessagingSpacingHooks {
         } catch (Throwable error) { log("legacy messaging spacing hook failed: " + error); }
     }
     static void cleanup() {
+        compactShell.remove();
+        if (groupClass != null) XposedHelpers.callStaticMethod(groupClass, "dropCache");
+        poolLegacy = null;
         for (View avatar : new ArrayList<>(avatars.keySet())) {
             Avatar original = avatars.get(avatar);
             ViewGroup.LayoutParams params = avatar.getLayoutParams();
@@ -67,6 +168,8 @@ final class LegacyMessagingSpacingHooks {
             avatar.setPaddingRelative(original.start, avatar.getPaddingTop(), avatar.getPaddingEnd(), avatar.getPaddingBottom());
         }
         avatars.clear();
+        for (var item : avatarVisibility.entrySet()) item.getKey().setVisibility(item.getValue());
+        avatarVisibility.clear();
         for (View header : new ArrayList<>(headers.keySet()))
             header.setPaddingRelative(header.getPaddingStart(), header.getPaddingTop(), headers.get(header), header.getPaddingBottom());
         headers.clear();
