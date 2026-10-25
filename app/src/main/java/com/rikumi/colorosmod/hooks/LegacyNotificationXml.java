@@ -7,6 +7,11 @@ import java.util.function.IntUnaryOperator;
 /** Remap compiled XML in place before handing it to Android's native XmlBlock parser. */
 final class LegacyNotificationXml {
     static byte[] remap(byte[] original, IntUnaryOperator resource) {
+        return remap(original, resource, id -> -1L);
+    }
+
+    static byte[] remap(byte[] original, IntUnaryOperator resource,
+            java.util.function.IntToLongFunction literal) {
         byte[] bytes = original.clone();
         ByteBuffer xml = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
         if (bytes.length < 8 || u16(xml, 0) != 3 || xml.getInt(4) != bytes.length)
@@ -32,8 +37,14 @@ final class LegacyNotificationXml {
                 for (int i = 0; i < count; i++) {
                     int value = ext + start + i * stride + 12;
                     int valueType = bytes[value + 3] & 255;
-                    if (valueType == 1 || valueType == 2 || valueType == 7 || valueType == 8)
-                        xml.putInt(value + 4, resource.applyAsInt(xml.getInt(value + 4)));
+                    if (valueType == 1 || valueType == 2 || valueType == 7 || valueType == 8) {
+                        int id = xml.getInt(value + 4);
+                        long replacement = valueType == 1 ? literal.applyAsLong(id) : -1L;
+                        if (replacement != -1L) {
+                            bytes[value + 3] = (byte) (replacement >>> 32);
+                            xml.putInt(value + 4, (int) replacement);
+                        } else xml.putInt(value + 4, resource.applyAsInt(id));
+                    }
                 }
             }
             offset = end;

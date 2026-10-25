@@ -12,6 +12,10 @@ public final class SystemUiHooks {
     public static void hookSystemUi(final XC_LoadPackage.LoadPackageParam lpparam) {
         log(">>> matched systemui, classLoader=" + lpparam.classLoader);
         float density = readDensity();
+        AodReceiverCompatibilityHooks.hook(lpparam);
+        HomeControlsTileHooks.hook(lpparam);
+        KeyguardCarrierHooks.hook(lpparam);
+        KeyguardClockFontHooks.hook(lpparam);
 
         // Feature 5 — 隐藏运营商名: 始终注入, 运行时按 KEY_QS_CARRIER_ENABLED 门控(见内部)。
         QsHooks.hookQsHideCarrier(lpparam);
@@ -30,6 +34,7 @@ public final class SystemUiHooks {
         // Feature 3b — 通知内边距: 始终注入, 运行时按 KEY_NOTIFICATION_PADDING_ENABLED 门控,
         // 内边距由 KEY_NOTIFICATION_PADDING_DP(0-8dp, 默认 4dp) 运行时读取。
         NotificationHooks.hookNotificationPadding(lpparam, density);
+        NotificationAppNameHooks.hook(lpparam);
         LegacyNotificationLayoutHooks.hook(lpparam);
 
         // 通知左滑直接清除: 始终注入, 运行时按 KEY_NOTIFICATION_SWIPE_TO_DISMISS_ENABLED 门控。

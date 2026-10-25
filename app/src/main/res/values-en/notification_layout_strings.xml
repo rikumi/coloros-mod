@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_notification_layout">Notification layout</string>
+    <string name="ui_notification_layout_default">Default</string>
+    <string name="ui_notification_layout_legacy">Legacy</string>
+    <string name="ui_notification_layout_relaxed">Relaxed</string>
+    <string name="ui_notification_layout_test_title">ColorOS Mod notification layout test</string>
+    <string name="ui_notification_layout_test_text">This notification previews the selected layout.</string>
+    <string name="ui_notification_layout_test_expanded">Expand to check the app name, icon, title, body, and time.</string>
+    <string name="ui_notification_layout_test_failed">Failed to send the test notification. Check root access.</string>
+    <string name="ui_send_test_notification">Send test notification</string>
+</resources>

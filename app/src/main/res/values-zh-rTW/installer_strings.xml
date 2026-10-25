@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="installer_group">安裝程式</string>
+    <string name="installer_restore_legacy">還原舊版安裝程式</string>
+    <string name="installer_disable_virus_scan">停用舊版安裝程式病毒掃描</string>
+    <string name="installer_hide_finish_suggestions">移除舊版安裝程式安裝完成頁面的建議設定</string>
+    <string name="installer_show_first_header">在舊版安裝程式首頁加入標題列</string>
+    <string name="installer_action_failed">無法變更安裝程式設定</string>
+</resources>

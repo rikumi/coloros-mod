@@ -598,8 +598,12 @@ public final class SignalHooks {
         if (drawable == null || width <= 0 || height <= 0) return;
         int save = canvas.save();
         try {
-            // 保留原图上段，只裁剪，不额外平移或缩放。
-            canvas.clipRect(0, 0, width, height * 0.65f + density(upper));
+            // 将上排原有绘制范围上下各内缩 0.5dp。
+            float halfDp = 0.5f * density(upper);
+            float bottom = height * 0.65f + density(upper);
+            canvas.clipRect(0, halfDp, width, bottom - halfDp);
+            canvas.translate(0, halfDp);
+            canvas.scale(1f, Math.max(0f, (bottom - 2f * halfDp) / bottom));
             canvas.translate(upper.getPaddingLeft(), upper.getPaddingTop());
             canvas.concat(upper.getImageMatrix());
             drawable.draw(canvas);
@@ -613,8 +617,8 @@ public final class SignalHooks {
                 || lower.getWidth() <= 0 || lower.getHeight() <= 0) return;
         int save = canvas.save();
         try {
-            // 整体下移 1dp，再将裁剪上缘向上扩展 1dp；底部随整体下移。
-            canvas.translate(0, height * 0.395f + density(upper));
+            // 相对原位置上移 0.5dp。
+            canvas.translate(0, height * 0.395f + 0.5f * density(upper));
             canvas.scale(1f, 0.5f);
             canvas.clipRect(0, height * 0.65f, width, height);
             canvas.scale((float) width / lower.getWidth(), (float) height / lower.getHeight());

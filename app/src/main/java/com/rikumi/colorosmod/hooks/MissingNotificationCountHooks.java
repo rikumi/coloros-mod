@@ -207,6 +207,8 @@ public final class MissingNotificationCountHooks {
         return null;
     }
 
+    static boolean hybridBadge(View badge) { return BADGES.containsKey(badge) && hybrid(); }
+
     private static boolean hybrid() {
         if (!active || !MonochromeNotificationHooks.enabled()) return false;
         Object interactor = areaInteractor.get();
@@ -229,7 +231,16 @@ public final class MissingNotificationCountHooks {
         boolean fullyHidden = (Boolean) XposedHelpers.callMethod(
                 XposedHelpers.callMethod(keyguard, "getAreNotificationsFullyHidden"), "getValue");
         Map<String, Object> children = new LinkedHashMap<>();
-        for (Object representative : representatives) {
+        java.util.Set<Object> candidates = new LinkedHashSet<>(representatives);
+        // A local summary has no server ranking of its own. Its representative
+        // can be filtered while an eligible child (e.g. wireless ADB) still needs
+        // a status-bar icon. Re-evaluate these leaves using native eligibility.
+        for (Object group : groups.values()) {
+            Object summary = XposedHelpers.callMethod(group, "getSummary");
+            if (SystemNotificationGroupHooks.localSummaryKey((String) XposedHelpers.callMethod(summary, "getKey")))
+                candidates.add(summary);
+        }
+        for (Object representative : candidates) {
             String key = (String) XposedHelpers.callMethod(representative, "getKey");
             List<?> leaves = Collections.emptyList();
             for (Object group : groups.values()) {
@@ -321,6 +332,7 @@ public final class MissingNotificationCountHooks {
                     ViewGroup.LayoutParams params = badge.getLayoutParams();
                     parent.removeView(badge); parent.addView(badge, desiredIndex, params);
                 }
+                NotificationBadgeGeometryHooks.update(badge, hybrid);
                 XposedHelpers.callMethod(badge, "setText", hybrid ? missing : area.nativeText);
                 badge.setVisibility(hybrid ? (missing > 0 ? View.VISIBLE : View.GONE) : area.nativeVisibility);
             }

@@ -182,6 +182,8 @@ internal data class SwitchItem(
     val colorKey: String? = null,
     val sliderUnitRes: Int = 0,
     val masterManaged: Boolean = true,
+    val masterEnableAllowed: Boolean = true,
+    val defaultEnabled: Boolean = false,
 ) : SettingsItem
 
 // MediaProvider 默认目录屏蔽项。它不参与分类/全局主开关，只保存用户选择；开启时仅尝试
@@ -240,6 +242,7 @@ private val QS: List<SettingsItem> = listOf(
     SwitchItem("qs_fill_empty", R.string.ui_qs_fill_empty),
     SwitchItem("qs_corner_radius_enabled", R.string.ui_qs_normal_corner, subtitle = R.string.ui_qs_corner_hint, sliderKey = "qs_corner_radius_percent", sliderMin = 20, sliderMax = 50, sliderDefault = 25, sliderUnit = "%"),
     SwitchItem("qs_clock_no_expand_anim_enabled", R.string.ui_qs_clock_single_line),
+    SwitchItem(HomeControlsTileSettings.KEY, R.string.ui_module_home_controls_tile, R.string.ui_module_home_controls_tile_hint),
     SwitchItem("anc_tile_enabled", R.string.ui_anc_tile),
     GroupTitleItem(R.string.qs_merged_modernization),
     SwitchItem("qs_merged_hollow", R.string.qs_merged_hollow),
@@ -252,7 +255,8 @@ private val QS: List<SettingsItem> = listOf(
     SwitchItem("qs_merged_tile_clip_animation", R.string.qs_merged_tile_clip_animation),
     SwitchItem("qs_merged_two_finger_expand", R.string.qs_merged_two_finger_expand),
     SwitchItem("qs_active_outline_enabled", R.string.qs_active_outline_enabled),
-    SwitchItem("qs_active_color_enabled", R.string.qs_active_color_enabled, colorKey = "qs_active_color"),
+    SwitchItem(XposedInit.KEY_QS_ACTIVE_COLOR_ENABLED, R.string.qs_active_color_enabled,
+        colorKey = XposedInit.KEY_QS_ACTIVE_COLOR, masterEnableAllowed = false),
 )
 private val NOTIF: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_notif_settings),
@@ -260,7 +264,10 @@ private val NOTIF: List<SettingsItem> = listOf(
     SwitchItem("notification_pull_expand_enabled", R.string.ui_notification_pull),
     SwitchItem("notification_subtitle_enabled", R.string.ui_notification_subtitle, sliderKey = "notification_subtitle_sp", sliderMax = 16, sliderDefault = 8, sliderUnit = "sp"),
     SwitchItem("notification_padding_enabled", R.string.ui_notification_padding, sliderKey = "notification_padding_dp", sliderMax = 8, sliderDefault = 4),
-    SwitchItem("notification_legacy_layout_enabled", R.string.ui_notification_legacy_layout),
+    SwitchItem("notification_real_app_name_enabled", R.string.ui_notification_real_app_name),
+    SelectItem(XposedInit.KEY_NOTIFICATION_LAYOUT_STYLE, R.string.ui_notification_layout,
+        listOf(R.string.ui_notification_layout_default, R.string.ui_notification_layout_legacy, R.string.ui_notification_layout_relaxed),
+        defaultValue = XposedInit.NOTIFICATION_LAYOUT_STYLE_DEFAULT, masterManaged = true, masterEnabledValue = 2),
     GroupTitleItem(R.string.ui_statusbar_settings),
     SwitchItem("statusbar_monochrome_notification_icons_enabled", R.string.ui_statusbar_monochrome_notification_icons),
     SwitchItem("merge_dual_sim_signal", R.string.ui_merge_dual_sim),
@@ -307,6 +314,7 @@ private val NAV: List<SettingsItem> = listOf(
     SwitchItem("mback_enabled", R.string.ui_mback, R.string.ui_mback_hint),
     SwitchItem("gesture_touch_through_enabled", R.string.ui_gesture_touch_through),
     SwitchItem("rotation_button_fixed_position_enabled", R.string.ui_rotation_button, R.string.ui_rotation_button_hint),
+    SwitchItem("disable_rotation_suggestions", R.string.ui_disable_rotation_suggestions, rootBacked = true),
     SwitchItem("long_press_timeout_enabled", R.string.ui_long_press_timeout, sliderKey = "long_press_timeout_ms", sliderMax = 600, sliderDefault = 300, sliderUnit = "ms", sliderMin = 100, sliderStep = 50, rootBacked = true),
     SwitchItem("animation_duration_scale_enabled", R.string.ui_animation_scale, sliderKey = "animation_duration_scale", sliderMax = 20, sliderDefault = 15, sliderUnit = "", sliderUnitRes = R.string.ui_unit_multiplier, sliderDisplayScale = 0.05f, rootBacked = true),
     GroupTitleItem(R.string.ui_gesture_visual),
@@ -328,6 +336,18 @@ private val LOCKSCREEN: List<SettingsItem> = listOf(
     SwitchItem("keyguard_slide_input_enabled", R.string.ui_slide_input),
     SwitchItem("keyguard_bouncer_swipe_back_enabled", R.string.ui_bouncer_swipe_back, R.string.ui_bouncer_swipe_back_hint),
     GroupTitleItem(R.string.ui_lock_visual),
+    SwitchItem("keyguard_hide_carrier_enabled", R.string.ui_keyguard_hide_carrier),
+    SelectItem("keyguard_clock_font", R.string.ui_keyguard_clock_font,
+        listOf(R.string.ui_option_system_default, R.string.ui_font_inter, R.string.ui_font_manrope, R.string.ui_font_rubik, R.string.ui_font_lato),
+        defaultValue = 1, masterManaged = true, masterEnabledValue = 1),
+    SwitchItem("keyguard_clock_monospace", R.string.ui_keyguard_clock_monospace, defaultEnabled = true),
+    SwitchItem("keyguard_clock_spacing_enabled", R.string.ui_keyguard_clock_spacing,
+        sliderKey = "keyguard_clock_spacing", sliderMin = -10, sliderMax = 10, sliderDefault = -4,
+        sliderDisplayScale = 0.01f, sliderUnit = "em", defaultEnabled = true),
+    SelectItem("keyguard_clock_weight", R.string.ui_keyguard_clock_weight,
+        listOf(R.string.ui_option_follow_system, R.string.ui_weight_100, R.string.ui_weight_200, R.string.ui_weight_300,
+            R.string.ui_weight_400, R.string.ui_weight_500, R.string.ui_weight_600, R.string.ui_weight_700, R.string.ui_weight_800, R.string.ui_weight_900),
+        defaultValue = 3, masterManaged = true, masterEnabledValue = 3),
     SwitchItem("keyguard_no_light_effect_enabled", R.string.ui_keyguard_no_light, R.string.ui_keyguard_no_light_hint),
     SwitchItem("keyguard_bouncer_brightness_enabled", R.string.ui_keyguard_brightness, sliderKey = "keyguard_bouncer_brightness", sliderMax = 5, sliderDefault = 0, sliderUnit = "%"),
     SwitchItem("keyguard_notification_offset_enabled", R.string.ui_keyguard_notification_offset, sliderKey = "keyguard_notification_offset_dp", sliderMax = 40, sliderDefault = 20),
@@ -335,6 +355,11 @@ private val LOCKSCREEN: List<SettingsItem> = listOf(
 )
 
 private val PURIFICATION: List<SettingsItem> = listOf(
+    GroupTitleItem(R.string.installer_group),
+    SwitchItem(InstallerSettings.RESTORE, R.string.installer_restore_legacy, rootBacked = true, masterManaged = false),
+    SwitchItem("installer_disable_virus_scan", R.string.installer_disable_virus_scan),
+    SwitchItem("installer_hide_finish_suggestions", R.string.installer_hide_finish_suggestions),
+    SwitchItem("installer_show_first_header", R.string.installer_show_first_header),
     GroupTitleItem(R.string.store_group),
     SwitchItem("store_block_splash", R.string.store_block_splash),
     SwitchItem("store_hide_featured", R.string.store_hide_featured),
@@ -451,7 +476,8 @@ private val List<SettingsItem>.masterItems: List<SettingsItem>
     }
 
 private fun SettingsItem.isEnabledInMaster(prefs: SharedPreferences): Boolean = when (this) {
-    is SwitchItem, is FolderBlockItem -> prefs.getBoolean(settingKey, false)
+    is SwitchItem -> prefs.getBoolean(settingKey, defaultEnabled)
+    is FolderBlockItem -> prefs.getBoolean(settingKey, false)
     is SelectItem -> prefs.getInt(key, defaultValue) != 0
     is GroupTitleItem -> false
 }
@@ -540,11 +566,17 @@ fun SettingsScreen(resumeRequest: Int = 0) {
             delay(MASTER_TOGGLE_ANIM_MS)
             // 动画结束后再真正写入设置; IO 线程执行, 避免阻塞 UI。
                 withContext(Dispatchers.IO) {
+                    val enableHomeControls = if (target && items.any { it is SwitchItem && it.key == HomeControlsTileSettings.KEY }) {
+                        val region = getProp("persist.sys.oplus.region")
+                        if (region != null) region.equals("CN", ignoreCase = true)
+                        else getProp("persist.sys.oplus.ota_ver_display")?.contains("CN01", ignoreCase = true) == true
+                    } else false
                     items.forEach { item ->
                     when (item) {
                         is SwitchItem -> {
                             // 与 flyme-mod 一致：一键关闭包含按应用功能，一键开启不替用户启用它。
-                            if (target && item.key == AppNavigationSettings.ENABLED) return@forEach
+                            if (target && (!item.masterEnableAllowed || item.key == AppNavigationSettings.ENABLED
+                                    || (item.key == HomeControlsTileSettings.KEY && !enableHomeControls))) return@forEach
                             if (item.rootBacked) {
                                 applySystemSetting(item.key, target, item.sliderDefault)
                             } else {
@@ -1355,6 +1387,7 @@ internal fun setBool(ctx: Context, key: String, value: Boolean) {
     val editor = prefs.edit().putBoolean(key, value)
     if (key == "qs_merged_hollow" && !value) editor.putBoolean("qs_merged_radiant", false)
     editor.commit()
+    if (key == HomeControlsTileSettings.KEY) HomeControlsTileSettings.sync(ctx)
     SettingsProvider.notifySettingsChanged(ctx)
 }
 
@@ -1367,6 +1400,9 @@ internal fun setInt(ctx: Context, key: String, value: Int) {
 // 对应 0.00..1.00，避免浮点数在 SharedPreferences 中产生跨进程类型差异。
 internal fun applySystemSetting(key: String, enabled: Boolean, value: Int) {
     when (key) {
+        "disable_rotation_suggestions" -> {
+            runRoot("settings --user current put secure show_rotation_suggestions ${if (enabled) 0 else 1}")
+        }
         "long_press_timeout_enabled" -> {
             val timeout = if (enabled) value.coerceIn(100, 600) else 500
             runRoot("settings put secure long_press_timeout $timeout")
@@ -1385,6 +1421,13 @@ internal fun applySystemSetting(key: String, enabled: Boolean, value: Int) {
 
 internal fun readSystemSetting(key: String): Pair<Boolean, Int>? {
     return when (key) {
+        "disable_rotation_suggestions" -> {
+            val raw = runRoot("settings --user current get secure show_rotation_suggestions")?.trim()
+                ?: return null
+            // DisplayRotation uses 1 when this secure setting is absent.
+            val value = if (raw == "null") 1 else raw.toIntOrNull() ?: return null
+            Pair(value == 0, 0)
+        }
         "long_press_timeout_enabled" -> {
             val value = runRoot("settings get secure long_press_timeout")?.trim()?.toIntOrNull()
                 ?: return null

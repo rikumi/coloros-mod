@@ -37,29 +37,35 @@ public final class LauncherHooks {
     // 修改安全中心"隐藏应用"对电话本的处理: 系统原生是整包禁用(会连拨号一起失效), 这里让
     private static final Object sHiddenSettingsLock = new Object();
     private static boolean sHiddenSettingsInitialized;
-    private static boolean sNeedsInitialModelReload;
+    private static boolean sNeedsInitialModelReload = true;
+    private static boolean sInitialModelReloadPending;
     private static java.util.Set<android.content.ComponentName> sLastHiddenComponents = java.util.Collections.emptySet();
 
-    /** 只在隐藏组件集合改变时刷新 Launcher 模型。 */
+    /** 隐藏集合改变或冷启动首次取得非空集合时刷新 Launcher 模型。 */
     public static void onSettingsSnapshotPublished(java.util.Map<String, Integer> settings) {
         DrawerInstallTimeHooks.onSettingsSnapshotPublished(settings);
         refreshPowerSaveTaskLocks(settingValue(settings, KEY_POWER_SAVE_KEEP_LOCKED_TASKS_ENABLED) == 1);
         if (!sModelReloadActive) return;
         java.util.Set<android.content.ComponentName> components = hiddenLauncherComponents(settings);
+        boolean waitForInitialLoad;
         synchronized (sHiddenSettingsLock) {
             boolean initialized = sHiddenSettingsInitialized;
             if (initialized && components.equals(sLastHiddenComponents)) return;
             sHiddenSettingsInitialized = true;
             sLastHiddenComponents = components;
-            // 冷启动直接由第一次模型加载过滤；只有设置变化或跨版本热重载才重载模型。
-            if (!initialized && !sNeedsInitialModelReload) return;
+            if (!initialized && (!sNeedsInitialModelReload || components.isEmpty())) {
+                sNeedsInitialModelReload = false;
+                return;
+            }
+            waitForInitialLoad = !initialized;
+            if (waitForInitialLoad) sInitialModelReloadPending = true;
             sNeedsInitialModelReload = false;
             // 与设置值在同一把锁内计数, 使 captureHotReloadSettings 看到一致的"值 + 是否待刷新"。
             sPendingModelReloads++;
         }
 
         android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
-        reloadLauncherModelWhenReady(main, 0);
+        reloadLauncherModelWhenReady(main, 0, waitForInitialLoad);
     }
 
     // hot reload: 旧 generation 的刷新 runnable 统一带此 token 投递, cleanup 时一次性移除。
@@ -76,7 +82,7 @@ public final class LauncherHooks {
     }
 
     private static void reloadLauncherModelWhenReady(final android.os.Handler main,
-            final int attempt) {
+            final int attempt, final boolean waitForInitialLoad) {
         Runnable reload = new Runnable() {
             @Override
             public void run() {
@@ -84,7 +90,7 @@ public final class LauncherHooks {
                 try {
                     ClassLoader classLoader = sLauncherClassLoader;
                     if (classLoader == null) {
-                        retryLauncherModelReload(main, attempt);
+                        retryLauncherModelReload(main, attempt, waitForInitialLoad);
                         return;
                     }
                     Class<?> appStateClass = XposedHelpers.findClass(
@@ -92,13 +98,23 @@ public final class LauncherHooks {
                     Object appState = XposedHelpers.callStaticMethod(
                             appStateClass, "getInstanceNoCreate");
                     if (appState == null) {
-                        retryLauncherModelReload(main, attempt);
+                        retryLauncherModelReload(main, attempt, waitForInitialLoad);
                         return;
                     }
                     Object model = XposedHelpers.callMethod(appState, "getModel");
                     if (model == null) {
-                        retryLauncherModelReload(main, attempt);
+                        retryLauncherModelReload(main, attempt, waitForInitialLoad);
                         return;
+                    }
+                    if (waitForInitialLoad && !Boolean.TRUE.equals(XposedHelpers.callMethod(model, "isModelLoaded"))) {
+                        retryLauncherModelReload(main, attempt, true);
+                        return;
+                    }
+                    if (waitForInitialLoad) {
+                        synchronized (sHiddenSettingsLock) {
+                            if (!sInitialModelReloadPending) { finishModelReload(); return; }
+                            sInitialModelReloadPending = false;
+                        }
                     }
                     XposedHelpers.callMethod(model, "forceReload");
                     finishModelReload();
@@ -115,11 +131,12 @@ public final class LauncherHooks {
         }
     }
 
-    private static void retryLauncherModelReload(android.os.Handler main, int attempt) {
-        if (attempt < 10) {
-            reloadLauncherModelWhenReady(main, attempt + 1);
+    private static void retryLauncherModelReload(android.os.Handler main, int attempt, boolean waitForInitialLoad) {
+        if (attempt < (waitForInitialLoad ? 100 : 10)) {
+            reloadLauncherModelWhenReady(main, attempt + 1, waitForInitialLoad);
         } else {
             finishModelReload();
+            log("hide launcher apps model readiness timeout, initial=" + waitForInitialLoad);
         }
     }
 
@@ -129,7 +146,7 @@ public final class LauncherHooks {
      */
     public static Object captureHotReloadSettings() {
         synchronized (sHiddenSettingsLock) {
-            if (!sHiddenSettingsInitialized || sPendingModelReloads > 0) return null;
+            if (!sHiddenSettingsInitialized || sPendingModelReloads > 0 || sInitialModelReloadPending) return null;
             java.util.ArrayList<String> components = new java.util.ArrayList<>();
             for (android.content.ComponentName component : sLastHiddenComponents)
                 components.add(component.flattenToString());
@@ -911,6 +928,21 @@ public final class LauncherHooks {
     public static void hookLauncher(final XC_LoadPackage.LoadPackageParam lpparam) {
         log(">>> matched launcher, classLoader=" + lpparam.classLoader);
         sLauncherClassLoader = lpparam.classLoader;
+        try {
+            // A locked/cold Launcher can finish loading after the bounded readiness poll.
+            // Its real first bind re-arms the one-shot, without refreshing on every resume.
+            XposedHelpers.findAndHookDeclaredMethod("com.android.launcher3.Launcher", lpparam.classLoader,
+                    "finishBindingItems", XposedHelpers.findClass("com.android.launcher3.util.IntSet", lpparam.classLoader),
+                    new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            synchronized (sHiddenSettingsLock) {
+                                if (!sModelReloadActive || !sInitialModelReloadPending || sPendingModelReloads > 0) return;
+                                sPendingModelReloads++;
+                            }
+                            reloadLauncherModelWhenReady(new android.os.Handler(android.os.Looper.getMainLooper()), 0, true);
+                        }
+                    });
+        } catch (Throwable error) { log("hide launcher apps first-bind hook failed: " + error); }
         hookUpdateDotAndSecondaryMenu(lpparam);
         hookPowerSaveTaskLocks(lpparam);
         float density = readDensity();

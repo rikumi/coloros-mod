@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ColorOS SystemUI status_bar_qs_device_control_inactive, preserved native path. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FF000000" android:fillType="evenOdd"
+        android:pathData="M12.437,1.754C12.182,1.549 11.818,1.549 11.563,1.754L1.563,9.754C1.33,9.939 1.241,10.252 1.339,10.532C1.438,10.813 1.703,11 2,11H4V20C4,21.105 4.895,22 6,22L10,22H14L18,22C19.605,22 20,21.105 20,20V11H22C22.297,11 22.562,10.813 22.66,10.532C22.759,10.252 22.669,9.939 22.437,9.754L12.437,1.754ZM14,20.6L14,14.8C14,14.524 13.777,14.3 13.501,14.3H10.499C10.223,14.3 10,14.524 10,14.8L10,20.6H14C14,20.6 14,20.6 14,20.6Z" />
+</vector>

@@ -22,7 +22,7 @@ import java.util.ArrayList;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-/** Only IconPack.statusBarIcon/statusBarChipIcon; never mutate Notification or shared descriptors. */
+/** Status-bar masks and the requested Messages panel glyph; never mutate Notification or shared descriptors. */
 public final class MonochromeNotificationHooks {
     private static final String KEY = "statusbar_monochrome_notification_icons_enabled";
     private static final String MANAGER = "com.android.systemui.statusbar.notification.icon.IconManager";
@@ -81,6 +81,10 @@ public final class MonochromeNotificationHooks {
                                 XposedHelpers.callMethod(p.args[2], "setShowsConversation", false);
                             }
                             if (active && !replaying && readBool(KEY, false)) MissingNotificationCountHooks.refresh();
+                            if (state != null && p.args[2] instanceof View target) {
+                                target.invalidate();
+                                if (target.getParent() instanceof View parent) parent.requestLayout();
+                            }
                         }
                     });
             // createIcons installs IconPack only AFTER the first four setIcon calls.
@@ -100,10 +104,19 @@ public final class MonochromeNotificationHooks {
                     });
             log("HOOK OK IconManager#createIcons/setIcon (status bar monochrome notification icons)");
         } catch (Throwable t) { log("HOOK FAIL status bar monochrome notification icons: " + t); }
+        MessagesNotificationIconHooks.hook(param);
         MissingNotificationCountHooks.hook(param);
+        MonochromeIconGeometryHooks.hook(param);
+        MonochromeIconTintHooks.hook(param);
+        NotificationBadgeGeometryHooks.hook(param);
     }
 
     static boolean enabled() { return active && readBool(KEY, false); }
+
+    static boolean enlargedIcon(View view) {
+        State state = STATES.get(view);
+        return enabled() && state != null && state.replacement != null;
+    }
 
     static Object entryForKey(String key) {
         Object manager = lastManager.get();
@@ -149,7 +162,8 @@ public final class MonochromeNotificationHooks {
         Notification notification = sbn.getNotification();
         boolean substituted = notification.extras != null
                 && notification.extras.getBoolean("oplus_smallicon_use_app_icon", false);
-        Icon icon = substituted
+        Icon traced = MessagesNotificationIconHooks.iconFor(sbn);
+        Icon icon = traced != null ? traced : substituted
                 ? notification.extras.getParcelable("oplus_small_icon", Icon.class)
                 : notification.getSmallIcon();
         if (icon == null || icon.getType() == Icon.TYPE_ADAPTIVE_BITMAP
@@ -160,10 +174,13 @@ public final class MonochromeNotificationHooks {
         if (info != null && icon.getType() == Icon.TYPE_RESOURCE && icon.getResId() == info.icon
                 && sbn.getPackageName().equals(icon.getResPackage())) return null;
         Context context;
-        try { context = (Context) XposedHelpers.callMethod(view.getContext(),
-                "createPackageContextAsUser", sbn.getPackageName(), 0, sbn.getUser()); }
+        try { context = sbn.getUserId() == -1 ? view.getContext().createPackageContext(sbn.getPackageName(), 0)
+                : (Context) XposedHelpers.callMethod(view.getContext(),
+                        "createPackageContextAsUser", sbn.getPackageName(), 0, sbn.getUser()); }
         catch (Throwable t) { return null; }
         icon = nativeNotificationLayer(context, sbn, icon);
+        Icon systemMask = SystemNotificationIconMasks.resolve(context, sbn, icon);
+        if (systemMask != null) icon = systemMask;
         if (!isNotificationMask(icon.loadDrawable(context), notification.iconLevel)) return null;
         Class<?> type = XposedHelpers.findClass("com.android.internal.statusbar.StatusBarIcon$Type",
                 manager.getClass().getClassLoader());
@@ -221,9 +238,11 @@ public final class MonochromeNotificationHooks {
         MAIN.post(() -> {
             if (!active) return;
             boolean enabled = readBool(KEY, false);
-            if (enabled == lastEnabled) return;
+            MessagesNotificationIconHooks.refresh();
+            if (enabled == lastEnabled) { MonochromeIconTintHooks.refresh(); return; }
             lastEnabled = enabled;
             replay(enabled);
+            MonochromeIconTintHooks.refresh();
             MissingNotificationCountHooks.refresh();
         });
     }
@@ -247,7 +266,10 @@ public final class MonochromeNotificationHooks {
                         XposedHelpers.callMethod(item.getKey(), "setShowsConversation", false);
                 } catch (Throwable t) { log("monochrome notification refresh failed: " + t); }
             }
-        } finally { replaying = false; }
+        } finally {
+            replaying = false;
+            MonochromeIconGeometryHooks.refresh();
+        }
     }
 
     public static Object capture() {
@@ -285,6 +307,11 @@ public final class MonochromeNotificationHooks {
         active = false;
         MAIN.removeCallbacksAndMessages(null);
         replay(false);
+        MonochromeIconTintHooks.cleanup();
+        MessagesNotificationIconHooks.cleanup();
+        SystemNotificationIconMasks.cleanup();
+        NotificationBadgeGeometryHooks.cleanup();
+        MonochromeIconGeometryHooks.cleanup();
         MissingNotificationCountHooks.cleanup();
         STATES.clear();
         lastManager.clear();

@@ -94,3 +94,8 @@ enabled: true
 历史实现过程、逆向结论、已废弃方案、部署记录和手势条高度功能的最终实现见：
 
 `.codebuddy/memory/coloros-mod.md`
+
+## 7. 构建制品交付
+
+20. Android 构建成功并通过 APK 签名检查后，先检查 `adb devices -l`，并读取品牌、型号和系统信息，确认设备与 ColorOS Mod 匹配。只向匹配的 OPPO/OnePlus ColorOS 设备执行 `adb -s <serial> install -r <apk>`，无需再次确认；不得安装到 Flyme/Meizu 或其它不匹配设备。`UP-TO-DATE` 产物同样遵循此规则。
+21. 安装成功后报告结果，不再上传同一制品；仅在没有连接匹配设备或安装失败时，使用文件发送工具上传 APK，并说明未安装的原因。

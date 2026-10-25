@@ -254,6 +254,8 @@ public final class KeyguardHooks {
     }
 
     public static void cleanupForHotReload() {
+        KeyguardCarrierHooks.cleanup();
+        KeyguardClockFontHooks.cleanup();
         sKeyguardViewManager = null;
     }
 

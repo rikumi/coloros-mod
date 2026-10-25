@@ -1120,10 +1120,20 @@ internal fun CouixGroup(
             if (index > 0) CouixItemDivider()
             androidx.compose.runtime.key(item.keyForCompose) {
                 when (item) {
-                    is SwitchItem -> CouixSwitchRow(item = item, prefs = prefs, ctx = ctx, version = version, overrideValue = overrideValue, onItemChanged = onItemChanged)
+                    is SwitchItem -> {
+                        CouixSwitchRow(item = item, prefs = prefs, ctx = ctx, version = version,
+                            overrideValue = overrideValue.takeUnless { it == true && !item.masterEnableAllowed },
+                            onItemChanged = onItemChanged)
+                    }
                     is FolderBlockItem -> CouixFolderBlockRow(item = item, prefs = prefs, ctx = ctx, version = version, overrideValue = overrideValue, onItemChanged = onItemChanged)
-                    is SelectItem -> CouixSelectRow(item = item, prefs = prefs, ctx = ctx, version = version,
-                        onItemChanged = onItemChanged)
+                    is SelectItem -> {
+                        CouixSelectRow(item = item, prefs = prefs, ctx = ctx, version = version,
+                            onItemChanged = onItemChanged)
+                        if (item.key == XposedInit.KEY_NOTIFICATION_LAYOUT_STYLE) {
+                            CouixItemDivider()
+                            NotificationLayoutTestRow(ctx)
+                        }
+                    }
                     is GroupTitleItem -> Unit
                 }
             }
@@ -1279,6 +1289,28 @@ private fun CouixDropdownArrow(
 }
 
 @Composable
+private fun NotificationLayoutTestRow(ctx: Context) {
+    val scope = rememberCoroutineScope()
+    var sending by remember { mutableStateOf(false) }
+    CouixActionCell(
+        title = androidx.compose.ui.res.stringResource(R.string.ui_send_test_notification),
+        modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+        onClick = {
+            if (!sending) {
+                sending = true
+                scope.launch {
+                    try {
+                        val sent = withContext(Dispatchers.IO) { NotificationLayoutPreview.sendIfAbsent(ctx) }
+                        if (!sent) android.widget.Toast.makeText(ctx,
+                            R.string.ui_notification_layout_test_failed, android.widget.Toast.LENGTH_SHORT).show()
+                    } finally { sending = false }
+                }
+            }
+        },
+    )
+}
+
+@Composable
 private fun CouixSelectRow(
     item: SelectItem,
     prefs: SharedPreferences,
@@ -1408,6 +1440,7 @@ private fun CouixSelectRow(
                                 selected = index
                                 setInt(ctx, item.key, index)
                                 onItemChanged()
+
                             }
                         }
                     }
@@ -1719,6 +1752,10 @@ private fun CouixSwitchRow(
     overrideValue: Boolean?,
     onItemChanged: () -> Unit,
 ) {
+    if (item.key == InstallerSettings.RESTORE) {
+        InstallerRestoreRow(ctx, onItemChanged)
+        return
+    }
     val label = androidx.compose.ui.res.stringResource(item.label)
     val scope = rememberCoroutineScope()
     // 系统设置不保存在 prefs，不能因其它条目的 prefs 刷新而重置状态。
@@ -1726,7 +1763,7 @@ private fun CouixSwitchRow(
     val rowVersion = if (item.rootBacked) 0 else version
     val rowOverride = if (item.rootBacked) null else overrideValue
     var checked by remember(item.key, rowVersion, rowOverride) {
-        mutableStateOf(overrideValue ?: if (item.rootBacked) false else prefs.getBoolean(item.key, false))
+        mutableStateOf(overrideValue ?: if (item.rootBacked) false else prefs.getBoolean(item.key, item.defaultEnabled))
     }
     var rootValue by remember(item.key) { mutableStateOf<Int?>(null) }
     LaunchedEffect(item.key, overrideValue) {
@@ -1745,7 +1782,7 @@ private fun CouixSwitchRow(
     }
     if (item.colorKey != null) {
         val colorKey = item.colorKey
-        val defaultColor = colorOSAccentColor(ctx, 0xFF00B4D8).toArgb()
+        val defaultColor = XposedInit.DEFAULT_QS_ACTIVE_COLOR
         var selected by remember(colorKey, version) { mutableStateOf(Color(prefs.getInt(colorKey, defaultColor))) }
         var hex by remember(colorKey, version) { mutableStateOf(selected.toArgb().toUInt().toString(16).padStart(8, '0').uppercase()) }
         var expanded by remember(item.key) { mutableStateOf(false) }
@@ -1755,7 +1792,6 @@ private fun CouixSwitchRow(
                 onCheckedChange = {
                     checked = it
                     expanded = it
-                    setInt(ctx, colorKey, selected.toArgb())
                     setBool(ctx, item.key, it)
                     onItemChanged()
                 },

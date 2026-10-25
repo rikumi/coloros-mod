@@ -155,7 +155,7 @@ public final class NotificationHooks {
                     java.util.Collections.newSetFromMap(
                             new java.util.WeakHashMap<android.view.View, Boolean>()));
 
-    // 高频路径缓存: 由 onNotificationUpdated (低频) 刷新, onLayout/onMeasure/applyState 直接读。
+    // 由 onNotificationUpdated 刷新，异步模板绑定时复用。
     static volatile boolean sNotifPadEnabled = false;
 
     static volatile int sNotifPadPx = 0;
@@ -201,129 +201,33 @@ public final class NotificationHooks {
                         }
                     });
 
-            // 合并通知由 NotificationChildrenContainer 统一布局；给每个子通知加 padding 会只撑开某一行。
-            // 这里增加容器总高度，并在布局完成后把整个容器内容整体下移 padPx，形成上下外侧留白。
-            // 高频路径优化: 直接读 volatile 变量, 不走 IPC/HashMap。
-            final String groupContainerClass =
-                    "com.android.systemui.statusbar.notification.stack.NotificationChildrenContainer";
-            try {
-                XposedHelpers.findAndHookMethod(
-                        groupContainerClass, lpparam.classLoader, "getIntrinsicHeight",
-                        new XC_MethodHook() {
-                            @Override
-                            protected void afterHookedMethod(MethodHookParam param) {
-                                if (!sNotifPadEnabled) return;
-                                if (isMinimizedGroup(param.thisObject)) return;
-                                Object result = param.getResult();
-                                if (result instanceof Integer) {
-                                    param.setResult((Integer) result + sNotifPadPx * 2);
-                                }
-                            }
-                        });
-
-                // onMeasure / onLayout 在 View(ViewGroup) 里有实现, 限定本类声明。
-                XposedHelpers.findAndHookDeclaredMethod(
-                        groupContainerClass, lpparam.classLoader, "onMeasure", int.class, int.class,
-                        new XC_MethodHook() {
-                            @Override
-                            protected void afterHookedMethod(MethodHookParam param) {
-                                if (!sNotifPadEnabled) return;
-                                if (isMinimizedGroup(param.thisObject)) return;
-                                int extra = sNotifPadPx * 2;
-                                android.view.View container = (android.view.View) param.thisObject;
-                                XposedHelpers.callMethod(container, "setMeasuredDimension",
-                                        container.getMeasuredWidth(), container.getMeasuredHeight() + extra);
-                                XposedHelpers.setIntField(container, "mRealHeight",
-                                        XposedHelpers.getIntField(container, "mRealHeight") + extra);
-                            }
-                        });
-
-                XposedHelpers.findAndHookDeclaredMethod(
-                        groupContainerClass, lpparam.classLoader, "onLayout",
-                        boolean.class, int.class, int.class, int.class, int.class,
-                        new XC_MethodHook() {
-                            @Override
-                            protected void afterHookedMethod(MethodHookParam param) {
-                                if (!sNotifPadEnabled) return;
-                                if (isMinimizedGroup(param.thisObject)) return;
-                                int padPx = sNotifPadPx;
-                                android.view.ViewGroup container = (android.view.ViewGroup) param.thisObject;
-                                for (int i = 0; i < container.getChildCount(); i++) {
-                                    container.getChildAt(i).offsetTopAndBottom(padPx);
-                                }
-                            }
-                        });
-
-                XC_MethodHook applyGroupState = new XC_MethodHook() {
-                            @Override
-                            protected void afterHookedMethod(MethodHookParam param) {
-                                boolean enabled = sNotifPadEnabled && !isMinimizedGroup(param.thisObject);
-                                int padPx = sNotifPadPx;
-                                android.view.ViewGroup container =
-                                        (android.view.ViewGroup) param.thisObject;
-                                applyGroupHeaderOffset(container, "mGroupHeader", enabled, padPx);
-                                applyGroupHeaderOffset(container, "mMinimizedGroupHeader", enabled, padPx);
-                            }
-                        };
-                try {
-                    XposedHelpers.findAndHookMethod(groupContainerClass, lpparam.classLoader,
-                            "applyState", applyGroupState);
-                } catch (Throwable missingCurrentApplyState) {
-                    // SystemUI 15 的 Kotlin 重命名保留了 $1 后缀。
-                    XposedHelpers.findAndHookMethod(groupContainerClass, lpparam.classLoader,
-                            "applyState$1", applyGroupState);
+            // Full templates own their padding, including expanded group children.
+            // Collapsed hybrid rows keep only the shared group-body inset.
+            String contentClass = "com.android.systemui.statusbar.notification.row.NotificationContentView";
+            XC_MethodHook bindPadding = new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        Object row = XposedHelpers.getObjectField(param.thisObject, "mContainingNotification");
+                        boolean minimized = !sNotifPadEnabled || (row != null
+                                && XposedHelpers.getBooleanField(row, "mIsMinimized"));
+                        applyNotificationChildPadding(param.thisObject, minimized, sNotifPadPx);
+                    } catch (Throwable error) { log("notification template padding failed: " + error); }
                 }
+            };
+            for (String method : new String[]{"setContractedChild", "setExpandedChild", "setHeadsUpChild"}) {
+                XposedHelpers.findAndHookMethod(contentClass, lpparam.classLoader, method,
+                        android.view.View.class, bindPadding);
+            }
+            XposedHelpers.findAndHookMethod(contentClass, lpparam.classLoader, "setSingleLineView",
+                    XposedHelpers.findClass("com.android.systemui.statusbar.notification.row.HybridNotificationView", lpparam.classLoader), bindPadding);
+            XposedHelpers.findAndHookMethod(contentClass, lpparam.classLoader,
+                    "updateAllSingleLineViews", bindPadding);
+            XposedHelpers.findAndHookMethod(contentClass, lpparam.classLoader,
+                    "setIsChildInGroup", boolean.class, bindPadding);
+            NotificationChildPaddingMeasureHooks.hook(lpparam);
+            NotificationGroupPaddingHooks.hook(lpparam);
 
-                try {
-                    XposedHelpers.findAndHookMethod(
-                            "com.oplus.systemui.statusbar.notification.stack.NotificationChildrenContainerExtImp",
-                            lpparam.classLoader,
-                            "layoutOplusHeader",
-                            groupContainerClass,
-                            new XC_MethodHook() {
-                                @Override
-                                protected void afterHookedMethod(MethodHookParam param) {
-                                    try {
-                                        if (!sNotifPadEnabled) return;
-                                        android.view.ViewGroup container =
-                                                (android.view.ViewGroup) param.args[0];
-                                        if (isMinimizedGroup(container)) return;
-                                        Object groupExt = XposedHelpers.getObjectField(
-                                                param.thisObject, "oplusNotificationGroupExtImpl");
-                                        Object wrapper = XposedHelpers.getObjectField(
-                                                groupExt, "oplusHeaderWrapper");
-                                        Object headerView = XposedHelpers.getObjectField(wrapper, "mView");
-                                        applyViewTranslation(headerView, true, sNotifPadPx);
-                                    } catch (Throwable ignored) {}
-                                }
-                            });
-                } catch (Throwable ignored) {}
-
-                try {
-                    XposedHelpers.findAndHookMethod(
-                            "com.oplus.systemui.notification.row.oplusgroup.OplusNotificationGroupExtImpl",
-                            lpparam.classLoader,
-                            "layoutOplusHeader",
-                            groupContainerClass,
-                            new XC_MethodHook() {
-                                @Override
-                                protected void afterHookedMethod(MethodHookParam param) {
-                                    try {
-                                        if (!sNotifPadEnabled) return;
-                                        android.view.ViewGroup container =
-                                                (android.view.ViewGroup) param.args[0];
-                                        if (isMinimizedGroup(container)) return;
-                                        Object wrapper = XposedHelpers.getObjectField(
-                                                param.thisObject, "oplusHeaderWrapper");
-                                        Object headerView = XposedHelpers.getObjectField(wrapper, "mView");
-                                        applyViewTranslation(headerView, true, sNotifPadPx);
-                                    } catch (Throwable ignored) {}
-                                }
-                            });
-                } catch (Throwable ignored) {}
-            } catch (Throwable ignored) {}
-
-            log("HOOK OK ExpandableNotificationRow#onNotificationUpdated + group container hooks");
+            log("HOOK OK notification full and hybrid template padding");
         } catch (Throwable t) {
             log("HOOK FAIL ExpandableNotificationRow#onNotificationUpdated :: " + t);
         }
@@ -740,16 +644,7 @@ public final class NotificationHooks {
                         view.getPaddingEnd(), view.getPaddingBottom() + sNotifPadPx);
             }
         }
-        if (state[1] instanceof Object[]) {
-            for (Object object : (Object[]) state[1]) {
-                if (!(object instanceof android.view.View)) continue;
-                android.view.View view = (android.view.View) object;
-                view.setTag(TAG_NOTIF_GROUP_HEADER_TRANSLATION,
-                        Float.valueOf(view.getTranslationY()));
-                sMutatedNotificationViews.add(view);
-                view.setTranslationY(view.getTranslationY() + sNotifPadPx);
-            }
-        }
+
     }
 
     public static void restoreHotReloadHost(Object host) {
@@ -760,6 +655,7 @@ public final class NotificationHooks {
     }
 
     public static void cleanupForHotReload() {
+        SystemNotificationGroupHooks.cleanup();
         MonochromeNotificationHooks.cleanup();
         sShowModeLoopActive = false;
         Handler handler = sShowModeHandler;
@@ -886,32 +782,10 @@ public final class NotificationHooks {
         }
     }
 
-    static void applyGroupHeaderOffset(android.view.ViewGroup container,
-                                                String fieldName, boolean enabled, int padPx) {
-        try {
-            Object header = XposedHelpers.getObjectField(container, fieldName);
-            applyViewTranslation(header, enabled, padPx);
-        } catch (Throwable ignored) {}
-    }
-
-    static void applyViewTranslation(Object object, boolean enabled, int padPx) {
-        if (!(object instanceof android.view.View)) return;
-        android.view.View view = (android.view.View) object;
-        Object tag = view.getTag(TAG_NOTIF_GROUP_HEADER_TRANSLATION);
-        float original = tag instanceof Float ? (Float) tag : view.getTranslationY();
-        if (!(tag instanceof Float)) {
-            view.setTag(TAG_NOTIF_GROUP_HEADER_TRANSLATION, original);
-        }
-        sMutatedNotificationViews.add(view);
-        float target = enabled ? original + padPx : original;
-        if (view.getTranslationY() != target) {
-            view.setTranslationY(target);
-        }
-    }
-
     static void applyNotificationChildPadding(Object contentView, boolean minimized, int padPx) {
         if (!(contentView instanceof android.view.ViewGroup)) return;
-        String[] fields = { "mContractedChild", "mExpandedChild", "mHeadsUpChild" };
+        boolean grouped = XposedHelpers.getBooleanField(contentView, "mIsChildInGroup");
+        String[] fields = { "mContractedChild", "mExpandedChild", "mHeadsUpChild", "mSingleLineView" };
         for (String f : fields) {
             Object child = XposedHelpers.getObjectField(contentView, f);
             if (!(child instanceof android.view.View)) continue;
@@ -921,8 +795,9 @@ public final class NotificationHooks {
             if (origTop == null) { origTop = v.getPaddingTop(); v.setTag(TAG_NOTIF_PAD_TOP, origTop); }
             if (origBottom == null) { origBottom = v.getPaddingBottom(); v.setTag(TAG_NOTIF_PAD_BOTTOM, origBottom); }
             sMutatedNotificationViews.add(v);
-            int top = minimized ? origTop : origTop + padPx;
-            int bottom = minimized ? origBottom : origBottom + padPx;
+            boolean omitPadding = minimized || (grouped && "mSingleLineView".equals(f));
+            int top = omitPadding ? origTop : origTop + padPx;
+            int bottom = omitPadding ? origBottom : origBottom + padPx;
             if (v.getPaddingTop() != top || v.getPaddingBottom() != bottom) {
                 v.setPaddingRelative(v.getPaddingStart(), top, v.getPaddingEnd(), bottom);
             }

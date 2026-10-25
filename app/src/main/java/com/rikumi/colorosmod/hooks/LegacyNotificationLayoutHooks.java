@@ -34,7 +34,8 @@ public final class LegacyNotificationLayoutHooks {
 
     private static volatile AssetManager sLegacyAssets;
     private static Class<?> sRowClass;
-    private static Boolean sAppliedEnabled;
+    private static Integer sAppliedMode;
+    private static Boolean sAppliedRealAppName;
     private static final android.os.Handler MAIN = new android.os.Handler(android.os.Looper.getMainLooper());
     private static final Runnable REFRESH = LegacyNotificationLayoutHooks::refreshRows;
 
@@ -55,6 +56,7 @@ public final class LegacyNotificationLayoutHooks {
     private LegacyNotificationLayoutHooks() { }
 
     public static void hook(final XC_LoadPackage.LoadPackageParam lpparam) {
+        LegacyFrameworkNotificationHooks.hook(lpparam);
         try {
             sRowClass = XposedHelpers.findClass(
                     "com.android.systemui.statusbar.notification.row.ExpandableNotificationRow", lpparam.classLoader);
@@ -63,7 +65,7 @@ public final class LegacyNotificationLayoutHooks {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
-                                if (!readBool(KEY_NOTIFICATION_LEGACY_LAYOUT_ENABLED, false)) return;
+                                if (readInt(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) != 1) return;
 
                                 LayoutInflater inflater = (LayoutInflater) param.thisObject;
                                 Context context = inflater.getContext();
@@ -108,11 +110,28 @@ public final class LegacyNotificationLayoutHooks {
         }
     }
 
-    public static synchronized void onSettingsSnapshotPublished() {
+    private static final Runnable APPLY_SETTINGS = LegacyNotificationLayoutHooks::applySettingsSnapshot;
+
+    public static void onSettingsSnapshotPublished() {
+        // Settings snapshots arrive on ColorOSMod-SettingsWorker. All restoration,
+        // including padding/removing header views, belongs to the UI thread.
+        MAIN.removeCallbacks(APPLY_SETTINGS);
+        MAIN.post(APPLY_SETTINGS);
+    }
+
+    private static synchronized void applySettingsSnapshot() {
         if (sRowClass == null) return;
-        boolean enabled = readBoolCached(KEY_NOTIFICATION_LEGACY_LAYOUT_ENABLED, false);
-        if (java.util.Objects.equals(sAppliedEnabled, enabled)) return;
-        sAppliedEnabled = enabled;
+        int mode = readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT);
+        boolean realAppName = NotificationAppNameHooks.enabled();
+        if (java.util.Objects.equals(sAppliedMode, mode)
+                && java.util.Objects.equals(sAppliedRealAppName, realAppName)) return;
+        sAppliedMode = mode;
+        sAppliedRealAppName = realAppName;
+        LegacyMessagingSpacingHooks.cleanup();
+        SystemNotificationGroupHooks.refresh();
+        RelaxedGroupHeaderHooks.cleanup();
+        RelaxedNotificationHooks.cleanup();
+        LegacyGroupAppearanceHooks.cleanup();
         MAIN.removeCallbacks(REFRESH);
         MAIN.post(REFRESH);
     }
@@ -134,6 +153,13 @@ public final class LegacyNotificationLayoutHooks {
         if (!visited.add(view)) return;
         if (sRowClass != null && sRowClass.isInstance(view)) {
             try {
+                Object children = XposedHelpers.getObjectField(view, "mChildrenContainer");
+                if (children instanceof android.view.View group) {
+                    XposedHelpers.callMethod(children, "initDimens$2");
+                    LegacyCollapsedGroupHooks.refresh(children);
+                    RelaxedGroupHeaderHooks.refresh(children);
+                    group.requestLayout();
+                }
                 Object entry = XposedHelpers.getObjectField(view, "mEntry");
                 Object stage = XposedHelpers.getObjectField(view, "mRowContentBindStage");
                 if (entry != null && stage != null) {
@@ -150,10 +176,12 @@ public final class LegacyNotificationLayoutHooks {
     public static synchronized void cleanupForHotReload() {
         MAIN.removeCallbacksAndMessages(null);
         sRowClass = null;
-        sAppliedEnabled = null;
+        sAppliedMode = null;
+        sAppliedRealAppName = null;
         AssetManager assets = sLegacyAssets;
         sLegacyAssets = null;
         if (assets != null) assets.close();
+        LegacyFrameworkNotificationHooks.cleanup();
     }
 
     private static AssetManager getLegacyAssets(Context systemUiContext) throws Exception {
@@ -204,6 +232,10 @@ public final class LegacyNotificationLayoutHooks {
             while ((length = input.read(buffer)) != -1) output.write(buffer, 0, length);
             xml = LegacyNotificationXml.remap(output.toByteArray(), id -> mapResourceId(id, legacy, current));
         }
+        return parseXml(xml);
+    }
+
+    static XmlResourceParser parseXml(byte[] xml) throws Exception {
         Class<?> blockClass = Class.forName("android.content.res.XmlBlock");
         java.lang.reflect.Constructor<?> constructor = blockClass.getDeclaredConstructor(byte[].class);
         constructor.setAccessible(true);

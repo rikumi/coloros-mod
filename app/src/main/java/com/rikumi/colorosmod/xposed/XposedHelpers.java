@@ -189,15 +189,25 @@ public final class XposedHelpers {
         return unhooks;
     }
 
+    // Successful lookups are immutable for a loaded Class. Keep exact/best
+    // matches separate, including Class identity (not only its name).
+    private record MethodKey(Class<?> owner, String name, List<Class<?>> types) { }
+    private static final Map<MethodKey, Method> EXACT_METHODS = new ConcurrentHashMap<>();
+    private static final Map<MethodKey, Method> MATCHED_METHODS = new ConcurrentHashMap<>();
+
     // ------------------------------------------------------------------ 方法查找
 
     public static Method findMethodExact(Class<?> clazz, String methodName, Class<?>... parameterTypes) {
         Class<?>[] types = (parameterTypes == null) ? new Class<?>[0] : parameterTypes;
+        MethodKey key = new MethodKey(clazz, methodName, Arrays.asList(types.clone()));
+        Method cached = EXACT_METHODS.get(key);
+        if (cached != null) return cached;
         Class<?> clz = clazz;
         while (clz != null) {
             try {
                 Method method = clz.getDeclaredMethod(methodName, types);
                 method.setAccessible(true);
+                EXACT_METHODS.put(key, method);
                 return method;
             } catch (NoSuchMethodException ignored) {
                 clz = clz.getSuperclass();
@@ -207,6 +217,7 @@ public final class XposedHelpers {
             try {
                 Method method = iface.getDeclaredMethod(methodName, types);
                 method.setAccessible(true);
+                EXACT_METHODS.put(key, method);
                 return method;
             } catch (NoSuchMethodException ignored) {
             }
@@ -231,8 +242,13 @@ public final class XposedHelpers {
      */
     public static Method findMethodBestMatch(Class<?> clazz, String methodName, Class<?>... parameterTypes) {
         Class<?>[] types = (parameterTypes == null) ? new Class<?>[0] : parameterTypes;
+        MethodKey key = new MethodKey(clazz, methodName, Arrays.asList(types.clone()));
+        Method cached = MATCHED_METHODS.get(key);
+        if (cached != null) return cached;
         try {
-            return findMethodExact(clazz, methodName, types);
+            Method method = findMethodExact(clazz, methodName, types);
+            MATCHED_METHODS.put(key, method);
+            return method;
         } catch (Throwable ignored) {
         }
 
@@ -268,6 +284,7 @@ public final class XposedHelpers {
             throw new NoSuchMethodError(clazz.getName() + "#" + methodName + parametersString(types) + "#bestmatch");
         }
         bestMatch.setAccessible(true);
+        MATCHED_METHODS.put(key, bestMatch);
         return bestMatch;
     }
 
@@ -728,6 +745,8 @@ public final class XposedHelpers {
 
     /** Drop Java-only generation state. UI/Animator cleanup is committed on main beforehand. */
     public static void clearGenerationState() {
+        EXACT_METHODS.clear();
+        MATCHED_METHODS.clear();
         FIELD_CACHE.clear();
         synchronized (ADDITIONAL_FIELDS) {
             ADDITIONAL_FIELDS.clear();

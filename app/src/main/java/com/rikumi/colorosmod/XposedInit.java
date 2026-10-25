@@ -94,8 +94,9 @@ public class XposedInit extends XposedModule {
     public static final String KEY_QS_TOPMARGIN_ENABLED = "qs_topmargin_enabled";
     public static final String KEY_NOTIFICATION_SUBTITLE_ENABLED = "notification_subtitle_enabled";
     public static final String KEY_NOTIFICATION_PADDING_ENABLED = "notification_padding_enabled";
-    public static final String KEY_NOTIFICATION_LEGACY_LAYOUT_ENABLED =
-            "notification_legacy_layout_enabled";
+    public static final String KEY_NOTIFICATION_LAYOUT_STYLE =
+            "notification_layout_style";
+    public static final int NOTIFICATION_LAYOUT_STYLE_DEFAULT = 2;
     // 通知左滑直接清除: ColorOS 国内版左滑通知会露出"设置/删除"侧边按钮(需滑到底才清除),
     // 海外版(exp)一个按钮都不生成、抬手即清除。区分点在 NotificationMenuRowExtImpl
     // #createMenuViewsExt 与 OplusSwipeHelperExImpl#shouldNotShowMenuExt 两处(见
@@ -188,6 +189,7 @@ public class XposedInit extends XposedModule {
     public static final String KEY_QS_MERGED_TWO_FINGER_EXPAND = "qs_merged_two_finger_expand";
     public static final String KEY_QS_ACTIVE_COLOR_ENABLED = "qs_active_color_enabled";
     public static final String KEY_QS_ACTIVE_COLOR = "qs_active_color";
+    public static final int DEFAULT_QS_ACTIVE_COLOR = 0xff00b4d8;
     public static final String KEY_QS_NORMAL_CORNER_RADIUS_ENABLED = "qs_normal_corner_radius_enabled";
     public static final String KEY_QS_CORNER_RADIUS_MODE = "qs_corner_radius_mode";
     public static final String KEY_QS_CORNER_RADIUS_ENABLED = "qs_corner_radius_enabled";
@@ -611,6 +613,8 @@ public class XposedInit extends XposedModule {
             MergedSettingsRotationHooks.refresh();
             StatusBarExtrasHooks.refresh();
             MonochromeNotificationHooks.refresh();
+            com.rikumi.colorosmod.hooks.KeyguardCarrierHooks.refresh();
+            com.rikumi.colorosmod.hooks.KeyguardClockFontHooks.refresh();
         }
         if (first) {
             synchronized (sLoadLock) {
@@ -1286,6 +1290,7 @@ public class XposedInit extends XposedModule {
                 || "com.coloros.weather2".equals(packageName)
                 || "net.oneplus.weather".equals(packageName)
                 || "com.heytap.market".equals(packageName)
+                || "com.android.packageinstaller".equals(packageName)
                 || "com.android.providers.media.module".equals(packageName);
     }
 
@@ -1321,6 +1326,8 @@ public class XposedInit extends XposedModule {
             WeatherHooks.hookWeather(lpparam);
         } else if ("com.heytap.market".equals(lpparam.packageName)) {
             StorePurificationHooks.hookStore(lpparam);
+        } else if ("com.android.packageinstaller".equals(lpparam.packageName)) {
+            com.rikumi.colorosmod.hooks.InstallerHooks.hook(lpparam);
         } else if ("com.oplus.pscanvas".equals(lpparam.packageName)) {
             MultiWindowHooks.hookCanvasControlBar(lpparam);
         } else if ("com.oplus.safecenter".equals(lpparam.packageName)) {

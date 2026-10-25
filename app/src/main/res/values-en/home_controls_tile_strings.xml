@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_module_home_controls_tile">Module-provided home controls tile</string>
+    <string name="ui_module_home_controls_tile_hint">Does not enable the system tile, to prevent it from disappearing if root is lost</string>
+    <string name="ui_home_controls_tile">Home controls</string>
+    <string name="ui_home_controls_no_app">Google Home or Mi Home is not installed</string>
+</resources>

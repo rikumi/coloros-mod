@@ -83,7 +83,7 @@ public final class ActiveTileOutlineHooks {
                             if ((radiantColor != null || customColor) && isActive(drawable)) {
                                 int original = XposedHelpers.getIntField(drawable, "maskColor");
                                 p.setObjectExtra("originalMaskColor", original);
-                                XposedHelpers.setIntField(drawable, "maskColor", radiantColor != null ? radiantColor : readInt(KEY_QS_ACTIVE_COLOR, 0xff00b4d8));
+                                XposedHelpers.setIntField(drawable, "maskColor", radiantColor != null ? radiantColor : readInt(KEY_QS_ACTIVE_COLOR, DEFAULT_QS_ACTIVE_COLOR));
                             }
                             if (readBool(KEY_QS_ACTIVE_OUTLINE_ENABLED, false)) {
                                 Object autoBlur = XposedHelpers.getObjectField(drawable, "autoBlurDrawable");
@@ -139,7 +139,7 @@ public final class ActiveTileOutlineHooks {
                             }
                             Paint paint = colorPaints.get(drawable);
                             if (paint == null) { paint = new Paint(Paint.ANTI_ALIAS_FLAG); colorPaints.put(drawable, paint); }
-                            int color = radiantColor != null ? radiantColor : readInt(KEY_QS_ACTIVE_COLOR, 0xff00b4d8);
+                            int color = radiantColor != null ? radiantColor : readInt(KEY_QS_ACTIVE_COLOR, DEFAULT_QS_ACTIVE_COLOR);
                             paint.setColor(color);
                             paint.setAlpha((color >>> 24) * drawable.getAlpha() / 255);
                             Drawable original = (Drawable) XposedHelpers.getObjectField(drawable, "colorDrawable");
@@ -184,7 +184,7 @@ public final class ActiveTileOutlineHooks {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             View tile = (View) p.thisObject;
                             if (legacyMerged(tile) && readBool(KEY_QS_ACTIVE_COLOR_ENABLED, false))
-                                p.setResult(readInt(KEY_QS_ACTIVE_COLOR, 0xff00b4d8));
+                                p.setResult(readInt(KEY_QS_ACTIVE_COLOR, DEFAULT_QS_ACTIVE_COLOR));
                         }
                     });
             log("HOOK OK legacy QS active color and contour");
@@ -220,7 +220,7 @@ public final class ActiveTileOutlineHooks {
         }
         if (enabled) {
             int px = Math.max(1, Math.round(1.5f * tile.getResources().getDisplayMetrics().density));
-            gradient.setStroke(px, readInt(KEY_QS_ACTIVE_COLOR, 0xff00b4d8));
+            gradient.setStroke(px, readInt(KEY_QS_ACTIVE_COLOR, DEFAULT_QS_ACTIVE_COLOR));
         } else {
             gradient.setStroke(original.width, original.color == null ? ColorStateList.valueOf(0)
                     : original.color);

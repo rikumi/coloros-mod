@@ -37,6 +37,7 @@ public class SettingsProvider extends ContentProvider {
 
     @Override
     public boolean onCreate() {
+        if (getContext() != null) HomeControlsTileSettings.sync(getContext());
         return true;
     }
 

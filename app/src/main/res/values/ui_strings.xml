@@ -37,7 +37,6 @@
     <string name="ui_notification_pull">"通知下滑展开"</string>
     <string name="ui_notification_subtitle">"缩小通知静默区域副标题"</string>
     <string name="ui_notification_padding">"增加通知上下内边距"</string>
-    <string name="ui_notification_legacy_layout">"恢复旧版通知布局"</string>
     <string name="ui_statusbar_settings">"状态栏设置"</string>
     <string name="ui_merge_dual_sim">"合并双卡信号"</string>
     <string name="ui_hide_battery_percent">"隐藏状态栏电量百分号"</string>

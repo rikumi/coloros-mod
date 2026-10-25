@@ -37,7 +37,6 @@
     <string name="ui_notification_pull">"Swipe down to expand for CN models"</string>
     <string name="ui_notification_subtitle">"Smaller silent notification subtitle"</string>
     <string name="ui_notification_padding">"Increase vertical padding"</string>
-    <string name="ui_notification_legacy_layout">"Restore legacy notification layouts"</string>
     <string name="ui_statusbar_settings">"Status bar settings"</string>
     <string name="ui_merge_dual_sim">"Combine dual-SIM signal indicators"</string>
     <string name="ui_hide_battery_percent">"Hide status bar battery percent sign"</string>

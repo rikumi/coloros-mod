@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Traced from framework stat_notify_more, with its transparent plus retained. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="72" android:viewportHeight="72">
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd" android:pathData="M20,9 L63,9 A5,5 0,0 1,68,14 L68,57 A5,5 0,0 1,63,62 L20,62 Q17,62 15.5,59 L4.5,39 Q3,36 4.5,33 L15.5,12 Q17,9 20,9 Z M35,22 L41,22 L41,33 L51,33 L51,39 L41,39 L41,49 L35,49 L35,39 L25,39 L25,33 L35,33 Z" />
+</vector>

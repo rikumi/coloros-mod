@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_keyguard_clock_font">Lock screen clock font</string>
+    <string name="ui_keyguard_clock_monospace">Monospaced lock screen clock digits</string>
+    <string name="ui_keyguard_clock_spacing">Lock screen clock letter spacing</string>
+    <string name="ui_keyguard_clock_weight">Lock screen clock font weight</string>
+</resources>

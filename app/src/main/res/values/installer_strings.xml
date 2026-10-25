@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="installer_group">安装器</string>
+    <string name="installer_restore_legacy">恢复旧版安装器</string>
+    <string name="installer_disable_virus_scan">停用旧版安装器病毒扫描</string>
+    <string name="installer_hide_finish_suggestions">移除旧版安装器安装完成页建议设置</string>
+    <string name="installer_show_first_header">旧版安装器首屏增加标题栏</string>
+    <string name="installer_action_failed">安装器设置操作失败</string>
+</resources>

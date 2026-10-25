@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_keyguard_clock_font">鎖定畫面時鐘字體</string>
+    <string name="ui_keyguard_clock_monospace">鎖定畫面時鐘字體等寬</string>
+    <string name="ui_keyguard_clock_spacing">鎖定畫面時鐘字距</string>
+    <string name="ui_keyguard_clock_weight">鎖定畫面時鐘字重</string>
+</resources>

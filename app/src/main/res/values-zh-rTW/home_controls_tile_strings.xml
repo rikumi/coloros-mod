@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_module_home_controls_tile">模組提供家居控制磁貼</string>
+    <string name="ui_module_home_controls_tile_hint">不主動啟用系統磁貼，以防失去 root 時磁貼消失</string>
+    <string name="ui_home_controls_tile">家居控制</string>
+    <string name="ui_home_controls_no_app">尚未安裝 Google Home 或米家</string>
+</resources>
