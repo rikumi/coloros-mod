@@ -16,10 +16,14 @@ import com.rikumi.colorosmod.xposed.XposedHelpers;
 final class RelaxedNotificationHooks {
     private static boolean enabled() { return readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) == 2; }
     private static final WeakHashMap<View, IconAnchor> anchors = new WeakHashMap<>();
+    private static final WeakHashMap<View, java.lang.ref.WeakReference<View>> messageRoots = new WeakHashMap<>();
+    private static final WeakHashMap<View, Integer> messageLineStarts = new WeakHashMap<>();
+    private static final WeakHashMap<ViewGroup, boolean[]> messageClips = new WeakHashMap<>();
     private static final ThreadLocal<Boolean> compactMessage = new ThreadLocal<>();
     private static final ThreadLocal<Boolean> fullReloadNotice = new ThreadLocal<>();
     private static final class IconAnchor {
-        int start, top, bottom, gravity, parentGravity;
+        int start, top, bottom, gravity, parentGravity, width, height;
+        float scaleX, scaleY, pivotX, pivotY, translationY;
         int[] rules;
     }
 
@@ -31,6 +35,24 @@ final class RelaxedNotificationHooks {
                             if (!enabled()) return;
                             Object wrapper = XposedHelpers.callMethod(p.thisObject, "getBase");
                             if (wrapper != null) anchorIcon(XposedHelpers.getObjectField(wrapper, "mIcon"));
+                        }
+                    });
+            for (String layout : new String[]{"com.android.internal.widget.MessagingLayout", "com.android.internal.widget.ConversationLayout"}) {
+                XposedHelpers.findAndHookMethod(layout, lp.classLoader, "onLayout", boolean.class,
+                        int.class, int.class, int.class, int.class, new XC_MethodHook() {
+                            @Override protected void afterHookedMethod(MethodHookParam p) {
+                                if (enabled()) alignMessage((View) p.thisObject);
+                            }
+                        });
+            }
+            XposedHelpers.findAndHookMethod("com.android.systemui.statusbar.notification.TransformState", lp.classLoader,
+                    "resetTransformedView", new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            if (!enabled()) return;
+                            Object icon = XposedHelpers.getObjectField(p.thisObject, "mTransformedView");
+                            var reference = messageRoots.get(icon);
+                            View root = reference == null ? null : reference.get();
+                            if (root != null) alignMessage(root);
                         }
                     });
             XposedHelpers.findAndHookMethod("android.app.Notification$Builder", lp.classLoader,
@@ -180,7 +202,9 @@ final class RelaxedNotificationHooks {
                 && android.text.TextUtils.isEmpty(extras.getCharSequence(android.app.Notification.EXTRA_SUMMARY_TEXT));
     }
 
-    static void anchorIcon(Object object) {
+    static void anchorIcon(Object object) { anchorIcon(object, -1, -1); }
+
+    private static void anchorIcon(Object object, int requestedStart, int requestedTop) {
         if (!enabled() || !(object instanceof View icon)) return;
 
         if (icon.getClass().getName().equals("com.oplus.systemui.notification.row.oplusgroup.OplusGroupNotificationRowIconView")) return;
@@ -192,6 +216,10 @@ final class RelaxedNotificationHooks {
             saved.start = margins.getMarginStart();
             saved.top = margins.topMargin;
             saved.bottom = margins.bottomMargin;
+            saved.width = params.width; saved.height = params.height;
+            saved.scaleX = icon.getScaleX(); saved.scaleY = icon.getScaleY();
+            saved.pivotX = icon.getPivotX(); saved.pivotY = icon.getPivotY();
+            saved.translationY = icon.getTranslationY();
             if (params instanceof RelativeLayout.LayoutParams relative)
                 saved.rules = relative.getRules().clone();
             if (params instanceof FrameLayout.LayoutParams frame) saved.gravity = frame.gravity;
@@ -202,8 +230,10 @@ final class RelaxedNotificationHooks {
         int marginId = icon.getResources().getIdentifier("notification_2025_margin", "dimen", "android");
         int top = marginId == 0 ? Math.round(16 * icon.getResources().getDisplayMetrics().density)
                 : icon.getResources().getDimensionPixelSize(marginId);
-        boolean changed = margins.topMargin != top || margins.getMarginStart() != top;
-        margins.setMarginStart(top);
+        int start = requestedStart < 0 ? top : requestedStart;
+        if (requestedTop >= 0) top = requestedTop;
+        boolean changed = margins.topMargin != top || margins.getMarginStart() != start;
+        margins.setMarginStart(start);
         if (params instanceof RelativeLayout.LayoutParams relative) {
             changed |= relative.getRule(RelativeLayout.CENTER_VERTICAL) != 0
                     || relative.getRule(RelativeLayout.CENTER_IN_PARENT) != 0
@@ -226,9 +256,63 @@ final class RelaxedNotificationHooks {
         if (changed) icon.setLayoutParams(params);
     }
 
+    private static void alignMessage(View root) {
+        int iconId = NotificationResourceIds.get(root.getResources(), "icon", "id", "android");
+        int lineId = NotificationResourceIds.get(root.getResources(), "notification_top_line", "id", "android");
+        View icon = root.findViewById(iconId), line = root.findViewById(lineId);
+        if (icon == null || line == null) return;
+        float density = root.getResources().getDisplayMetrics().density;
+        boolean collapsed = XposedHelpers.getBooleanField(root, "mIsCollapsed");
+        float expandedStart = 16f + (58f - 16f - 16f) / 2f;
+        int parentTop = 0;
+        for (View current = (View) icon.getParent(); current != root;) {
+            parentTop += current.getTop();
+            if (!(current.getParent() instanceof View parent)) return;
+            current = parent;
+        }
+        int collapsedSize = Math.round(32f * density);
+        float top = root.getPaddingTop() + Math.max(16f * density,
+                (root.getHeight() - root.getPaddingTop() - root.getPaddingBottom() - collapsedSize) / 2f);
+        int requestedTop = collapsed ? Math.max(0, Math.round(top) - parentTop - ((View) icon.getParent()).getPaddingTop()) : -1;
+        anchorIcon(icon, Math.round((collapsed ? 16f : expandedStart) * density), requestedTop);
+        messageRoots.put(icon, new java.lang.ref.WeakReference<>(root));
+        int start = Math.round(58f * density); // 16dp inset + 32dp icon + 10dp gap.
+        messageLineStarts.putIfAbsent(line, line.getPaddingStart());
+        if (line.getPaddingStart() != start)
+            line.setPaddingRelative(start, line.getPaddingTop(), line.getPaddingEnd(), line.getPaddingBottom());
+        int size = collapsed ? collapsedSize : Math.round(16f * density);
+        ViewGroup.LayoutParams params = icon.getLayoutParams();
+        if (params.width != size || params.height != size) {
+            params.width = size; params.height = size; icon.setLayoutParams(params);
+        }
+        icon.setPivotX(0f); icon.setPivotY(0f);
+        icon.setScaleX(1f); icon.setScaleY(1f);
+        for (View current = icon; current != root;) {
+            if (!(current.getParent() instanceof View parent)) return;
+            if (parent instanceof ViewGroup group) {
+                messageClips.computeIfAbsent(group, key -> new boolean[]{key.getClipChildren(), key.getClipToPadding()});
+                if (group.getClipChildren()) group.setClipChildren(false);
+                if (group.getClipToPadding()) group.setClipToPadding(false);
+            }
+            current = parent;
+        }
+        icon.setTranslationY(0f);
+    }
+
     static void cleanup() {
         compactMessage.remove();
         fullReloadNotice.remove();
+        messageRoots.clear();
+        for (var entry : messageLineStarts.entrySet()) {
+            View line = entry.getKey();
+            line.setPaddingRelative(entry.getValue(), line.getPaddingTop(), line.getPaddingEnd(), line.getPaddingBottom());
+        }
+        messageLineStarts.clear();
+        for (var entry : messageClips.entrySet()) {
+            entry.getKey().setClipChildren(entry.getValue()[0]);
+            entry.getKey().setClipToPadding(entry.getValue()[1]);
+        }
+        messageClips.clear();
         for (var entry : anchors.entrySet()) {
             View icon = entry.getKey();
             IconAnchor saved = entry.getValue();
@@ -237,6 +321,9 @@ final class RelaxedNotificationHooks {
             margins.setMarginStart(saved.start);
             margins.topMargin = saved.top;
             margins.bottomMargin = saved.bottom;
+            params.width = saved.width; params.height = saved.height;
+            icon.setScaleX(saved.scaleX); icon.setScaleY(saved.scaleY);
+            icon.setPivotX(saved.pivotX); icon.setPivotY(saved.pivotY); icon.setTranslationY(saved.translationY);
             if (params instanceof RelativeLayout.LayoutParams relative && saved.rules != null) {
                 for (int rule : new int[]{RelativeLayout.CENTER_VERTICAL, RelativeLayout.CENTER_IN_PARENT,
                         RelativeLayout.ALIGN_PARENT_TOP, RelativeLayout.ALIGN_PARENT_BOTTOM})
