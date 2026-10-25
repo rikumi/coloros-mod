@@ -15,8 +15,6 @@ final class LegacyMessagingSpacingHooks {
     private static final WeakHashMap<View, Integer> headers = new WeakHashMap<>();
     private static final WeakHashMap<View, Boolean> groupLayouts = new WeakHashMap<>();
     private static final WeakHashMap<View, Integer> avatarVisibility = new WeakHashMap<>();
-    private static final ThreadLocal<Boolean> compactShell = new ThreadLocal<>();
-    static boolean usesCompactShell() { return Boolean.TRUE.equals(compactShell.get()); }
     private static Class<?> groupClass;
     private static Boolean poolLegacy;
     private static boolean enabled() {
@@ -29,50 +27,14 @@ final class LegacyMessagingSpacingHooks {
                     "getMessagingLayoutResource", boolean.class, boolean.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             if (!enabled()) return;
-                            if (compactShell.get() != null)
-                                compactShell.set(!Boolean.TRUE.equals(p.args[0]) && Boolean.TRUE.equals(p.args[1]));
                             Object builder = XposedHelpers.getObjectField(p.thisObject, "mBuilder");
                             android.content.Context context = (android.content.Context) XposedHelpers.getObjectField(builder, "mContext");
                             String name = Boolean.TRUE.equals(p.args[0]) ? "notification_template_material_conversation"
-                                    : Boolean.TRUE.equals(p.args[1]) ? "notification_template_material_messaging"
                                     : "notification_template_material_big_messaging";
                             int id = context.getResources().getIdentifier(name, "layout", "android");
                             if (id != 0) p.setResult(id);
                         }
                     });
-            XposedHelpers.findAndHookMethod("android.app.Notification$MessagingStyle", lp.classLoader,
-                    "makeMessagingView", int.class, new XC_MethodHook() {
-                        @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (!enabled()) return;
-                            p.setObjectExtra("legacyCompactShell", usesCompactShell());
-                            compactShell.set(false);
-                        }
-                        @Override protected void afterHookedMethod(MethodHookParam p) {
-                            Object previous = p.getObjectExtra("legacyCompactShell");
-                            if (previous == null) return;
-                            if (Boolean.TRUE.equals(previous)) compactShell.set(true); else compactShell.remove();
-                        }
-                    });
-            String template = "com.oplus.systemui.statusbar.notification.row.wrapper.OplusNotificationTemplateViewWrapperExImpl";
-            XposedHelpers.findAndHookMethod(template, lp.classLoader, "setIsChildInGroup", boolean.class, new XC_MethodHook() {
-                @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    if (!enabled()) return;
-                    Object base = XposedHelpers.callMethod(p.thisObject, "getBase");
-                    Object root = base == null ? null : XposedHelpers.getObjectField(base, "mView");
-                    if (!(root instanceof View view) || !view.getClass().getName().equals("com.android.internal.widget.MessagingLayout")) return;
-                    Object target = XposedHelpers.getObjectField(p.thisObject, "actionListMarginTarget");
-                    if (target instanceof View body && body.getLayoutParams() instanceof ViewGroup.MarginLayoutParams params) {
-                        p.setObjectExtra("legacyMessageBody", body);
-                        p.setObjectExtra("legacyMessageTop", params.topMargin);
-                    }
-                }
-                @Override protected void afterHookedMethod(MethodHookParam p) {
-                    if (!(p.getObjectExtra("legacyMessageBody") instanceof View body)
-                            || !(p.getObjectExtra("legacyMessageTop") instanceof Integer top)
-                            || !(body.getLayoutParams() instanceof ViewGroup.MarginLayoutParams params)) return;
-                    if (params.topMargin != top) { params.topMargin = top; body.setLayoutParams(params); }
-                }
-            });
             XposedHelpers.findAndHookMethod(groupClass, "getMessagingGroupLayoutResource", new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     if (!enabled()) return;
@@ -155,7 +117,6 @@ final class LegacyMessagingSpacingHooks {
         } catch (Throwable error) { log("legacy messaging spacing hook failed: " + error); }
     }
     static void cleanup() {
-        compactShell.remove();
         if (groupClass != null) XposedHelpers.callStaticMethod(groupClass, "dropCache");
         poolLegacy = null;
         for (View avatar : new ArrayList<>(avatars.keySet())) {

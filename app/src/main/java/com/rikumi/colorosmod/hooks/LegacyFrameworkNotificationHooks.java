@@ -64,7 +64,7 @@ final class LegacyFrameworkNotificationHooks {
                     "headerless", boolean.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             int mode = readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT);
-                            if (mode == 2 || (mode == 1 && !LegacyMessagingSpacingHooks.usesCompactShell())) p.args[0] = false;
+                            if (mode == 1 || mode == 2) p.args[0] = false;
                         }
                     });
 
