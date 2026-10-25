@@ -127,6 +127,7 @@ public final class LegacyNotificationLayoutHooks {
                 && java.util.Objects.equals(sAppliedRealAppName, realAppName)) return;
         sAppliedMode = mode;
         sAppliedRealAppName = realAppName;
+        LegacyCollapsedGroupHooks.cleanup();
         LegacyMessagingSpacingHooks.cleanup();
         SystemNotificationGroupHooks.refresh();
         RelaxedGroupHeaderHooks.cleanup();

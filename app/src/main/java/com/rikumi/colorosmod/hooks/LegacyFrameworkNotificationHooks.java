@@ -197,6 +197,7 @@ final class LegacyFrameworkNotificationHooks {
     }
 
     static synchronized void cleanup() {
+        LegacyCollapsedGroupHooks.cleanup();
         LegacyMessagingSpacingHooks.cleanup();
         RelaxedGroupHeaderHooks.cleanup();
         RelaxedNotificationHooks.cleanup();

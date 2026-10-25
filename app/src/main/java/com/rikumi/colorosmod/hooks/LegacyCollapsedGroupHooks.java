@@ -10,6 +10,7 @@ import com.rikumi.colorosmod.xposed.XposedHelpers;
 
 /** Restore framework group headers and hybrid rows without replacing the current stack. */
 final class LegacyCollapsedGroupHooks {
+    private static final java.util.WeakHashMap<View, Integer> nameInsets = new java.util.WeakHashMap<>();
     private static boolean enabled() { return readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) == 1; }
 
     static void hook(XC_LoadPackage.LoadPackageParam lp) {
@@ -18,6 +19,12 @@ final class LegacyCollapsedGroupHooks {
             Class<?> wrapper = XposedHelpers.findClass("com.android.systemui.statusbar.notification.row.wrapper.NotificationHeaderViewWrapper", lp.classLoader);
             Class<?> row = XposedHelpers.findClass("com.android.systemui.statusbar.notification.row.ExpandableNotificationRow", lp.classLoader);
             String group = "com.oplus.systemui.notification.row.oplusgroup.OplusNotificationGroupExtImpl";
+            XposedHelpers.findAndHookMethod(container, "onLayout", boolean.class,
+                    int.class, int.class, int.class, int.class, new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            if (enabled()) alignName(p.thisObject);
+                        }
+                    });
             XposedHelpers.findAndHookMethod(container, "initDimens$2", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) { if (enabled()) dimensions(p.thisObject); }
             });
@@ -76,6 +83,41 @@ final class LegacyCollapsedGroupHooks {
                 @Override protected void beforeHookedMethod(MethodHookParam p) { if (enabled()) p.setResult(false); }
             });
         } catch (Throwable error) { log("legacy notification group hook failed: " + error); }
+    }
+
+    private static void alignName(Object container) {
+        if (Boolean.TRUE.equals(XposedHelpers.callMethod(container, "showingAsLowPriority"))) return;
+        Object value = XposedHelpers.getObjectField(container, "mGroupHeader");
+        if (!(value instanceof ViewGroup header)) return;
+        int lineId = NotificationResourceIds.get(header.getResources(), "notification_top_line", "id", "android");
+        int nameId = NotificationResourceIds.get(header.getResources(), "app_name_text", "id", "android");
+        View line = header.findViewById(lineId), name = header.findViewById(nameId);
+        if (line == null || name == null || name.getWidth() == 0) return;
+        // The restored ordinary header has a 16dp icon inset, 14dp icon and
+        // 6dp gap: its app-name start is 36dp. Group-only outer padding must
+        // not be counted again. Adjust logical start, preserving RTL/end padding.
+        int left = 0;
+        for (View child = name; child != container;) {
+            left += child.getLeft();
+            if (!(child.getParent() instanceof View parent)) return;
+            child = parent;
+        }
+        int start = header.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL
+                ? ((View) container).getWidth() - left - name.getWidth() : left;
+        int target = Math.round(36f * header.getResources().getDisplayMetrics().density);
+        int padding = Math.max(0, line.getPaddingStart() + target - start);
+        if (padding != line.getPaddingStart()) {
+            nameInsets.putIfAbsent(line, line.getPaddingStart());
+            line.setPaddingRelative(padding, line.getPaddingTop(), line.getPaddingEnd(), line.getPaddingBottom());
+        }
+    }
+
+    static void cleanup() {
+        for (var item : nameInsets.entrySet()) {
+            View line = item.getKey();
+            line.setPaddingRelative(item.getValue(), line.getPaddingTop(), line.getPaddingEnd(), line.getPaddingBottom());
+        }
+        nameInsets.clear();
     }
 
     private static XC_MethodHook argument(int index) {

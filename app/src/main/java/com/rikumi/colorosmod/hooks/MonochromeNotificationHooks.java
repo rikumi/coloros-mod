@@ -159,6 +159,16 @@ public final class MonochromeNotificationHooks {
 
     private static Object replacement(Object manager, Object entry, View view) {
         StatusBarNotification sbn = (StatusBarNotification) XposedHelpers.callMethod(entry, "getSbn");
+        Icon icon = notificationMask(view.getContext(), sbn);
+        if (icon == null) return null;
+        Class<?> type = XposedHelpers.findClass("com.android.internal.statusbar.StatusBarIcon$Type",
+                manager.getClass().getClassLoader());
+        return XposedHelpers.callMethod(manager, "toStatusBarIcon", icon, entry,
+                XposedHelpers.getStaticObjectField(type, "NotifSmallIcon"));
+    }
+
+    /** Resolve the original notification glyph using the same validation in both surfaces. */
+    static Icon notificationMask(Context host, StatusBarNotification sbn) {
         Notification notification = sbn.getNotification();
         boolean substituted = notification.extras != null
                 && notification.extras.getBoolean("oplus_smallicon_use_app_icon", false);
@@ -174,18 +184,15 @@ public final class MonochromeNotificationHooks {
         if (info != null && icon.getType() == Icon.TYPE_RESOURCE && icon.getResId() == info.icon
                 && sbn.getPackageName().equals(icon.getResPackage())) return null;
         Context context;
-        try { context = sbn.getUserId() == -1 ? view.getContext().createPackageContext(sbn.getPackageName(), 0)
-                : (Context) XposedHelpers.callMethod(view.getContext(),
+        try { context = sbn.getUserId() == -1 ? host.createPackageContext(sbn.getPackageName(), 0)
+                : (Context) XposedHelpers.callMethod(host,
                         "createPackageContextAsUser", sbn.getPackageName(), 0, sbn.getUser()); }
         catch (Throwable t) { return null; }
         icon = nativeNotificationLayer(context, sbn, icon);
         Icon systemMask = SystemNotificationIconMasks.resolve(context, sbn, icon);
         if (systemMask != null) icon = systemMask;
         if (!isNotificationMask(icon.loadDrawable(context), notification.iconLevel)) return null;
-        Class<?> type = XposedHelpers.findClass("com.android.internal.statusbar.StatusBarIcon$Type",
-                manager.getClass().getClassLoader());
-        return XposedHelpers.callMethod(manager, "toStatusBarIcon", icon, entry,
-                XposedHelpers.getStaticObjectField(type, "NotifSmallIcon"));
+        return icon;
     }
 
     private static Object replacementForView(Object manager, Object entry, View view) {

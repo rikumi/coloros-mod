@@ -1,7 +1,8 @@
 package com.rikumi.colorosmod.hooks;
 
 import static com.rikumi.colorosmod.XposedInit.*;
-import android.content.Context;
+import android.app.Notification;
+import java.lang.ref.WeakReference;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
@@ -19,18 +20,20 @@ import com.rikumi.colorosmod.xposed.XposedHelpers;
 /** Notification-panel glyphs: the Messages trace and verified native system masks. */
 final class MessagesNotificationIconHooks {
     private static final WeakHashMap<ImageView, State> views = new WeakHashMap<>();
+    private static final WeakHashMap<ImageView, Selection> selections = new WeakHashMap<>();
+    private record Selection(WeakReference<Notification> notification, String key, Icon glyph) { }
     private static Class<?> cachingIcon, rowClass;
     private static boolean active = true, failed;
 
     private static final class State {
         Drawable original, background;
         final Drawable replacement;
-        final String key;
+        final Selection selection;
         Integer tint;
-        State(ImageView view, Icon glyph, String key) {
+        State(ImageView view, Icon glyph, Selection selection) {
             original = view.getDrawable(); background = view.getBackground();
             replacement = glyph.loadDrawable(view.getContext()).mutate();
-            this.key = key;
+            this.selection = selection;
         }
     }
 
@@ -65,8 +68,7 @@ final class MessagesNotificationIconHooks {
             if (rowClass.isInstance(owner)) {
                 Object entry = XposedHelpers.callMethod(owner, "getEntry");
                 if (entry == null) return null;
-                String pkg = ((StatusBarNotification) XposedHelpers.callMethod(entry, "getSbn")).getPackageName();
-                return pkg.equals("com.android.mms") || pkg.equals("com.android.shell") || pkg.equals("android") || pkg.equals("com.android.systemui") ? owner : null;
+                return owner;
             }
         }
         return null;
@@ -91,28 +93,42 @@ final class MessagesNotificationIconHooks {
                 if (view.getDrawable() != state.replacement) state.original = view.getDrawable();
                 if (view.getBackground() != null) state.background = view.getBackground();
             }
-            View row = (MonochromeNotificationHooks.enabled() || NotificationAppNameHooks.enabled()) ? notificationRow(view) : null;
+            boolean legacy = readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) == 1;
+            View row = (legacy || MonochromeNotificationHooks.enabled() || NotificationAppNameHooks.enabled()) ? notificationRow(view) : null;
             if (row == null) {
                 if (state != null) { restore(view, state); views.remove(view); }
                 return;
             }
             Object entry = XposedHelpers.callMethod(row, "getEntry");
             StatusBarNotification sbn = (StatusBarNotification) XposedHelpers.callMethod(entry, "getSbn");
-            if (!MonochromeNotificationHooks.enabled() && !SystemNotificationGroupHooks.androidSummary(sbn)) {
+            if (!legacy && !MonochromeNotificationHooks.enabled() && !SystemNotificationGroupHooks.androidSummary(sbn)) {
                 if (state != null) { restore(view, state); views.remove(view); }
                 return;
             }
             Icon source = SystemNotificationIconMasks.source(sbn);
-            Icon glyph = iconFor(sbn);
-            if (glyph == null) glyph = SystemNotificationIconMasks.resolve(view.getContext(), sbn, source);
-            if (glyph == null) {
+            String key = legacy + ":" + MonochromeNotificationHooks.enabled() + ':'
+                    + SystemNotificationGroupHooks.androidSummary(sbn) + ':' + sbn.getPackageName() + ':'
+                    + source + ':' + sbn.getNotification().iconLevel + ':'
+                    + view.getResources().getConfiguration().hashCode();
+            Selection selection = selections.get(view);
+            if (selection == null || selection.notification().get() != sbn.getNotification()
+                    || !selection.key().equals(key)) {
+                Icon glyph = null;
+                try {
+                    glyph = legacy ? MonochromeNotificationHooks.notificationMask(view.getContext(), sbn) : iconFor(sbn);
+                    if (glyph == null && !legacy) glyph = SystemNotificationIconMasks.resolve(view.getContext(), sbn, source);
+                } catch (Throwable error) {
+                    if (!failed) { failed = true; log("notification panel glyph resolve failed: " + error); }
+                }
+                selection = new Selection(new WeakReference<>(sbn.getNotification()), key, glyph);
+                selections.put(view, selection);
+            }
+            if (selection.glyph() == null) {
                 if (state != null) { restore(view, state); views.remove(view); }
                 return;
             }
-            String key = SystemNotificationGroupHooks.androidSummary(sbn) + ":" + sbn.getPackageName() + ':' + source + ':' + sbn.getNotification().iconLevel
-                    + ':' + view.getResources().getConfiguration().hashCode();
-            if (state != null && !state.key.equals(key)) { restore(view, state); state = null; }
-            if (state == null) { state = new State(view, glyph, key); views.put(view, state); }
+            if (state != null && state.selection != selection) { restore(view, state); state = null; }
+            if (state == null) { state = new State(view, selection.glyph(), selection); views.put(view, state); }
             if (view.getDrawable() != state.replacement) view.setImageDrawable(state.replacement);
             // Native app icons use a dark tint over a colored plate. Once the plate
             // is removed, follow the actual notification text, including OEM dark
@@ -147,5 +163,6 @@ final class MessagesNotificationIconHooks {
         active = false;
         for (var entry : views.entrySet()) restore(entry.getKey(), entry.getValue());
         views.clear();
+        selections.clear();
     }
 }
