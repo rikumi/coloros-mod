@@ -46,8 +46,9 @@ public final class MergedCardRatioHooks {
     private static final Handler handler = new Handler(Looper.getMainLooper());
     private static final ThreadLocal<Boolean> remeasuring = new ThreadLocal<>();
     static boolean ratioEnabled(View view) {
-        return view.getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT
-                && readBool(KEY_QS_MERGED_CARD_RATIO, false);
+        return readBool(KEY_QS_MERGED_CARD_RATIO, false)
+                && (view.getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT
+                    || MergedLandscapeHooks.enabled(view));
     }
 
     private static float iconFactor(View view) {
@@ -86,6 +87,7 @@ public final class MergedCardRatioHooks {
             constraintParamsClass = XposedHelpers.findClass("androidx.constraintlayout.widget.ConstraintLayout$LayoutParams", pkg.classLoader);
             highlightClass = XposedHelpers.findClass("com.oplus.systemui.qs.base.tile.OplusQSHighlightTileView", pkg.classLoader);
             MergedTileGridHooks.hook(pkg);
+            MergedLandscapeHooks.hook(pkg);
             normalTileClass = XposedHelpers.findClass("com.oplus.systemui.qs.base.tile.OplusQSTileBaseView", pkg.classLoader);
             iconClass = XposedHelpers.findClass("com.android.systemui.plugins.qs.QSIconView", pkg.classLoader);
             mediaClass = XposedHelpers.findClassIfExists("com.oplus.systemui.qs.media.OplusQsBaseMediaPanelView", pkg.classLoader);
@@ -729,11 +731,12 @@ public final class MergedCardRatioHooks {
     }
 
     private static final class GeometryPass {
-        final int width, children;
+        final int width, children, orientation;
         final float density, fontScale, scale, surfaceScale, iconFactor;
         final long tiles;
         GeometryPass(ViewGroup root) {
             width = root.getMeasuredWidth(); children = root.getChildCount();
+            orientation = root.getResources().getConfiguration().orientation;
             density = root.getResources().getDisplayMetrics().density;
             fontScale = root.getResources().getConfiguration().fontScale;
             scale = areaScale(root); iconFactor = iconFactor(root);
@@ -750,6 +753,7 @@ public final class MergedCardRatioHooks {
         }
         boolean same(GeometryPass previous) {
             return previous != null && width == previous.width && children == previous.children && tiles == previous.tiles
+                    && orientation == previous.orientation
                     && density == previous.density && fontScale == previous.fontScale && scale == previous.scale
                     && surfaceScale == previous.surfaceScale && iconFactor == previous.iconFactor;
         }
@@ -821,6 +825,7 @@ public final class MergedCardRatioHooks {
 
     public static void refresh() {
         handler.post(() -> {
+            MergedLandscapeHooks.refresh();
             MergedTileGridHooks.refresh();
             for (ViewGroup root : new ArrayList<>(hosts.keySet())) {
                 if (root == null) continue;
@@ -848,6 +853,7 @@ public final class MergedCardRatioHooks {
         refresh();
     }
     public static void cleanupForHotReload() {
+        MergedLandscapeHooks.cleanup();
         handler.removeCallbacksAndMessages(null);
         for (View view : new ArrayList<>(layoutListeners.keySet())) if (view != null) view.removeOnLayoutChangeListener(layoutListener);
         layoutListeners.clear(); nativeLabelPadding.clear();

@@ -210,7 +210,7 @@ final class MergedTileGridHooks {
                     }
                     int size = integer(root, "mCellWidth");
                     int spec = View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY);
-                    boolean header = headerClass.isInstance(root);
+                    boolean header = headerClass.isInstance(root) || MergedLandscapeHooks.enabled(root);
                     int rowHeight = header ? size : integer(root, "mCellHeight");
                     // 行距只依据名称第一行；磁贴自身仍可容纳两行内容，避免裁切文字。
                     int tileHeight = header ? size : size + labelHeight(root, 2);
@@ -327,7 +327,7 @@ final class MergedTileGridHooks {
         int columns = columns(root), size = integer(root, "mCellWidth");
         int gap = integer(root, "mCellMarginHorizontal");
         boolean rtl = root.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL;
-        float squish = headerClass.isInstance(root) ? 1f : XposedHelpers.getFloatField(root, "mSquishinessFraction") * .9f + .1f;
+        float squish = (headerClass.isInstance(root) || MergedLandscapeHooks.enabled(root)) ? 1f : XposedHelpers.getFloatField(root, "mSquishinessFraction") * .9f + .1f;
         int count = Math.min(root.getChildCount(), headerClass.isInstance(root) ? columns : integer(root, "mRows") * columns);
         for (int i = 0; i < count; i++) {
             View tile = root.getChildAt(i);
@@ -384,7 +384,7 @@ final class MergedTileGridHooks {
     // 与系统收起布局相同，按固定直径决定可见数量；展开列数不参与磁贴直径计算。
     private static int collapsedColumns(ViewGroup root, int available) {
         if (fourColumns()) return 4;
-        android.content.res.Resources resources = root.getResources();
+        android.content.res.Resources resources = MergedLandscapeHooks.resources(root);
         int sizeId = resources.getIdentifier("qs_quick_qs_tile_size", "dimen", "com.android.systemui");
         int paddingId = resources.getIdentifier("op_qs_quick_tile_padding", "dimen", "com.android.systemui");
         int maxId = resources.getIdentifier("quick_qs_panel_max_tiles", "integer", "com.android.systemui");
@@ -474,6 +474,9 @@ final class MergedTileGridHooks {
             for (int i = 0; i < root.getChildCount(); i++)
                 root.getChildAt(i).setVisibility(i < diameterColumns ? View.VISIBLE : View.GONE);
         }
+        if (MergedLandscapeHooks.enabled(root) && !headerClass.isInstance(root)) {
+            for (int i = 0; i < root.getChildCount(); i++) MergedLandscapeHooks.compact(root.getChildAt(i));
+        }
         int count = columns(root);
         int diameterGap = Math.round(diameterWidth * MergedCardRatioHooks.gapFraction());
         int size = Math.max(1, (diameterWidth - (diameterColumns - 1) * diameterGap) / diameterColumns);
@@ -487,7 +490,8 @@ final class MergedTileGridHooks {
             content = content * 31 + tile.getVisibility();
         }
         original.contentHash = content;
-        if (original.configuredWidth == available && original.configuredColumns == count
+        boolean compact = MergedLandscapeHooks.enabled(root);
+        if (original.configuredCompact == compact && original.configuredWidth == available && original.configuredColumns == count
                 && original.configuredGap == gap && original.configuredScale == scale
                 && original.configuredDensity == density && original.configuredFontScale == fontScale
                 && original.configuredContent == content && integer(root, "mCellWidth") == size
@@ -495,7 +499,7 @@ final class MergedTileGridHooks {
                 && integer(root, "mCellMarginHorizontal") == gap && integer(root, "mCellMarginVertical") == gap) return;
         XposedHelpers.setIntField(root, "mCellWidth", size);
         MergedCardRatioHooks.applyGridGeometry(root);
-        int rowHeight = size + (headerClass.isInstance(root) ? 0 : labelHeight(root, 1));
+        int rowHeight = size + ((headerClass.isInstance(root) || MergedLandscapeHooks.enabled(root)) ? 0 : labelHeight(root, 1));
         XposedHelpers.setIntField(root, "mCellHeight", rowHeight);
         XposedHelpers.setIntField(root, "mResourceCellHeight", rowHeight);
         XposedHelpers.setIntField(root, "mEstimatedCellHeight", rowHeight);
@@ -505,6 +509,7 @@ final class MergedTileGridHooks {
         original.configuredWidth = available; original.configuredColumns = count; original.configuredGap = gap;
         original.configuredScale = scale; original.configuredDensity = density; original.configuredFontScale = fontScale;
         original.configuredContent = content; original.rowHeight = rowHeight;
+        original.configuredCompact = compact;
     }
 
     private static int labelHeight(ViewGroup root, int lines) {
@@ -663,6 +668,7 @@ final class MergedTileGridHooks {
         final float density;
         int contentWidth, configuredWidth = -1, configuredColumns, configuredGap, rowHeight;
         float configuredScale, configuredDensity, configuredFontScale;
+        boolean configuredCompact;
         long configuredContent, contentHash, accessibilityHash = Long.MIN_VALUE;
         Original(ViewGroup root) {
             density = root.getResources().getDisplayMetrics().density;
