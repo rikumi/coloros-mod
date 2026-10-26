@@ -159,8 +159,8 @@
     <string name="ui_loading">"加载中…"</string>
     <string name="ui_no_disabled_apps">"无已停用或用户级卸载的应用"</string>
     <string name="ui_disable_no_password">"停用应用无需输入密码"</string>
-    <string name="ui_hide_in_app_management">"在应用管理中隐藏"</string>
-    <string name="ui_feature_info">"功能说明"</string>
+    <string name="ui_hide_in_app_management">"在应用管理中隐藏已停用的应用"</string>
+    <string name="ui_feature_info">"新增停用应用"</string>
     <string name="ui_cannot_open_app_settings">"无法打开该应用的设置页"</string>
     <string name="ui_user_uninstalled">"用户级卸载"</string>
     <string name="ui_disabled_state">"停用"</string>
@@ -181,7 +181,10 @@
     <string name="ui_confirm">"确认"</string>
     <string name="ui_invalid_color">"请输入六位或八位十六进制颜色值"</string>
     <string name="ui_restore_command_failed">"无法执行恢复命令，请检查 root 权限"</string>
-    <string name="ui_disabled_apps_hint">"为防止误操作损害设备，我们不提供直接停用应用功能；这里列出了已通过其它途径停用和用户级卸载的应用列表，可在右上角导出成脚本方便重复执行。请注意：\n1. 取决于停用应用的途径，导出的脚本仍然可能需要 adb root；\n2. 模块获取的信息可能并不准确，因此脚本可能会导致系统崩溃或不稳定。请始终在无数据的全新系统上执行脚本。"</string>
+    <string name="ui_disabled_apps_add_title">"新增停用应用"</string>
+    <string name="ui_disabled_apps_add_hint">"停用或卸载系统应用为高危操作，应用标记和说明由 16.0.10 版本分析得出，标记「可卸载」或「建议卸载」的应用不代表卸载不会影响系统功能。<annotation warning="soft_brick">请务必备份所有数据并做好软变砖的准备</annotation>。"</string>
+    <string name="ui_disabled_apps_export_title">"导出已停用应用为脚本"</string>
+    <string name="ui_disabled_apps_export_hint">"将已停用或卸载的系统应用导出成脚本方便重复执行，请注意：\n1. 取决于停用应用的途径，导出的脚本仍然可能需要 adb root；\n2. 模块获取的信息可能并不准确，因此脚本可能会导致系统崩溃或不稳定。<annotation warning="fresh_system">请始终在无数据的全新系统上执行脚本</annotation>。"</string>
     <string name="ui_restore_theme_failed">"原始主题恢复失败：%1$s"</string>
     <string name="ui_reload_scope_count">"热重载处理中：%1$d 个作用域"</string>
     <string name="ui_reload_summary">"热重载：%1$s"</string>
@@ -201,4 +204,5 @@
     <string name="ui_font_rubik" translatable="false">"Rubik"</string>
     <string name="ui_font_lato" translatable="false">"Lato"</string>
     <string name="ui_drawer_install_time_sort">抽屉按安装时间排序</string>
+    <string name="ui_disabled_apps_continue">已了解风险，继续</string>
 </resources>

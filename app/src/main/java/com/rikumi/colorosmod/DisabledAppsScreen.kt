@@ -1,23 +1,21 @@
 package com.rikumi.colorosmod
 
 import android.content.Context
-import android.os.SystemClock
+import android.text.Annotation
+import android.text.Spanned
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
 import android.content.Intent
 import android.content.ActivityNotFoundException
 import android.net.Uri
@@ -47,6 +45,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -57,14 +56,12 @@ import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
-import top.yukonga.miuix.kmp.icon.extended.ChevronForward
-import top.yukonga.miuix.kmp.icon.extended.Share
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 import com.rikumi.colorosmod.XposedInit.KEY_DISABLE_APPS_NOVERIFY_ENABLED
 import com.rikumi.colorosmod.XposedInit.KEY_HIDE_DISABLED_APPS_ENABLED
 
-private val HINT_PARAGRAPH_GAP = 2.dp
+private enum class DisabledAppsWarningAction { ADD, EXPORT }
 
 // 生成导出脚本: 每行一条 adb 命令, 按模式分段并以注释标出(停用 / 用户级卸载)。
 private fun buildExportScript(ctx: Context, apps: List<ManagedAppEntry>): String {
@@ -90,6 +87,7 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
     var picking by remember { mutableStateOf(false) }
     var choices by remember { mutableStateOf<List<ManagedAppEntry>?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var warningAction by remember { mutableStateOf<DisabledAppsWarningAction?>(null) }
     var loadGeneration by remember { mutableStateOf(0) }
     val pickerState = rememberLazyListState()
     val currentListState = if (picking) pickerState else listState
@@ -186,19 +184,6 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
                 },
                 actions = {
                     if (!picking && !busy) {
-                        IconButton(onClick = {
-                            if (apps.isNullOrEmpty()) {
-                                android.widget.Toast.makeText(ctx, ctx.getString(R.string.ui_no_apps_to_export), android.widget.Toast.LENGTH_SHORT).show()
-                            } else {
-                                exportLauncher.launch("disabled_apps.sh")
-                            }
-                        }) {
-                            Icon(
-                                imageVector = MiuixIcons.Share,
-                                contentDescription = ctx.getString(R.string.ui_export),
-                                tint = MiuixTheme.colorScheme.onSurface,
-                            )
-                        }
                         RestartMenu(ctx)
                     }
                 },
@@ -227,8 +212,17 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
                     }
                 }
             } else {
-                // 第一个 group: 功能说明, 标题 + subtitle 形式(行内边距与设置项一致)。
-                item { CouixCard { DisabledAppsHintRow(enabled = !busy) { picking = true } } }
+                item {
+                    CouixCard {
+                        DisabledAppsActionRow(R.string.ui_disabled_apps_add_title, enabled = !busy) {
+                            warningAction = DisabledAppsWarningAction.ADD
+                        }
+                        CouixItemDivider()
+                        DisabledAppsActionRow(R.string.ui_disabled_apps_export_title, enabled = !busy) {
+                            warningAction = DisabledAppsWarningAction.EXPORT
+                        }
+                    }
+                }
                 item { CouixSmallTitle(text = ctx.getString(R.string.ui_disabled_settings)) }
                 item {
                     CouixCard {
@@ -256,6 +250,28 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
             item { Box(Modifier.height(24.dp)) }
         }
     }
+    warningAction?.let { action ->
+        CouixConfirmDialog(
+            title = ctx.getString(if (action == DisabledAppsWarningAction.ADD)
+                R.string.ui_disabled_apps_add_title else R.string.ui_disabled_apps_export_title),
+            text = disabledAppsWarningText(if (action == DisabledAppsWarningAction.ADD)
+                R.string.ui_disabled_apps_add_hint else R.string.ui_disabled_apps_export_hint),
+            confirmLabel = ctx.getString(R.string.ui_disabled_apps_continue),
+            confirmColor = Color(0xFFE5484D),
+            onDismiss = { warningAction = null },
+            onConfirm = {
+                warningAction = null
+                if (!busy) {
+                    if (action == DisabledAppsWarningAction.ADD) picking = true
+                    else if (apps.isNullOrEmpty()) {
+                        android.widget.Toast.makeText(ctx, ctx.getString(R.string.ui_no_apps_to_export),
+                            android.widget.Toast.LENGTH_SHORT).show()
+                    } else exportLauncher.launch("disabled_apps.sh")
+                }
+            },
+        )
+    }
+
 }
 
 @Composable
@@ -289,71 +305,36 @@ private fun HideDisabledAppsRow(ctx: Context) {
 }
 
 @Composable
-private fun DisabledAppsHintRow(enabled: Boolean, onAdd: () -> Unit) {
-    val gate = remember { AppManagementEntryGate() }
-    var lastTap by remember { mutableStateOf(0L) }
-    var expanded by remember { mutableStateOf(false) }
-    var anchorHeight by remember { mutableStateOf(0) }
-    val ctx = androidx.compose.ui.platform.LocalContext.current
-    LaunchedEffect(lastTap) {
-        val tappedAt = lastTap
-        delay(1_000)
-        // 重组前的新点击也不能被上一次点击的延迟回调清除。
-        if (lastTap == tappedAt) gate.reset()
-    }
-    Box(Modifier.onSizeChanged { anchorHeight = it.height }) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(enabled = enabled) {
-                    val now = SystemClock.elapsedRealtime()
-                    lastTap = now
-                    if (gate.tap(now)) expanded = true
-                }
-                .padding(horizontal = 16.dp, vertical = 13.dp),
-        ) {
-            BasicText(
-                text = androidx.compose.ui.res.stringResource(R.string.ui_feature_info),
-                style = MiuixTheme.textStyles.body1.copy(
-                    color = MiuixTheme.colorScheme.onSurface,
-                ),
-            )
-            // 说明按换行符切成多段: 段内走行距, 段间额外加一点间距区分段落。
-            androidx.compose.ui.res.stringResource(R.string.ui_disabled_apps_hint).split('\n').forEachIndexed { index, paragraph ->
-                BasicText(
-                    text = paragraph,
-                    style = MiuixTheme.textStyles.body2.copy(
-                        fontSize = 12.sp,
-                        lineHeight = 16.sp,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        // 等宽数字: 让 "1." / "2." 这类序号的句点对齐。
-                        fontFeatureSettings = "tnum",
-                    ),
-                    modifier = Modifier.padding(
-                        top = 6.dp,
-                    ),
-                )
-            }
-        }
-        if (expanded && enabled) {
-            val shape = RoundedCornerShape(COUIX_CARD_CORNER)
-            Popup(alignment = Alignment.TopEnd, offset = IntOffset(0, anchorHeight),
-                onDismissRequest = { expanded = false }, properties = PopupProperties(focusable = true)) {
-                Column(Modifier.width(260.dp).shadow(12.dp, shape)
-                    .background(MiuixTheme.colorScheme.surfaceContainer, shape).clip(shape)) {
-                    listOf(R.string.app_management_ignore_warning, R.string.ui_cancel).forEachIndexed { index, title ->
-                        BasicText(ctx.getString(title), style = MiuixTheme.textStyles.body1.copy(
-                            color = if (index == 0) Color(0xFFE5484D) else MiuixTheme.colorScheme.onSurface),
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable {
-                                expanded = false
-                                if (index == 0) onAdd()
-                            }.padding(horizontal = 20.dp, vertical = 16.dp))
-                    }
-                }
-            }
-        }
-    }
+private fun DisabledAppsActionRow(
+    @androidx.annotation.StringRes titleRes: Int,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    BasicText(
+        text = androidx.compose.ui.res.stringResource(titleRes),
+        style = MiuixTheme.textStyles.body1.copy(color = MiuixTheme.colorScheme.onSurface),
+        modifier = Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 13.dp),
+    )
+}
 
+@Composable
+private fun disabledAppsWarningText(
+    @androidx.annotation.StringRes descriptionRes: Int,
+): androidx.compose.ui.text.AnnotatedString {
+    val description = androidx.compose.ui.platform.LocalContext.current.resources.getText(descriptionRes)
+    val warningColor = Color(0xFFE5484D)
+    return buildAnnotatedString {
+        append(description.toString())
+        if (description is Spanned) {
+            description.getSpans(0, description.length, Annotation::class.java).forEach { annotation ->
+                if (annotation.key == "warning") {
+                    addStyle(SpanStyle(color = warningColor), description.getSpanStart(annotation),
+                        description.getSpanEnd(annotation))
+                }
+            }
+        }
+    }
 }
 
 private fun openAppDetails(ctx: Context, pkg: String) {
@@ -371,6 +352,11 @@ private fun openAppDetails(ctx: Context, pkg: String) {
 private fun DisabledAppRow(entry: ManagedAppEntry, showState: Boolean = true, onClick: () -> Unit) {
     val onSurface = MiuixTheme.colorScheme.onSurface
     val summary = MiuixTheme.colorScheme.onSurfaceVariantSummary
+    val detailStyle = MiuixTheme.textStyles.body2.copy(
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        color = summary,
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -384,36 +370,47 @@ private fun DisabledAppRow(entry: ManagedAppEntry, showState: Boolean = true, on
             Box(Modifier.width(12.dp))
         }
         Column(modifier = Modifier.weight(1f)) {
-            if (entry.label != null) {
-                BasicText(
-                    text = entry.label,
-                    style = MiuixTheme.textStyles.body1.copy(color = onSurface),
-                )
-                BasicText(
-                    text = entry.pkg,
-                    style = MiuixTheme.textStyles.body2.copy(color = summary),
-                    modifier = Modifier.padding(top = 2.dp),
-                )
-            } else {
-                BasicText(
-                    text = entry.pkg,
-                    style = MiuixTheme.textStyles.body1.copy(color = onSurface),
-                )
+            val appName = entry.label?.takeIf { it.isNotBlank() && it != entry.pkg }
+            BasicText(
+                text = appName ?: entry.pkg,
+                style = MiuixTheme.textStyles.body1.copy(color = onSurface),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (appName != null) BasicText(
+                text = entry.pkg,
+                style = detailStyle,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+            val recommendation = SystemAppDescriptions.recommendationRes(
+                entry.pkg, showState || entry.disabled || entry.uninstalled,
+            )
+            val dark = MiuixTheme.colorScheme.surface.luminance() < 0.5f
+            val prefixColor = when (recommendation) {
+                R.string.system_app_recommendation_remove -> if (dark) Color(0xFF65CE86) else Color(0xFF208447)
+                R.string.system_app_recommendation_removable -> if (dark) Color(0xFF78B4FF) else Color(0xFF246BC1)
+                R.string.system_app_recommendation_possible -> if (dark) Color(0xFFF2D35E) else Color(0xFFA17A00)
+                else -> if (dark) Color(0xFFFFAA62) else Color(0xFFC15C00)
             }
+            val prefix = androidx.compose.ui.res.stringResource(recommendation, "")
+            val description = androidx.compose.ui.res.stringResource(SystemAppDescriptions.descriptionRes(entry.pkg))
+            BasicText(
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(color = prefixColor)) { append(prefix) }
+                    append(description)
+                },
+                style = detailStyle,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp),
+            )
         }
         if (showState) BasicText(
             text = if (entry.uninstalled) androidx.compose.ui.res.stringResource(R.string.ui_user_uninstalled) else androidx.compose.ui.res.stringResource(R.string.ui_disabled_state),
-            style = MiuixTheme.textStyles.body2.copy(color = summary),
+            style = detailStyle,
             modifier = Modifier.padding(start = 12.dp),
-        )
-        Icon(
-            imageVector = MiuixIcons.ChevronForward,
-            contentDescription = null,
-            // 与分类入口行同款: 在 summary 之上再压低透明度, 只作指示不抢视觉。
-            tint = summary.copy(alpha = summary.alpha * 0.6f),
-            modifier = Modifier
-                .padding(start = 12.dp)
-                .size(16.dp),
         )
     }
 }

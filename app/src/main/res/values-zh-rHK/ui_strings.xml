@@ -181,7 +181,10 @@
     <string name="ui_confirm">"確認"</string>
     <string name="ui_invalid_color">"請輸入六位或八位十六進制顏色值"</string>
     <string name="ui_restore_command_failed">"無法執行恢復命令，請檢查 root 權限"</string>
-    <string name="ui_disabled_apps_hint">"為防止誤操作損害設備，我們不提供直接停用應用程式功能；這裏列出了已通過其它途徑停用和用戶級卸載的應用程式清單，可在右上角導出成腳本方便重複執行。請注意：\n1. 取決於停用應用程式的途徑，導出的腳本仍然可能需要 adb root；\n2. 模組獲取的資訊可能並不準確，因此腳本可能會導致系統崩潰或不穩定。請始終在無資料的全新系統上執行腳本。"</string>
+    <string name="ui_disabled_apps_add_title">"新增停用應用程式"</string>
+    <string name="ui_disabled_apps_add_hint">"停用或卸載系統應用程式為高危操作，應用程式標記和說明由 16.0.10 版本分析得出，標記「可卸載」或「建議卸載」的應用程式不代表卸載不會影響系統功能。<annotation warning="soft_brick">請務必備份所有資料並做好系統無法正常啟動（軟變磚）的準備</annotation>。"</string>
+    <string name="ui_disabled_apps_export_title">"導出已停用應用程式為腳本"</string>
+    <string name="ui_disabled_apps_export_hint">"將已停用或卸載的系統應用程式導出成腳本方便重複執行，請注意：\n1. 取決於停用應用程式的途徑，導出的腳本仍然可能需要 adb root；\n2. 模組獲取的資訊可能並不準確，因此腳本可能會導致系統崩潰或不穩定。<annotation warning="fresh_system">請始終在無資料的全新系統上執行腳本</annotation>。"</string>
     <string name="ui_restore_theme_failed">"原始主題恢復失敗：%1$s"</string>
     <string name="ui_reload_scope_count">"熱重載處理中：%1$d 個作用域"</string>
     <string name="ui_reload_summary">"熱重載：%1$s"</string>
@@ -197,4 +200,5 @@
     <string name="ui_reload_query_failed">"查詢失敗 %1$d"</string>
     <string name="ui_reload_timed_out">"超時 %1$d"</string>
     <string name="ui_drawer_install_time_sort">抽屜按安裝時間排序</string>
+    <string name="ui_disabled_apps_continue">已了解風險，繼續</string>
 </resources>

@@ -11,6 +11,7 @@ internal data class ManagedAppEntry(
     val label: String?,
     val uninstalled: Boolean,
     val icon: Bitmap?,
+    val disabled: Boolean = false,
 )
 
 private fun runManagedAppCommand(ctx: Context, command: String): String {
@@ -51,8 +52,16 @@ internal fun loadDisabledManagedApps(ctx: Context): List<ManagedAppEntry> {
 }
 
 internal fun loadSystemManagedApps(ctx: Context): List<ManagedAppEntry> {
-    val output = runManagedAppCommand(ctx, "pm list packages -f -s --user ${AppManagementPolicy.USER_ID}")
-    return sortManagedApps(ctx, parseManagedPackages(ctx, output).map { managedAppEntry(ctx, it, false) })
+    val user = AppManagementPolicy.USER_ID
+    val marker = "---COLOROSMOD-DISABLED---"
+    val output = runManagedAppCommand(ctx,
+        "pm list packages -f -s --user $user && echo $marker && pm list packages -f -d -s --user $user")
+    val sections = output.split(marker, limit = 2)
+    check(sections.size == 2) { ctx.getString(R.string.app_management_invalid_list, output.trim()) }
+    val disabled = parseManagedPackages(ctx, sections[1]).map { it.packageName }.toSet()
+    return sortManagedApps(ctx, parseManagedPackages(ctx, sections[0]).map {
+        managedAppEntry(ctx, it, false).copy(disabled = it.packageName in disabled)
+    })
 }
 
 internal fun executeManagedAppOperation(ctx: Context, app: ManagedAppEntry, operation: ManagedAppOperation) {

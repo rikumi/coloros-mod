@@ -1,22 +1,5 @@
 package com.rikumi.colorosmod
 
-internal class AppManagementEntryGate {
-    private var taps = 0
-    private var lastTap: Long? = null
-
-    fun tap(now: Long): Boolean {
-        val previous = lastTap
-        if (previous == null || now < previous || now - previous >= 1_000L) taps = 0
-        lastTap = now
-        taps++
-        if (taps < 5) return false
-        reset()
-        return true
-    }
-
-    fun reset() { taps = 0; lastTap = null }
-}
-
 internal data class ManagedPackage(val apkPath: String, val packageName: String)
 
 internal data class ManagedAppLists(

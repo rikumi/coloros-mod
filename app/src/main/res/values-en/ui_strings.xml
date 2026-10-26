@@ -180,7 +180,10 @@
     <string name="ui_confirm">"Confirm"</string>
     <string name="ui_invalid_color">"Enter a six- or eight-digit hexadecimal color value."</string>
     <string name="ui_restore_command_failed">"Cannot run the restore command. Check root access."</string>
-    <string name="ui_disabled_apps_hint">"To avoid accidental damage to your device, this page does not disable apps directly. It lists apps disabled or uninstalled for this user by other means. Use the export button at the top right to create a reusable script. Please note:\n1. Depending on how the apps were disabled, the exported script may still require adb root.\n2. The information retrieved by the module may be inaccurate, so the script could cause system crashes or instability. Always run it on a freshly installed system without user data."</string>
+    <string name="ui_disabled_apps_add_title">"Disable more apps"</string>
+    <string name="ui_disabled_apps_add_hint">"Disabling or uninstalling system apps is a high-risk operation. App labels and descriptions are based on analysis of version 16.0.10. Labels such as “Can be removed” or “Recommended for removal” do not mean removal will leave system functionality unaffected. <annotation warning="soft_brick">Back up all data and be prepared for a soft brick</annotation>."</string>
+    <string name="ui_disabled_apps_export_title">"Export disabled apps as a script"</string>
+    <string name="ui_disabled_apps_export_hint">"Export disabled or uninstalled system apps as a reusable script. Please note:\n1. Depending on how the apps were disabled, the exported script may still require adb root.\n2. The information retrieved by the module may be inaccurate, so the script could cause system crashes or instability. <annotation warning="fresh_system">Always run it on a freshly installed system without user data</annotation>."</string>
     <string name="ui_restore_theme_failed">"Original theme restore failed: %1$s"</string>
     <string name="ui_reload_scope_count">"Hot reload in progress: %1$d scopes"</string>
     <string name="ui_reload_summary">"Hot reload: %1$s"</string>
@@ -197,4 +200,5 @@
     <string name="ui_reload_timed_out">"Timed out: %1$d"</string>
     <string name="ui_drawer_install_time_sort">Sort drawer by install time</string>
     <string name="ui_recents_hide_closed_freeform">Hide closed floating window from Recents</string>
+    <string name="ui_disabled_apps_continue">I understand the risks, continue</string>
 </resources>

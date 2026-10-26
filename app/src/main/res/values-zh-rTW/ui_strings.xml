@@ -181,7 +181,10 @@
     <string name="ui_confirm">"確認"</string>
     <string name="ui_invalid_color">"請輸入六位或八位十六進位顏色值"</string>
     <string name="ui_restore_command_failed">"無法執行還原命令，請檢查 root 權限"</string>
-    <string name="ui_disabled_apps_hint">"為防止誤操作損害裝置，我們不提供直接停用應用程式功能；這裡列出了已透過其它途徑停用和使用者層級解除安裝的應用程式清單，可在右上角匯出成指令碼方便重複執行。請注意：\n1. 取決於停用應用程式的途徑，匯出的指令碼仍然可能需要 adb root；\n2. 模組獲取的資訊可能並不準確，因此指令碼可能會導致系統崩潰或不穩定。請始終在無資料的全新系統上執行指令碼。"</string>
+    <string name="ui_disabled_apps_add_title">"新增停用應用程式"</string>
+    <string name="ui_disabled_apps_add_hint">"停用或解除安裝系統應用程式為高風險操作，應用程式標記和說明是根據 16.0.10 版本分析得出，標記「可解除安裝」或「建議解除安裝」的應用程式不代表解除安裝不會影響系統功能。<annotation warning="soft_brick">請務必備份所有資料，並做好系統無法正常啟動（軟磚）的準備</annotation>。"</string>
+    <string name="ui_disabled_apps_export_title">"將已停用應用程式匯出為指令碼"</string>
+    <string name="ui_disabled_apps_export_hint">"將已停用或解除安裝的系統應用程式匯出成指令碼方便重複執行，請注意：\n1. 取決於停用應用程式的途徑，匯出的指令碼仍然可能需要 adb root；\n2. 模組取得的資訊可能並不準確，因此指令碼可能會導致系統崩潰或不穩定。<annotation warning="fresh_system">請始終在無資料的全新系統上執行指令碼</annotation>。"</string>
     <string name="ui_restore_theme_failed">"原始主題還原失敗：%1$s"</string>
     <string name="ui_reload_scope_count">"熱重新載入處理中：%1$d 個作用域"</string>
     <string name="ui_reload_summary">"熱重新載入：%1$s"</string>
@@ -197,4 +200,5 @@
     <string name="ui_reload_query_failed">"查詢失敗 %1$d"</string>
     <string name="ui_reload_timed_out">"超時 %1$d"</string>
     <string name="ui_drawer_install_time_sort">抽屜按安裝時間排序</string>
+    <string name="ui_disabled_apps_continue">已了解風險，繼續</string>
 </resources>
