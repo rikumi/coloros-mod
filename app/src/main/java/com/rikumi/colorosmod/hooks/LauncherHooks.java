@@ -31,12 +31,26 @@ import com.rikumi.colorosmod.xposed.XposedHelpers;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
 public final class LauncherHooks {
-    // 修改安全中心"隐藏应用"对电话本的处理: 系统原生是整包禁用(会连拨号一起失效), 这里让
     private static final Object sHiddenSettingsLock = new Object();
     private static boolean sHiddenSettingsInitialized;
-    private static boolean sNeedsInitialModelReload = true;
+    private static boolean sNeedsInitialModelReload;
     private static boolean sInitialModelReloadPending;
     private static java.util.Set<android.content.ComponentName> sLastHiddenComponents = java.util.Collections.emptySet();
+
+    public static void onHiddenLauncherSettingsUnavailable() {
+        synchronized (sHiddenSettingsLock) {
+            if (!sModelReloadActive) return;
+            if (!sHiddenSettingsInitialized) {
+                sNeedsInitialModelReload = true;
+                return;
+            }
+            if (sLastHiddenComponents.isEmpty() || sInitialModelReloadPending) return;
+            sInitialModelReloadPending = true;
+            sPendingModelReloads++;
+        }
+        reloadLauncherModelWhenReady(
+                new android.os.Handler(android.os.Looper.getMainLooper()), 0, true);
+    }
 
     public static void onSettingsSnapshotPublished(java.util.Map<String, Integer> settings) {
         DrawerInstallTimeHooks.onSettingsSnapshotPublished(settings);

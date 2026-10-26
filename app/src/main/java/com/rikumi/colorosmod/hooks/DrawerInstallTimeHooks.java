@@ -69,19 +69,6 @@ public final class DrawerInstallTimeHooks {
             log("HOOK OK OplusAlphabeticalAppsList#drawAppSort (install-time sort)");
         } catch (Throwable t) { log("HOOK FAIL drawer install-time sort: " + t); }
 
-        try {
-            // 返回桌面时只在设置发生变化后刷新抽屉数据，原生 SharedPrefs 排序选择不变。
-            XposedHelpers.findAndHookDeclaredMethod(
-                    XposedHelpers.findClass("com.android.launcher.Launcher", lp.classLoader),
-                    "onResume", new XC_MethodHook() {
-                        @Override protected void afterHookedMethod(MethodHookParam p) {
-                            refreshLists();
-                            DrawerIndexHooks.refresh();
-                        }
-                    });
-            log("HOOK OK launcher onResume (install-time list refresh)");
-        } catch (Throwable t) { log("HOOK FAIL drawer install-time refresh: " + t); }
-
         // 新旧桌面分别在这两个列表实现上计算字母条是否可用。
         for (String listClass : new String[]{
                 "com.android.launcher3.allapps.OplusAlphabeticalAppsList",

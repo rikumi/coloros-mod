@@ -265,7 +265,12 @@ public class XposedInit extends XposedModule {
         java.util.Map<String, Integer> settings = sSnapshot;
         if (!sSettingsLoaded) {
             java.util.Map<String, Integer> fetched = fetchAllSettings();
-            if (fetched != null) settings = fetched;
+            if (fetched != null) {
+                settings = fetched;
+            } else {
+                LauncherHooks.onHiddenLauncherSettingsUnavailable();
+                settings = sSnapshot;
+            }
         }
         return hiddenLauncherComponents(settings);
     }
