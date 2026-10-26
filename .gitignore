@@ -39,3 +39,4 @@ app/build
 /scripts/*
 !/scripts/verify-apk-signature.py
 !/README.md
+/device-state/
