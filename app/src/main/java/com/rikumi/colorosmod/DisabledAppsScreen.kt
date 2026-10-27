@@ -389,13 +389,17 @@ private fun DisabledAppRow(entry: ManagedAppEntry, showState: Boolean = true, on
             )
             val dark = MiuixTheme.colorScheme.surface.luminance() < 0.5f
             val prefixColor = when (recommendation) {
+                R.string.system_app_recommendation_uninstallable -> if (dark) Color(0xFFFFAA62) else Color(0xFFC15C00)
                 R.string.system_app_recommendation_remove -> if (dark) Color(0xFF65CE86) else Color(0xFF208447)
                 R.string.system_app_recommendation_removable -> if (dark) Color(0xFF78B4FF) else Color(0xFF246BC1)
                 R.string.system_app_recommendation_possible -> if (dark) Color(0xFFF2D35E) else Color(0xFFA17A00)
                 else -> if (dark) Color(0xFFFFAA62) else Color(0xFFC15C00)
             }
             val prefix = androidx.compose.ui.res.stringResource(recommendation, "")
-            val description = androidx.compose.ui.res.stringResource(SystemAppDescriptions.descriptionRes(entry.pkg))
+            val description = androidx.compose.ui.res.stringResource(
+                SystemAppDescriptions.uninstallRestrictionRes(entry.pkg)
+                    ?: SystemAppDescriptions.descriptionRes(entry.pkg),
+            )
             BasicText(
                 text = buildAnnotatedString {
                     withStyle(SpanStyle(color = prefixColor)) { append(prefix) }
