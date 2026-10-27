@@ -9,10 +9,8 @@ import android.os.UserHandle;
 import android.service.notification.NotificationListenerService.Ranking;
 import android.service.notification.NotificationListenerService.RankingMap;
 import android.service.notification.StatusBarNotification;
-import android.graphics.drawable.Icon;
 import java.lang.ref.WeakReference;
 import java.util.*;
-import com.rikumi.colorosmod.R;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
@@ -186,7 +184,7 @@ final class SystemNotificationGroupHooks {
                 Application app = (Application) XposedHelpers.callStaticMethod(
                         Class.forName("android.app.ActivityThread"), "currentApplication");
                 Notification n = new Notification.Builder(app.createPackageContext("android", 0), original.getNotification().getChannelId())
-                        .setSmallIcon(Icon.createWithResource(MODULE_PACKAGE, R.drawable.ic_android_debug_monochrome))
+                        .setSmallIcon(original.getNotification().getSmallIcon())
                         .setContentTitle(app.getPackageManager().getApplicationLabel(
                                 app.getPackageManager().getApplicationInfo("android", 0)))
                         .setGroup(TAG).setGroupSummary(true).setGroupAlertBehavior(Notification.GROUP_ALERT_CHILDREN)
@@ -222,7 +220,6 @@ final class SystemNotificationGroupHooks {
                 } catch (Throwable error) { log("system notification collection lookup failed: " + error); }
             }
             if (owner != null) XposedHelpers.callMethod(owner, "dispatchEventsAndRebuildList", "systemNotificationGroupingSetting");
-            SystemNotificationGroupIconHooks.refresh();
         });
     }
     static void cleanup() {

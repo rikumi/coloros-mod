@@ -103,6 +103,7 @@ public class XposedInit extends XposedModule {
 
     public static final String KEY_HIDE_DISABLED_APPS_ENABLED = "hide_disabled_apps_enabled";
     // 通用设置 — 设置首页图标样式: 0=系统默认, 1=不规则图标, 2=圆形图标。
+    public static final String KEY_SETTINGS_DISABLED_MODULE_SPACING = "settings_disabled_module_spacing";
     public static final String KEY_SETTINGS_HOME_ICON_STYLE = "settings_home_icon_style";
     public static final int SETTINGS_HOME_ICON_STYLE_DEFAULT = 0;
     public static final int SETTINGS_HOME_ICON_STYLE_IRREGULAR = 1;
@@ -509,11 +510,15 @@ public class XposedInit extends XposedModule {
         if (!sSyncActive || all == null) return;
         boolean first = !sSettingsLoaded;
         sSnapshot = all;
+        com.rikumi.colorosmod.hooks.SystemIconPackHooks.onSettingsSnapshotPublished();
         if (sIsSystemServer) {
             com.rikumi.colorosmod.hooks.RecentFreeformHistoryHooks.onSettingsSnapshotPublished(all);
         }
         if ("com.android.settings".equals(sHookedPackageName)) {
             SettingsHooks.onSettingsSnapshotPublished();
+        }
+        if ("com.oplus.blacklistapp".equals(sHookedPackageName)) {
+            com.rikumi.colorosmod.hooks.SenderIdHooks.onSettingsSnapshotPublished();
         }
         if ("com.android.launcher".equals(sProcessName)) {
             LauncherHooks.onSettingsSnapshotPublished(all);
@@ -734,6 +739,9 @@ public class XposedInit extends XposedModule {
         }
         if ("com.android.settings".equals(sHookedPackageName)) {
             SettingsHooks.cleanupForHotReload();
+        }
+        if ("com.oplus.blacklistapp".equals(sHookedPackageName)) {
+            com.rikumi.colorosmod.hooks.SenderIdHooks.cleanupForHotReload();
         }
         if ("com.android.systemui".equals(sHookedPackageName)) {
             com.rikumi.colorosmod.hooks.LegacyNotificationLayoutHooks.cleanupForHotReload();
@@ -965,11 +973,13 @@ public class XposedInit extends XposedModule {
                 ? sSystemServerClassLoader : ClassLoader.getSystemClassLoader());
         android.content.Context app = sIsSystemServer ? null : currentApplication();
         if (app != null) sAppContext = app;
-        if (sIsSystemServer || (app != null && isAppHookTarget(app.getPackageName()))) {
+        if (app != null) com.rikumi.colorosmod.hooks.SystemIconPackHooks.hook(app.getClassLoader());
+        if (sIsSystemServer || app != null) {
             startSettingsLoader();
         }
 
         if (sIsSystemServer) {
+            com.rikumi.colorosmod.hooks.SystemIconPackHooks.hook(sSystemServerClassLoader);
             SystemServerHooks.hookFloatWindowEdgeHangSystemServer(systemServerLpparam());
             SystemServerHooks.hookFloatWindowEdgeHangMute(systemServerLpparam());
             com.rikumi.colorosmod.hooks.SystemFontHooks.hook(systemServerLpparam());
@@ -1128,6 +1138,11 @@ public class XposedInit extends XposedModule {
         lpparam.classLoader = param.getClassLoader();
         lpparam.appInfo = param.getApplicationInfo();
         lpparam.isFirstApplication = param.isFirstPackage();
+        // Common icon APIs also apply to additional caller apps selected in LSPosed.
+        if (!MODULE_PACKAGE.equals(lpparam.packageName)) {
+            com.rikumi.colorosmod.hooks.SystemIconPackHooks.hook(lpparam.classLoader);
+            if (sAppContext != null) startSettingsLoader();
+        }
         if ("android".equals(lpparam.packageName)) {
 
             if (!sIsSystemServer || sSystemServerHooked) return;
@@ -1156,6 +1171,7 @@ public class XposedInit extends XposedModule {
                 || "com.android.systemui".equals(packageName)
                 || "com.oplus.pscanvas".equals(packageName)
                 || "com.oplus.safecenter".equals(packageName)
+                || "com.oplus.blacklistapp".equals(packageName)
                 || "com.oplus.securitypermission".equals(packageName)
                 || "com.android.settings".equals(packageName)
                 || "com.oplus.wallpapers".equals(packageName)
@@ -1188,6 +1204,7 @@ public class XposedInit extends XposedModule {
         }
         // 先取得 Application Context 再启动预热, 避免 worker 在 Context 尚未创建时进入退避重试。
         startSettingsLoader();
+        com.rikumi.colorosmod.hooks.SystemIconPackHooks.hook(lpparam.classLoader);
         com.rikumi.colorosmod.hooks.MonospaceHooks.hook(lpparam.classLoader);
         if ("com.android.launcher".equals(lpparam.packageName)) {
             LauncherHooks.hookLauncher(lpparam);
@@ -1204,6 +1221,8 @@ public class XposedInit extends XposedModule {
             MultiWindowHooks.hookCanvasControlBar(lpparam);
         } else if ("com.oplus.safecenter".equals(lpparam.packageName)) {
             SafecenterHooks.hookSafecenter(lpparam);
+        } else if ("com.oplus.blacklistapp".equals(lpparam.packageName)) {
+            com.rikumi.colorosmod.hooks.SenderIdHooks.hook(lpparam);
         } else if ("com.oplus.securitypermission".equals(lpparam.packageName)) {
             AppStartConfirmHooks.hook(lpparam);
         } else if ("com.android.settings".equals(lpparam.packageName)) {

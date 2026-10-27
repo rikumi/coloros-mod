@@ -1,27 +1,35 @@
 package com.rikumi.colorosmod
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 
 internal object NotificationLayoutPreview {
     private const val TAG = "notification_layout_preview"
-
-    private fun quote(value: String) = "'" + value.replace("'", "'\\''") + "'"
-
-    private fun shell(command: String): String? = runCatching {
-
-        val process = ProcessBuilder("su", "2000", "-c", command).redirectErrorStream(true).start()
-        val output = process.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-        if (process.waitFor() == 0) output else null
-    }.getOrNull()
+    private const val CHANNEL = "notification_layout_preview_heads_up"
+    private const val ID = 1
 
     @Synchronized
-    fun sendIfAbsent(context: Context): Boolean {
-        val active = shell("cmd notification list") ?: return false
-
-        if (active.lineSequence().any { it.split('|').getOrNull(3) == TAG }) return true
-        val title = quote(context.getString(R.string.ui_notification_layout_test_title))
-        val text = quote(context.getString(R.string.ui_notification_layout_test_text))
-        val expanded = quote(context.getString(R.string.ui_notification_layout_test_expanded))
-        return shell("cmd notification post -S bigtext --bigtext $expanded -i @android:drawable/stat_notify_more -t $title ${quote(TAG)} $text") != null
-    }
+    fun send(context: Context): Boolean = runCatching {
+        val manager = context.getSystemService(NotificationManager::class.java)
+        val title = context.getString(R.string.ui_notification_layout_test_title)
+        manager.createNotificationChannel(NotificationChannel(CHANNEL, title, NotificationManager.IMPORTANCE_HIGH))
+        if (!manager.areNotificationsEnabled()
+            || manager.getNotificationChannel(CHANNEL).importance < NotificationManager.IMPORTANCE_HIGH) {
+            return false
+        }
+        val notification = Notification.Builder(context, CHANNEL)
+            .setSmallIcon(android.R.drawable.stat_notify_more)
+            .setContentTitle(title)
+            .setContentText(context.getString(R.string.ui_notification_layout_test_text))
+            .setStyle(Notification.BigTextStyle().bigText(context.getString(R.string.ui_notification_layout_test_expanded)))
+            .setOnlyAlertOnce(false)
+            .setAutoCancel(true)
+            .build()
+        // Replace the previous preview so each explicit test can alert again.
+        manager.cancel(TAG, ID)
+        manager.notify(TAG, ID, notification)
+        true
+    }.getOrDefault(false)
 }

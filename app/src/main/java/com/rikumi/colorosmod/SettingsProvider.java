@@ -31,8 +31,22 @@ public class SettingsProvider extends ContentProvider {
         if (ctx == null) return null;
         Context de = ctx.createDeviceProtectedStorageContext();
         SharedPreferences preferences = (de != null ? de : ctx).getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        migrateNotificationIconPrefs(ctx, preferences);
         HiddenLauncherApps.migrate(ctx, preferences);
         return preferences;
+    }
+
+    // Split the former shared icon behavior once, preserving an explicit panel choice.
+    public static void migrateNotificationIconPrefs(Context context, SharedPreferences preferences) {
+        synchronized (preferences) {
+            String panelKey = "notification_center_monochrome_icons_enabled";
+            String statusBarKey = "statusbar_monochrome_notification_icons_enabled";
+            if (!preferences.contains(panelKey) && preferences.contains(statusBarKey)
+                    && preferences.edit().putBoolean(panelKey,
+                            preferences.getBoolean(statusBarKey, false)).commit()) {
+                notifySettingsChanged(context);
+            }
+        }
     }
 
     @Override

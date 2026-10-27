@@ -47,10 +47,11 @@ final class SystemNotificationGroupIconHooks {
             Object target = entry.get();
             if (target == null) return;
             StatusBarNotification n = (StatusBarNotification) XposedHelpers.callMethod(target, "getSbn");
-            boolean monochrome = MonochromeNotificationHooks.enabled()
-                    && (MessagesNotificationIconHooks.iconFor(n) != null
-                        || MessagesNotificationIconHooks.hasReplacement(icon.get()));
-            if (!SystemNotificationGroupHooks.androidSummary(n) && !monochrome) { restore(); return; }
+            if (!MessagesNotificationIconHooks.enabled()
+                    || (!SystemNotificationGroupHooks.androidSummary(n)
+                        && !MessagesNotificationIconHooks.hasReplacement(icon.get()))) {
+                restore(); return;
+            }
             if (background != null && (background.getColor() == null
                     || background.getColor().getDefaultColor() != 0x80000000)) background.setColor(0x80000000);
             TextView text = number.get();

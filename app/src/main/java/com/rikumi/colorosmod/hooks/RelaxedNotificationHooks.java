@@ -100,10 +100,33 @@ final class RelaxedNotificationHooks {
             Class<?> params = XposedHelpers.findClass("android.app.Notification$StandardTemplateParams", lp.classLoader);
             int normal = (Integer) XposedHelpers.getStaticObjectField(params, "VIEW_TYPE_NORMAL");
             int expanded = (Integer) XposedHelpers.getStaticObjectField(params, "VIEW_TYPE_EXPANDED");
+            int headsUp = (Integer) XposedHelpers.getStaticObjectField(params, "VIEW_TYPE_HEADS_UP");
+            // The compact heads-up shell places sender and app name on the same line.
+            // Reuse the notification-center messaging shell, keeping its collapsed content.
+            XposedHelpers.findAndHookMethod("android.app.Notification$MessagingStyle", lp.classLoader,
+                    "makeCompactHeadsUpContentView", new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            if (!enabled()) return;
+                            boolean previous = Boolean.TRUE.equals(compactMessage.get());
+                            compactMessage.set(true);
+                            try {
+                                Object result = XposedHelpers.callMethod(p.thisObject, "makeMessagingView", expanded);
+                                if (result instanceof android.widget.RemoteViews views) {
+                                    alignHeadsUpText(p.thisObject, views);
+                                    p.setResult(views);
+                                }
+                            } finally {
+                                if (previous) compactMessage.set(true); else compactMessage.remove();
+                            }
+                        }
+                    });
             XposedHelpers.findAndHookMethod("android.app.Notification$MessagingStyle", lp.classLoader,
                     "makeMessagingView", int.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (!enabled() || ((Integer) p.args[0]) != normal) return;
+                            if (!enabled()) return;
+                            int type = (Integer) p.args[0];
+                            if (type != normal && type != headsUp) return;
+                            p.setObjectExtra("relaxedHeadsUpMessage", type == headsUp);
                             p.setObjectExtra("relaxedCompactMessage", Boolean.TRUE.equals(compactMessage.get()));
                             compactMessage.set(true);
                             p.args[0] = expanded;
@@ -113,6 +136,10 @@ final class RelaxedNotificationHooks {
                             if (previous == null) return;
                             if (Boolean.TRUE.equals(previous)) compactMessage.set(true);
                             else compactMessage.remove();
+                            if (Boolean.TRUE.equals(p.getObjectExtra("relaxedHeadsUpMessage"))
+                                    && p.getResult() instanceof android.widget.RemoteViews views) {
+                                alignHeadsUpText(p.thisObject, views);
+                            }
                         }
                     });
             XposedHelpers.findAndHookMethod("android.widget.RemoteViews", lp.classLoader,
@@ -184,6 +211,23 @@ final class RelaxedNotificationHooks {
                         }
                     });
         } catch (Throwable error) { log("relaxed notification hook failed: " + error); }
+    }
+
+    private static void alignHeadsUpText(Object style, android.widget.RemoteViews views) {
+        Object builder = XposedHelpers.getObjectField(style, "mBuilder");
+        android.content.Context context = (android.content.Context) XposedHelpers.getObjectField(builder, "mContext");
+        // The expanded messaging group keeps an 80dp message-icon column even when
+        // collapsed mode hides the avatar. Offset that column so sender and body
+        // begin at the same 58dp edge as the app-name row.
+        float start = 58f * context.getResources().getDisplayMetrics().density;
+        views.setViewLayoutMargin(android.R.id.title, 4, start, android.util.TypedValue.COMPLEX_UNIT_PX);
+        int messages = NotificationResourceIds.get(context.getResources(), "notification_messaging", "id", "android");
+        int contentStart = NotificationResourceIds.get(context.getResources(), "conversation_content_start", "dimen", "android");
+        float groupInset = contentStart != 0
+                ? context.getResources().getDimension(contentStart)
+                : 80f * context.getResources().getDisplayMetrics().density;
+        if (messages != 0)
+            views.setViewLayoutMargin(messages, 4, start - groupInset, android.util.TypedValue.COMPLEX_UNIT_PX);
     }
 
     private static boolean hasRedundantBigText(Object builder) {

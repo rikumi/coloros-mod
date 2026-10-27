@@ -7,6 +7,6 @@
     <string name="ui_notification_layout_test_title">ColorOS Mod 通知布局测试</string>
     <string name="ui_notification_layout_test_text">这是一条用于检查通知布局的测试通知。</string>
     <string name="ui_notification_layout_test_expanded">展开后可检查应用名称、图标、标题、正文和时间的位置。</string>
-    <string name="ui_notification_layout_test_failed">测试通知发送失败，请检查 root 权限。</string>
+    <string name="ui_notification_layout_test_failed">测试通知发送失败，请检查通知权限及通知渠道设置。</string>
     <string name="ui_send_test_notification">发送测试通知</string>
 </resources>

@@ -163,6 +163,8 @@ internal sealed interface SettingsItem
 
 internal data class GroupTitleItem(val title: Int) : SettingsItem
 
+internal data class NavigationAppsItem(val title: Int) : SettingsItem
+
 internal data class SwitchItem(
     val key: String,
     val label: Int,
@@ -201,6 +203,7 @@ internal data class SelectItem(
 
 private val DESKTOP: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_desktop_layout),
+    SwitchItem("system_application_icon_pack", R.string.ui_system_application_icon_pack),
     SwitchItem("icon_gap_enabled", R.string.ui_icon_gap, sliderKey = "icon_gap_dp", sliderMax = 8, sliderDefault = 4),
     SwitchItem("drawer_columns_enabled", R.string.ui_drawer_columns),
     SwitchItem("drawer_install_time_sort_enabled", R.string.ui_drawer_install_time_sort),
@@ -256,6 +259,8 @@ private val NOTIF: List<SettingsItem> = listOf(
     SwitchItem("notification_subtitle_enabled", R.string.ui_notification_subtitle, sliderKey = "notification_subtitle_sp", sliderMax = 16, sliderDefault = 8, sliderUnit = "sp"),
     SwitchItem("notification_padding_enabled", R.string.ui_notification_padding, sliderKey = "notification_padding_dp", sliderMax = 8, sliderDefault = 4),
     SwitchItem("notification_real_app_name_enabled", R.string.ui_notification_real_app_name),
+    SwitchItem("notification_center_monochrome_icons_enabled", R.string.ui_notification_center_monochrome_icons,
+        masterEnableAllowed = false),
     SelectItem(XposedInit.KEY_NOTIFICATION_LAYOUT_STYLE, R.string.ui_notification_layout,
         listOf(R.string.ui_notification_layout_default, R.string.ui_notification_layout_legacy, R.string.ui_notification_layout_relaxed),
         defaultValue = XposedInit.NOTIFICATION_LAYOUT_STYLE_DEFAULT, masterManaged = true, masterEnabledValue = 2),
@@ -310,6 +315,7 @@ private val NAV: List<SettingsItem> = listOf(
     SwitchItem("animation_duration_scale_enabled", R.string.ui_animation_scale, sliderKey = "animation_duration_scale", sliderMax = 20, sliderDefault = 15, sliderUnit = "", sliderUnitRes = R.string.ui_unit_multiplier, sliderDisplayScale = 0.05f, rootBacked = true),
     GroupTitleItem(R.string.ui_gesture_visual),
     SwitchItem(AppNavigationSettings.ENABLED, R.string.ui_app_immersive_navigation, masterManaged = false),
+    NavigationAppsItem(R.string.ui_navigation_apps),
     SwitchItem("gesture_bar_width_enabled", R.string.ui_gesture_bar_width, sliderKey = "gesture_bar_width_dp", sliderMax = 120, sliderDefault = 100, sliderUnit = "dp", sliderMin = 80),
     SwitchItem("gesture_bar_long_press_disable_enabled", R.string.ui_gesture_bar_animation, R.string.ui_gesture_bar_animation_hint),
     GroupTitleItem(R.string.ui_recents_switching),
@@ -346,6 +352,9 @@ private val LOCKSCREEN: List<SettingsItem> = listOf(
 )
 
 private val PURIFICATION: List<SettingsItem> = listOf(
+    GroupTitleItem(R.string.ui_system_settings_group),
+    SwitchItem("sms_list_sender_id_enabled", R.string.ui_sms_list_sender_id),
+    SwitchItem("settings_disabled_module_spacing", R.string.ui_settings_disabled_module_spacing),
     GroupTitleItem(R.string.installer_group),
     SwitchItem(InstallerSettings.RESTORE, R.string.installer_restore_legacy, rootBacked = true, masterManaged = false),
     SwitchItem("installer_disable_virus_scan", R.string.installer_disable_virus_scan),
@@ -465,7 +474,7 @@ private fun SettingsItem.isEnabledInMaster(prefs: SharedPreferences): Boolean = 
     is SwitchItem -> prefs.getBoolean(settingKey, defaultEnabled)
     is FolderBlockItem -> prefs.getBoolean(settingKey, false)
     is SelectItem -> prefs.getInt(key, defaultValue) != 0
-    is GroupTitleItem -> false
+    is GroupTitleItem, is NavigationAppsItem -> false
 }
 
 private val SettingsItem.settingKey: String
@@ -473,7 +482,7 @@ private val SettingsItem.settingKey: String
         is SwitchItem -> key
         is FolderBlockItem -> key
         is SelectItem -> key
-        is GroupTitleItem -> ""
+        is GroupTitleItem, is NavigationAppsItem -> ""
     }
 
 private fun List<SettingsItem>.splitByDivider(): List<SwitchGroup> {
@@ -491,6 +500,7 @@ private fun List<SettingsItem>.splitByDivider(): List<SwitchGroup> {
             is SwitchItem -> current.add(item)
             is FolderBlockItem -> current.add(item)
             is SelectItem -> current.add(item)
+            is NavigationAppsItem -> current.add(item)
         }
     }
     if (current.isNotEmpty()) result.add(SwitchGroup(desc, current))
@@ -813,12 +823,9 @@ private fun CategoryScreen(
                         version = version,
                         overrideValue = overrideValue,
                         onItemChanged = onItemChanged,
+                        onOpenNavigationApps = onOpenNavigationApps,
                         footerContent = if (group.items.any { it is SwitchItem && it.key == "hidden_launcher_apps_enabled" }) {
                             { CouixCategoryRow(null, ctx.getString(R.string.ui_hidden_apps_list), onOpenHiddenApps) }
-                        } else if (group.items.any { it is SwitchItem && it.key == AppNavigationSettings.ENABLED }
-                            && prefs.getBoolean(AppNavigationSettings.ENABLED, false)) {
-                            { CouixCategoryRow(null, ctx.getString(R.string.ui_navigation_apps_count,
-                                AppNavigationSettings.applications(prefs).size), onOpenNavigationApps) }
                         } else null,
                     )
                 }
@@ -1261,6 +1268,7 @@ internal fun Context.settingsPrefs(): SharedPreferences {
     if (de.all.isEmpty() && migrateLegacyPrefs(this, de)) {
         SettingsProvider.notifySettingsChanged(this)
     }
+    SettingsProvider.migrateNotificationIconPrefs(this, de)
     if (!de.contains("statusbar_lyric_mode")
             && (de.contains("statusbar_lyric_enabled") || de.contains("fluid_cloud_lyric_enabled"))) {
         val mode = when {

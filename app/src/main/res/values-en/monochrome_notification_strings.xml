@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="ui_statusbar_monochrome_notification_icons">Monochrome notification icons (beta)</string>
+    <string name="ui_notification_center_monochrome_icons">Monochrome notification center icons</string>
 </resources>

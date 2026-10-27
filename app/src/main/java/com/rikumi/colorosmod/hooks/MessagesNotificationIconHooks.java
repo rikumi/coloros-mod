@@ -18,9 +18,13 @@ import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
 final class MessagesNotificationIconHooks {
+    private static final String KEY = "notification_center_monochrome_icons_enabled";
+    private static final WeakHashMap<ImageView, Boolean> observed = new WeakHashMap<>();
+    static boolean enabled() { return active && readBoolCached(KEY, false); }
+
     private static final WeakHashMap<ImageView, State> views = new WeakHashMap<>();
     private static final WeakHashMap<ImageView, Selection> selections = new WeakHashMap<>();
-    private record Selection(WeakReference<Notification> notification, String key, Icon glyph) { }
+    private record Selection(WeakReference<Notification> notification, String key, Drawable glyph) { }
     private static Class<?> cachingIcon, rowClass;
     private static boolean active = true, failed;
 
@@ -29,9 +33,9 @@ final class MessagesNotificationIconHooks {
         final Drawable replacement;
         final Selection selection;
         Integer tint;
-        State(ImageView view, Icon glyph, Selection selection) {
+        State(ImageView view, Drawable glyph, Selection selection) {
             original = view.getDrawable(); background = view.getBackground();
-            replacement = glyph.loadDrawable(view.getContext()).mutate();
+            replacement = glyph.mutate();
             this.selection = selection;
         }
     }
@@ -39,7 +43,7 @@ final class MessagesNotificationIconHooks {
     static Icon iconFor(StatusBarNotification sbn) {
         if (SystemNotificationGroupHooks.androidSummary(sbn))
             return Icon.createWithResource(MODULE_PACKAGE, R.drawable.ic_android_debug_monochrome);
-        if ("com.android.shell".equals(sbn.getPackageName())
+        if (("com.android.shell".equals(sbn.getPackageName()) || MODULE_PACKAGE.equals(sbn.getPackageName()))
                 && "notification_layout_preview".equals(sbn.getTag()))
             return Icon.createWithResource(MODULE_PACKAGE, R.drawable.ic_test_notification_monochrome);
         return "com.android.mms".equals(sbn.getPackageName())
@@ -54,6 +58,7 @@ final class MessagesNotificationIconHooks {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     ImageView view = (ImageView) p.thisObject;
                     if (!active || !cachingIcon.isInstance(view)) return;
+                    observed.put(view, Boolean.TRUE);
                     update(view);
                 }
             });
@@ -92,30 +97,32 @@ final class MessagesNotificationIconHooks {
                 if (view.getDrawable() != state.replacement) state.original = view.getDrawable();
                 if (view.getBackground() != null) state.background = view.getBackground();
             }
-            boolean standardHeader = readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) != 0;
-            View row = (standardHeader || MonochromeNotificationHooks.enabled() || NotificationAppNameHooks.enabled()) ? notificationRow(view) : null;
+            boolean monochrome = enabled();
+            View row = (monochrome || SystemIconPackHooks.enabled()) ? notificationRow(view) : null;
             if (row == null) {
                 if (state != null) { restore(view, state); views.remove(view); }
                 return;
             }
             Object entry = XposedHelpers.callMethod(row, "getEntry");
             StatusBarNotification sbn = (StatusBarNotification) XposedHelpers.callMethod(entry, "getSbn");
-            if (!standardHeader && !MonochromeNotificationHooks.enabled() && !SystemNotificationGroupHooks.androidSummary(sbn)) {
-                if (state != null) { restore(view, state); views.remove(view); }
-                return;
-            }
             Icon source = SystemNotificationIconMasks.source(sbn);
-            String key = standardHeader + ":" + MonochromeNotificationHooks.enabled() + ':'
-                    + SystemNotificationGroupHooks.androidSummary(sbn) + ':' + sbn.getPackageName() + ':'
+            String key = monochrome + ":" + SystemIconPackHooks.enabled() + ":"
+                    + SystemNotificationGroupHooks.androidSummary(sbn) + ":" + sbn.getPackageName() + ':'
                     + source + ':' + sbn.getNotification().iconLevel + ':'
-                    + view.getResources().getConfiguration().hashCode();
+                    + SystemIconPackHooks.configurationKey(view.getContext());
             Selection selection = selections.get(view);
             if (selection == null || selection.notification().get() != sbn.getNotification()
                     || !selection.key().equals(key)) {
-                Icon glyph = null;
+                Drawable glyph = null;
                 try {
-                    glyph = standardHeader ? MonochromeNotificationHooks.notificationMask(view.getContext(), sbn) : iconFor(sbn);
-                    if (glyph == null && !standardHeader) glyph = SystemNotificationIconMasks.resolve(view.getContext(), sbn, source);
+                    if (monochrome) {
+                        Icon mask = MonochromeNotificationHooks.notificationMask(view.getContext(), sbn);
+                        if (mask != null) glyph = mask.loadDrawable(view.getContext());
+                    } else {
+                        Drawable original = state == null ? view.getDrawable() : state.original;
+                        Drawable icon = SystemIconPackHooks.notificationIcon(view.getContext(), sbn, original);
+                        if (icon != original) glyph = icon;
+                    }
                 } catch (Throwable error) {
                     if (!failed) { failed = true; log("notification panel glyph resolve failed: " + error); }
                 }
@@ -130,6 +137,7 @@ final class MessagesNotificationIconHooks {
             if (state == null) { state = new State(view, selection.glyph(), selection); views.put(view, state); }
             if (view.getDrawable() != state.replacement) view.setImageDrawable(state.replacement);
 
+            if (!monochrome) return;
             if (state.replacement.getColorFilter() != null) state.replacement.clearColorFilter();
             int tint = foregroundColor(row);
             if (state.tint == null || state.tint != tint) {
@@ -153,7 +161,11 @@ final class MessagesNotificationIconHooks {
     static boolean hasReplacement(ImageView view) { return view != null && views.containsKey(view); }
 
     static void refresh() {
-        for (ImageView view : new ArrayList<>(views.keySet())) update(view);
+        for (ImageView view : new ArrayList<>(observed.keySet())) {
+            update(view);
+            view.invalidate();
+        }
+        SystemNotificationGroupIconHooks.refresh();
     }
 
     static void cleanup() {
@@ -161,5 +173,6 @@ final class MessagesNotificationIconHooks {
         for (var entry : views.entrySet()) restore(entry.getKey(), entry.getValue());
         views.clear();
         selections.clear();
+        observed.clear();
     }
 }

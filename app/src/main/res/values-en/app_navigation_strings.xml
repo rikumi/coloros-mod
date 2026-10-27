@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="ui_app_immersive_navigation">Force immersive app navigation bar</string>
-    <string name="ui_navigation_apps">Immersive navigation apps</string>
+    <string name="ui_navigation_apps">Force immersive app list</string>
     <string name="ui_non_system_apps">Non-system apps</string>
     <string name="ui_remove_app">Remove</string>
     <string name="ui_navigation_apps_count">App list (%1$d apps)</string>

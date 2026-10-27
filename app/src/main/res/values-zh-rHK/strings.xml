@@ -2,4 +2,7 @@
 <resources>
     <string name="app_name">ColorOS Mod</string>
     <string name="xposed_description">一個針對 ColorOS 的全方位體驗增強模組，永久免費\n禁止分享、轉載、盜賣以及其他違規用途\n開發者：rikumi</string>
+    <string name="ui_system_settings_group">系統設定</string>
+    <string name="ui_settings_disabled_module_spacing">修復設定已停用模組上下間距</string>
+    <string name="ui_sms_list_sender_id">短訊黑白名單支援境外卡 Sender ID</string>
 </resources>

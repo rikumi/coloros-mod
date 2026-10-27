@@ -999,6 +999,7 @@ internal fun CouixGroup(
     version: Int = 0,
     overrideValue: Boolean? = null,
     onItemChanged: () -> Unit = {},
+    onOpenNavigationApps: () -> Unit = {},
     modifier: Modifier = Modifier,
     footerContent: (@Composable () -> Unit)? = null,
 ) {
@@ -1022,6 +1023,11 @@ internal fun CouixGroup(
                         }
                     }
                     is GroupTitleItem -> Unit
+                    is NavigationAppsItem -> CouixCategoryRow(
+                        icon = null,
+                        title = ctx.getString(item.title),
+                        onClick = onOpenNavigationApps,
+                    )
                 }
             }
         }
@@ -1038,6 +1044,7 @@ private val SettingsItem.keyForCompose: String
         is FolderBlockItem -> key
         is SelectItem -> key
         is GroupTitleItem -> "group:$title"
+        is NavigationAppsItem -> "navigation_apps"
     }
 
 @Composable
@@ -1171,19 +1178,34 @@ private fun CouixDropdownArrow(
 private fun NotificationLayoutTestRow(ctx: Context) {
     val scope = rememberCoroutineScope()
     var sending by remember { mutableStateOf(false) }
+    fun send() {
+        if (sending) return
+        sending = true
+        scope.launch {
+            try {
+                val sent = withContext(Dispatchers.IO) { NotificationLayoutPreview.send(ctx) }
+                if (!sent) android.widget.Toast.makeText(ctx,
+                    R.string.ui_notification_layout_test_failed, android.widget.Toast.LENGTH_SHORT).show()
+            } finally { sending = false }
+        }
+    }
+    val permission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) send()
+        else android.widget.Toast.makeText(ctx,
+            R.string.ui_notification_layout_test_failed, android.widget.Toast.LENGTH_SHORT).show()
+    }
     CouixActionCell(
         title = androidx.compose.ui.res.stringResource(R.string.ui_send_test_notification),
         modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
         onClick = {
             if (!sending) {
-                sending = true
-                scope.launch {
-                    try {
-                        val sent = withContext(Dispatchers.IO) { NotificationLayoutPreview.sendIfAbsent(ctx) }
-                        if (!sent) android.widget.Toast.makeText(ctx,
-                            R.string.ui_notification_layout_test_failed, android.widget.Toast.LENGTH_SHORT).show()
-                    } finally { sending = false }
-                }
+                if (android.os.Build.VERSION.SDK_INT >= 33
+                    && ctx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    permission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                } else send()
             }
         },
     )

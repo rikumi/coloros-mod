@@ -240,8 +240,8 @@ public final class MonochromeNotificationHooks {
     public static void refresh() {
         MAIN.post(() -> {
             if (!active) return;
-            boolean enabled = readBool(KEY, false);
             MessagesNotificationIconHooks.refresh();
+            boolean enabled = readBool(KEY, false);
             if (enabled == lastEnabled) { MonochromeIconTintHooks.refresh(); return; }
             lastEnabled = enabled;
             replay(enabled);

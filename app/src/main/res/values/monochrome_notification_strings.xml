@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="ui_statusbar_monochrome_notification_icons">单色通知图标（试验性）</string>
+    <string name="ui_notification_center_monochrome_icons">通知中心单色图标</string>
 </resources>
