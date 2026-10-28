@@ -34,6 +34,8 @@ namespace_candidate() {
     uid=$(awk '$1 == "Uid:" { print $2; exit }' "/proc/$1/status" 2>/dev/null)
     case "$uid" in ''|0) return 1;; *) return 0;; esac
 }
+namespace_id() { readlink "/proc/$1/ns/mnt" 2>/dev/null | tr -cd '0-9'; }
+namespace_matches() { [ -n "$2" ] && [ "$(namespace_id "$1")" = "$2" ]; }
 # XML markers identify inherited mounts even when the namespace ID changes after Zygote restarts.
 current_version() { sed -n 's/.*<!-- coloros-mod-fonts:\([0-9a-f]*\) -->.*/\1/p' /system/etc/fonts.xml; }
 mounted_here() { awk -v target="$1" '$5 == target { found=1 } END { exit !found }' /proc/self/mountinfo; }
@@ -64,6 +66,12 @@ cleanup_legacy() {
 
 if [ "${1:-}" = worker ]; then
     action=$2; version=$3
+    # Check inside nsenter too: an app can unshare between the parent's check and entry.
+    expected_namespace=${4:-}
+    if [ -n "$expected_namespace" ] && ! namespace_matches self "$expected_namespace"; then
+        echo 'coloros-mod fonts: process namespace changed before worker entry' >&2
+        exit 75
+    fi
     cleanup_legacy
     if [ "$action" = prepare ]; then
         valid_version "$version" || fail 'invalid snapshot'
@@ -245,28 +253,34 @@ for pid in 1 $(pidof zygote zygote64 webview_zygote chrome_zygote 2>/dev/null ||
 ); do
     [ -r "/proc/$pid/ns/mnt" ] || continue
     namespace_candidate "$pid" || continue
-    ns=$(readlink "/proc/$pid/ns/mnt" | tr -cd '0-9')
+    ns=$(namespace_id "$pid")
+    [ -n "$ns" ] || continue
     case "$seen" in *" $ns "*) continue;; esac
-    seen="$seen$ns "
-    old=$(sed -n 's/.*<!-- coloros-mod-fonts:\([0-9a-f]*\) -->.*/\1/p' "/proc/$pid/root/system/etc/fonts.xml")
+    if ! old=$(sed -n 's/.*<!-- coloros-mod-fonts:\([0-9a-f]*\) -->.*/\1/p' "/proc/$pid/root/system/etc/fonts.xml" 2>/dev/null); then
+        namespace_matches "$pid" "$ns" || continue
+        fail "cannot read font XML: pid=$pid ns=$ns"
+    fi
+    namespace_matches "$pid" "$ns" || continue
     [ -z "$old" ] || valid_version "$old" || fail 'unrecognized inherited XML'
-    printf '%s\t%s\n' "$pid" "$old" >> "$BASE/transaction"
+    # Mark seen only after a stable read, allowing another process in the same namespace to represent it.
+    seen="$seen$ns "
+    printf '%s\t%s\t%s\n' "$pid" "$ns" "$old" >> "$BASE/transaction"
 done
 okay=1
-while IFS="$TAB" read -r pid old; do
-    [ -d "/proc/$pid" ] || continue
-    if ! in_namespace "$pid" worker apply "$version"; then
-        [ -d "/proc/$pid" ] || continue
+while IFS="$TAB" read -r pid ns old; do
+    namespace_matches "$pid" "$ns" || continue
+    if ! in_namespace "$pid" worker apply "$version" "$ns"; then
+        namespace_matches "$pid" "$ns" || continue
         echo "coloros-mod fonts: failed namespace pid=$pid" >&2
         okay=0; break
     fi
 done < "$BASE/transaction"
 if [ "$okay" != 1 ]; then
     rollback=1
-    while IFS="$TAB" read -r pid old; do
-        [ -d "/proc/$pid" ] || continue
-        if ! in_namespace "$pid" worker apply "${old:-}"; then
-            [ -d "/proc/$pid" ] || continue
+    while IFS="$TAB" read -r pid ns old; do
+        namespace_matches "$pid" "$ns" || continue
+        if ! in_namespace "$pid" worker apply "${old:-}" "$ns"; then
+            namespace_matches "$pid" "$ns" || continue
             rollback=0
         fi
     done < "$BASE/transaction"

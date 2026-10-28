@@ -84,8 +84,7 @@ internal object SystemFontMounts {
             val installer = backendInstaller(app, script)
             check(prefs.edit().putBoolean(REQUESTED, true).commit())
             val command = installBackend(installer) +
-                "(/system/bin/sh $ROOT/backend.sh apply ${quote(input.absolutePath)} $version " +
-                ">$ROOT/last-apply.log 2>&1); result=${'$'}?; cat $ROOT/last-apply.log; exit ${'$'}result"
+                "(" + loggedWorker("/system/bin/sh $ROOT/backend.sh apply ${quote(input.absolutePath)} $version", "apply") + ")"
             execute(command, 90)
             check(prefs.edit().putBoolean(CONFIGURED, true).commit())
         }.onFailure {
@@ -108,7 +107,7 @@ internal object SystemFontMounts {
             }
             // The detached, root-owned worker can finish even after the broadcast receiver exits.
             execute(installBackend(backendInstaller(context)) +
-                "(/system/bin/sh $ROOT/backend.sh resume >$ROOT/last-boot.log 2>&1 </dev/null &)", 7)
+                "( (" + loggedWorker("/system/bin/sh $ROOT/backend.sh resume", "boot") + ") >/dev/null 2>&1 </dev/null &)", 7)
         }.onFailure { AppLog.log("WebView font mount recovery failed: $it") }
     }
 
@@ -133,6 +132,14 @@ internal object SystemFontMounts {
         "umask 077; mkdir -p $ROOT && chmod 0700 $ROOT && " +
         "cp ${quote(installer.absolutePath)} $ROOT/backend.new.${'$'}${'$'} && " +
         "chmod 0700 $ROOT/backend.new.${'$'}${'$'} && mv $ROOT/backend.new.${'$'}${'$'} $ROOT/backend.sh && "
+
+    // Per-process output avoids concurrent boot/apply shells truncating each other's logs
+    // before the backend acquires its lock. Preserve the last failure across later successes.
+    private fun loggedWorker(command: String, kind: String) =
+        "log=$ROOT/$kind.${'$'}${'$'}.log; ($command) >\"${'$'}log\" 2>&1; result=${'$'}?; " +
+        "cp \"${'$'}log\" $ROOT/last-$kind.log; " +
+        "if [ \"${'$'}result\" != 0 ]; then cp \"${'$'}log\" $ROOT/last-failure.log; fi; " +
+        "cat \"${'$'}log\"; rm -f \"${'$'}log\"; exit ${'$'}result"
 
     private fun remote(service: XposedService, name: String): ByteArray {
         require(name.matches(Regex("native(map|font|cfg)_[0-9a-f]{64}\\.(txt|font|xml)")))
