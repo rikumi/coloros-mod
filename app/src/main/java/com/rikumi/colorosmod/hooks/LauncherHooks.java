@@ -675,6 +675,7 @@ public final class LauncherHooks {
     }
 
     public static void cleanupForHotReload() {
+        LauncherIconClarityHooks.cleanup();
         DrawerInstallTimeHooks.cleanupForHotReload();
         sLastPowerSaveTaskLockEnabled = null;
         new android.os.Handler(android.os.Looper.getMainLooper()).removeCallbacksAndMessages(sPowerSaveTaskLockToken);
@@ -903,6 +904,8 @@ public final class LauncherHooks {
 
     public static void hookLauncher(final XC_LoadPackage.LoadPackageParam lpparam) {
         log(">>> matched launcher, classLoader=" + lpparam.classLoader);
+        try { LauncherIconClarityHooks.hook(lpparam); }
+        catch (Throwable error) { log("launcher icon clarity unavailable: " + error); }
         sLauncherClassLoader = lpparam.classLoader;
         try {
 

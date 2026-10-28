@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="ui_icon_pack">图标包</string>
     <string name="ui_system_application_icon_pack">系统级应用图标包图标</string>
+    <string name="ui_launcher_icon_pack_clarity">修复桌面图标包清晰度</string>
 </resources>

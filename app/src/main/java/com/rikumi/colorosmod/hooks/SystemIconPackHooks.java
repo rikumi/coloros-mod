@@ -1,6 +1,7 @@
 package com.rikumi.colorosmod.hooks;
 
 import static com.rikumi.colorosmod.XposedInit.*;
+import android.app.Application;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
@@ -28,7 +29,12 @@ public final class SystemIconPackHooks {
     private static final LruCache<String, Cached> cache = new LruCache<>(8 * 1024 * 1024) {
         @Override protected int sizeOf(String key, Cached value) { return value.size(); }
     };
-    static boolean enabled() { return active && readBoolCached(KEY, false); }
+    private static boolean launcherProcess() {
+        String process = Application.getProcessName();
+        return "com.android.launcher".equals(process)
+                || (process != null && process.startsWith("com.android.launcher:"));
+    }
+    static boolean enabled() { return active && !launcherProcess() && readBoolCached(KEY, false); }
     private static boolean eligible() { return enabled() && depth.get() == 0; }
 
     public static void hook(ClassLoader loader) {
@@ -36,7 +42,7 @@ public final class SystemIconPackHooks {
         catch (Throwable error) { log("system icon hooks unavailable: " + error); }
     }
     private static void installHooks(ClassLoader loader) {
-        if (installed) return;
+        if (installed || launcherProcess()) return;
         uxManager = XposedHelpers.findClassIfExists("android.app.UxIconPackageManagerExt", loader);
         Class<?> helper = XposedHelpers.findClassIfExists("android.app.OplusUXIconLoadHelper", loader);
         if (uxManager == null || helper == null) return;

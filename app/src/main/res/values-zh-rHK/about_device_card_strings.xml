@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_about_device_card">替換關於本機卡片</string>
+    <string name="ui_about_card_default">不修改</string>
+</resources>

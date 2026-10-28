@@ -27,6 +27,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
+import com.rikumi.colorosmod.hooks.AboutCardStyleResolver
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -80,7 +85,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
@@ -118,7 +122,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.abs
-import kotlin.math.ln
 import kotlin.math.roundToInt
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardColors
@@ -141,24 +144,8 @@ private val COUIX_SLIDER_TRACK_H = 20.dp
 private val COUIX_SLIDER_GAP = 3.dp
 private val COUIX_SLIDER_THUMB_R = 10.dp
 
-// 首页顶部机型横幅: 作为第一张 group 卡片的内容, 底色与渐变中心色随明暗主题取不同值。
+// 首页机型横幅与关于本机卡片共享原厂背景素材。
 private val COUIX_HEADER_HEIGHT = 200.dp
-private val COUIX_HEADER_BASE_DARK = Color(0xFF34383B)
-private val COUIX_HEADER_GLOW_DARK = Color(0xFFB17666)
-private val COUIX_HEADER_BASE_LIGHT = Color(0xFFDDE2E8)
-private val COUIX_HEADER_GLOW_LIGHT = Color(0xFFDD7963)
-private const val COUIX_HEADER_GLOW_RADIUS_RATIO = 0.7f
-// 渐变圆心在横幅底边之下(>1 表示沉到底边外), 使可见范围内只剩光晕上部, 越往上越淡。
-private const val COUIX_HEADER_GLOW_CENTER_Y_RATIO = 1f
-
-private const val COUIX_HEADER_GLOW_RY_RATIO = 0.85f
-
-private const val COUIX_HEADER_CORE_RADIUS_RATIO = 8f
-private const val COUIX_HEADER_CORE_RY_RATIO = 0.34f
-private const val COUIX_HEADER_CORE_ALPHA = 0.5f
-
-private const val COUIX_HEADER_GLOW_LOG_K = 12f
-private const val COUIX_HEADER_GLOW_STOP_COUNT = 32
 // 横幅内系统名: 相对文字色的不透明度, 以及贴底时离底边的距离。
 private const val COUIX_HEADER_SYSTEM_ALPHA = 0.9f
 private val COUIX_HEADER_SYSTEM_BOTTOM = 24.dp
@@ -634,32 +621,21 @@ internal fun CouixCategoryRow(
     }
 }
 
-private fun glowStops(color: Color, alpha: Float): Array<Pair<Float, Color>> {
-    val k = COUIX_HEADER_GLOW_LOG_K.toDouble()
-    val denom = ln(1.0 + k)
-    return Array(COUIX_HEADER_GLOW_STOP_COUNT + 1) { i ->
-        val t = i.toFloat() / COUIX_HEADER_GLOW_STOP_COUNT
-        val falloff = (1.0 - ln(1.0 + k * t) / denom).toFloat()
-        t to color.copy(alpha = alpha * falloff)
-    }
-}
-
 @Composable
 internal fun CouixDeviceHeader(
+    backgroundStyle: Int,
     model: String,
     system: String?,
     modifier: Modifier = Modifier,
     shape: Shape = RoundedCornerShape(COUIX_CARD_CORNER),
 ) {
-    // miuix 未直接暴露当前明暗, 用系统配置判定(主题为 ColorSchemeMode.System, 两者一致)。
     val light = !isSystemInDarkTheme()
-    val baseColor = if (light) COUIX_HEADER_BASE_LIGHT else COUIX_HEADER_BASE_DARK
-    val glowColor = if (light) COUIX_HEADER_GLOW_LIGHT else COUIX_HEADER_GLOW_DARK
-    // 亮底上白字不可读, 故文字色跟着主题走: 暗底用纯白, 亮底用 onSurface。
-    val textColor = if (light) MiuixTheme.colorScheme.onSurface else Color.White
-    // 两层光晕共用同一条 log 衰减曲线, 只有整体 alpha 不同; 按颜色缓存避免每次重组重算。
-    val outerStops = remember(glowColor) { glowStops(glowColor, 1f) }
-    val coreStops = remember(glowColor) { glowStops(glowColor, COUIX_HEADER_CORE_ALPHA) }
+    val textColor = if (backgroundStyle == 5 && light) Color.Black else Color.White
+    val configuration = LocalConfiguration.current
+    val background = AboutCardStyleResolver.backgroundResource(
+        backgroundStyle,
+        configuration.smallestScreenWidthDp >= 600 && configuration.orientation == 2,
+    )
 
     val view = LocalView.current
     val scope = rememberCoroutineScope()
@@ -690,44 +666,14 @@ internal fun CouixDeviceHeader(
             .fillMaxWidth()
             .height(COUIX_HEADER_HEIGHT)
             .clip(shape)
-            .then(longPressModifier)
-            .drawBehind {
-                drawRect(color = baseColor)
-                val cx = size.width / 2f
-                val cy = size.height * COUIX_HEADER_GLOW_CENTER_Y_RATIO
-
-                fun drawGlowEllipse(
-                    radiusX: Float,
-                    radiusY: Float,
-                    stops: Array<Pair<Float, Color>>,
-                ) {
-                    val k = radiusY / radiusX
-                    scale(scaleX = 1f, scaleY = k, pivot = Offset(cx, cy)) {
-                        val top = cy + (0f - cy) / k
-                        val bottom = cy + (size.height - cy) / k
-                        drawRect(
-                            brush = Brush.radialGradient(
-                                colorStops = stops,
-                                center = Offset(cx, cy),
-                                radius = radiusX,
-                            ),
-                            topLeft = Offset(0f, top),
-                            size = Size(size.width, bottom - top),
-                        )
-                    }
-                }
-                drawGlowEllipse(
-                    radiusX = size.width * COUIX_HEADER_GLOW_RADIUS_RATIO,
-                    radiusY = size.height * COUIX_HEADER_GLOW_RY_RATIO,
-                    stops = outerStops,
-                )
-                drawGlowEllipse(
-                    radiusX = size.width * COUIX_HEADER_CORE_RADIUS_RATIO,
-                    radiusY = size.height * COUIX_HEADER_CORE_RY_RATIO,
-                    stops = coreStops,
-                )
-            },
+            .then(longPressModifier),
     ) {
+        Image(
+            painter = painterResource(background),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.matchParentSize(),
+        )
         // 设备名在横幅正中, 再上移 COUIX_HEADER_MODEL_LIFT。
         Box(
             modifier = Modifier
@@ -1220,7 +1166,9 @@ private fun CouixSelectRow(
     onItemChanged: () -> Unit = {},
 ) {
     var selected by remember(item.key, version) {
-        mutableStateOf(prefs.getInt(item.key, item.defaultValue).coerceIn(0, item.options.lastIndex))
+        val stored = prefs.getInt(item.key, item.defaultValue)
+        mutableStateOf(item.optionValues?.indexOf(stored)?.takeIf { it >= 0 }
+            ?: if (item.optionValues == null) stored.coerceIn(0, item.options.lastIndex) else 0)
     }
     val scope = rememberCoroutineScope()
     var importing by remember { mutableStateOf(false) }
@@ -1339,7 +1287,7 @@ private fun CouixSelectRow(
                                 }
                             } else if (index != selected) {
                                 selected = index
-                                setInt(ctx, item.key, index)
+                                setInt(ctx, item.key, item.optionValues?.get(index) ?: index)
                                 onItemChanged()
 
                             }

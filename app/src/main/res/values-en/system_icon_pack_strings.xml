@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="ui_icon_pack">Icon pack</string>
     <string name="ui_system_application_icon_pack">System-wide themed app icons</string>
+    <string name="ui_launcher_icon_pack_clarity">Improve launcher icon pack clarity</string>
 </resources>

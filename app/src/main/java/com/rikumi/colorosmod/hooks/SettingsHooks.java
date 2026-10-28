@@ -41,12 +41,14 @@ public final class SettingsHooks {
 
     public static void onSettingsSnapshotPublished() {
         SettingsSpacingHooks.onSettingsSnapshotPublished();
+        AboutDeviceCardHooks.onSettingsSnapshotPublished();
         HOME_HANDLER.removeCallbacks(REFRESH_HOME);
         HOME_HANDLER.post(REFRESH_HOME);
     }
 
     public static void cleanupForHotReload() {
         SettingsSpacingHooks.cleanupForHotReload();
+        AboutDeviceCardHooks.cleanupForHotReload();
         HOME_HANDLER.removeCallbacks(REFRESH_HOME);
         // 旧 generation 卸载时恢复页面现有图标，避免遗留模块样式。
         Object screen = sHomeScreen.get();
@@ -170,6 +172,7 @@ public final class SettingsHooks {
     public static void hookSettings(final XC_LoadPackage.LoadPackageParam lpparam) {
         log(">>> matched com.android.settings");
         SettingsSpacingHooks.hook(lpparam);
+        AboutDeviceCardHooks.hook(lpparam);
         hookSettingsHomeIconStyle(lpparam);
         hookDisableAppsNoVerify(lpparam);
         hookHideDisabledApps(lpparam);

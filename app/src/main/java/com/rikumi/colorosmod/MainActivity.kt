@@ -1,5 +1,6 @@
 package com.rikumi.colorosmod
 
+import com.rikumi.colorosmod.hooks.AboutCardStyleResolver
 import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.toArgb
 import android.content.ComponentName
@@ -199,11 +200,11 @@ internal data class SelectItem(
     val dynamicOptions: ((Context) -> List<String>)? = null,
     val masterManaged: Boolean = false,
     val masterEnabledValue: Int = 1,
+    val optionValues: List<Int>? = null,
 ) : SettingsItem
 
 private val DESKTOP: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_desktop_layout),
-    SwitchItem("system_application_icon_pack", R.string.ui_system_application_icon_pack),
     SwitchItem("icon_gap_enabled", R.string.ui_icon_gap, sliderKey = "icon_gap_dp", sliderMax = 8, sliderDefault = 4),
     SwitchItem("drawer_columns_enabled", R.string.ui_drawer_columns),
     SwitchItem("drawer_install_time_sort_enabled", R.string.ui_drawer_install_time_sort),
@@ -212,6 +213,9 @@ private val DESKTOP: List<SettingsItem> = listOf(
     SwitchItem("edit_mode_bg_transparent_enabled", R.string.ui_edit_mode_bg),
     SwitchItem("weaken_desktop_customization_bg_enabled", R.string.ui_weaken_desktop_bg),
     SwitchItem("hide_launcher_update_dot_enabled", R.string.ui_hide_launcher_update_dot),
+    GroupTitleItem(R.string.ui_icon_pack),
+    SwitchItem("system_application_icon_pack", R.string.ui_system_application_icon_pack),
+    SwitchItem("launcher_icon_pack_clarity_enabled", R.string.ui_launcher_icon_pack_clarity),
     GroupTitleItem(R.string.ui_long_press_menu),
     SwitchItem("disable_launcher_secondary_menu_enabled", R.string.ui_disable_secondary_menu),
     SwitchItem("shrink_popup_menu", R.string.ui_shrink_popup, sliderKey = "popup_scale_percent", sliderMax = 20, sliderDefault = 10, sliderUnit = "%"),
@@ -353,6 +357,10 @@ private val LOCKSCREEN: List<SettingsItem> = listOf(
 
 private val PURIFICATION: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_system_settings_group),
+    SelectItem("about_device_card_style", R.string.ui_about_device_card,
+        listOf(R.string.ui_about_card_default, R.string.ui_about_card_coloros17, R.string.ui_about_card_coloros161, R.string.ui_about_card_coloros16, R.string.ui_about_card_coloros15,
+            R.string.ui_about_card_oxygenos, R.string.ui_about_card_oxygenos15, R.string.ui_about_card_realme16, R.string.ui_about_card_realme15, R.string.ui_about_card_mod),
+        optionValues = listOf(0, 9, 6, 1, 2, 3, 5, 8, 7, 4)),
     SwitchItem("sms_list_sender_id_enabled", R.string.ui_sms_list_sender_id),
     SwitchItem("settings_disabled_module_spacing", R.string.ui_settings_disabled_module_spacing),
     GroupTitleItem(R.string.installer_group),
@@ -626,6 +634,7 @@ fun SettingsScreen(resumeRequest: Int = 0) {
                 CATEGORIES.any { c -> c.items.masterItems.any { it.isEnabledInMaster(prefs) } }
             }
             HomeScreen(
+                cardStyle = prefs.getInt("about_device_card_style", 0),
                 missingScopes = missingScopes,
                 masterChecked = masterOverride.valueFor(null) ?: anyEnabled,
                 onMasterChange = { onMasterChange(null, it) },
@@ -653,6 +662,7 @@ fun SettingsScreen(resumeRequest: Int = 0) {
 
 @Composable
 private fun HomeScreen(
+    cardStyle: Int,
     missingScopes: Boolean,
     masterChecked: Boolean,
     onMasterChange: (Boolean) -> Unit,
@@ -664,9 +674,24 @@ private fun HomeScreen(
     val overscrollOffset = remember { mutableFloatStateOf(0f) }
     // 系统名要读 getprop(root shell), 不能阻塞首帧: 先空着, IO 线程取到后再补上。
     var system by remember { mutableStateOf<String?>(null) }
+    var automaticCardStyle by remember { mutableStateOf(1) }
     LaunchedEffect(Unit) {
-        system = withContext(Dispatchers.IO) { systemLabel() }
+        withContext(Dispatchers.IO) {
+            val properties = runRoot("getprop").orEmpty().lineSequence().mapNotNull { line ->
+                val match = Regex("^\\[([^]]+)]: \\[(.*)]$").matchEntire(line)
+                match?.let { it.groupValues[1] to it.groupValues[2] }
+            }.toMap()
+            automaticCardStyle = AboutCardStyleResolver.resolve(
+                properties["ro.oplus.image.system_ext.area"],
+                properties["ro.oplus.image.system_ext.brand"],
+                properties["ro.build.version.ota"],
+                properties["ro.build.version.oplusrom.display"],
+                properties["ro.build.version.oplusrom"], Build.DISPLAY,
+            )
+            system = systemLabel()
+        }
     }
+    val headerStyle = if (cardStyle in listOf(1, 2, 3, 5, 6, 7, 8, 9)) cardStyle else automaticCardStyle
     Scaffold(
         topBar = {
             CouixLargeTitle(
@@ -696,6 +721,7 @@ private fun HomeScreen(
                     // 机型横幅作为第一张卡片的首项, 只裁顶部两角(下方与开关行相接)。
                     aboveContent = {
                         CouixDeviceHeader(
+                            backgroundStyle = headerStyle,
                             model = deviceName(ctx),
                             system = system,
                             shape = RoundedCornerShape(

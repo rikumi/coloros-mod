@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- OxygenOS 15 artwork and typography in a foreground that fills the common card. -->
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:layout_alignParentTop="true" android:tag="colorosmod:aboutcard:lin_center">
+    <ImageView android:id="@+id/about_card15_phone_brand" android:layout_width="wrap_content"
+        android:layout_height="wrap_content" android:layout_marginTop="35dp"
+        android:layout_marginStart="20dp" android:layout_centerHorizontal="true"
+        android:src="@drawable/about_card_phone_oppo" android:scaleType="fitXY" />
+    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_below="@id/about_card15_phone_brand" android:layout_marginTop="20dp"
+        android:layout_centerHorizontal="true" android:orientation="vertical">
+        <TextView android:tag="colorosmod:aboutcard:device_market_name"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_marginStart="30dp" android:layout_marginEnd="30dp"
+            android:layout_gravity="center" android:gravity="center" android:maxLines="2"
+            android:ellipsize="end" android:textSize="34dp" android:fontFamily="sans-serif-semibold"
+            android:textColor="@color/about_card15_text_color" />
+    </LinearLayout>
+    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true" android:layout_marginBottom="30dp"
+        android:layout_centerHorizontal="true" android:gravity="center"
+        android:paddingStart="14dp" android:paddingEnd="14dp" android:orientation="horizontal">
+        <ImageView android:tag="colorosmod:aboutcard:coloros_logo" android:layout_gravity="center_vertical"
+            android:layout_width="74dp" android:layout_height="17dp" android:src="@drawable/about_card_logo_oxygenos15" />
+        <TextView android:tag="colorosmod:aboutcard:model_build_number"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_marginStart="3dp" android:layout_marginEnd="4dp" android:paddingBottom="1.5dp"
+            android:layout_gravity="center_vertical" android:textSize="14dp" android:textStyle="bold"
+            android:textColor="@color/about_card15_text_color" />
+        <TextView android:tag="colorosmod:aboutcard:update_find"
+            android:layout_width="wrap_content" android:layout_height="18dp"
+            android:layout_gravity="center_vertical" android:gravity="center"
+            android:textSize="8dp" android:textStyle="bold" android:fontFamily="sans-serif-semibold"
+            android:paddingStart="8dp" android:paddingEnd="8dp" android:visibility="gone"
+            android:background="@drawable/about_card15_update_chip" android:textColor="@color/about_card15_text_color" />
+    </LinearLayout>
+</RelativeLayout>

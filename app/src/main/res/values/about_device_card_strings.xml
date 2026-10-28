@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_about_device_card">替换关于本机卡片</string>
+    <string name="ui_about_card_default">不修改</string>
+    <string name="ui_about_card_coloros17" translatable="false">ColorOS 17</string>
+    <string name="ui_about_card_coloros161" translatable="false">ColorOS 16.1</string>
+    <string name="ui_about_card_coloros16" translatable="false">ColorOS 16</string>
+    <string name="ui_about_card_coloros15" translatable="false">ColorOS 15</string>
+    <string name="ui_about_card_oxygenos" translatable="false">OxygenOS 16</string>
+    <string name="ui_about_card_oxygenos15" translatable="false">OxygenOS 15</string>
+    <string name="ui_about_card_realme16" translatable="false">realmeUI 7</string>
+    <string name="ui_about_card_realme15" translatable="false">realmeUI 6</string>
+    <string name="ui_about_card_mod" translatable="false">ColorOS Mod</string>
+</resources>

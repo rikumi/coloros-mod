@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector android:height="26.0dp" android:width="26.0dp" android:viewportWidth="26.0" android:viewportHeight="26.0"
+  xmlns:android="http://schemas.android.com/apk/res/android">
+    <group>
+        <clip-path android:pathData="M0,0h26v26h-26z" />
+        <path android:fillColor="@color/about_card15_logo_color" android:pathData="M0,4.066V26.025H21.956H21.959V13.487H19.519V23.585H2.44V6.506H12.538V4.066H0Z" />
+        <path android:fillColor="@color/about_card15_logo_color" android:pathData="M19.519,0V4.066H15.453V6.506H19.519V10.572H21.959V6.506H26.025V4.066H21.959V0H19.519Z" />
+        <path android:fillColor="@color/about_card15_logo_color" android:pathData="M12.538,20.332V9.623H10.369C10.369,10.361 10.12,10.915 9.744,11.246C9.351,11.575 8.755,11.723 8.065,11.723H7.794V13.486H10.098V20.33H12.538V20.332Z" />
+    </group>
+</vector>

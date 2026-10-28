@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- COUI 17 Translate button: #33ffffff, automatic half-height round radius. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="#33ffffff" />
+    <corners android:radius="20dp" />
+</shape>
