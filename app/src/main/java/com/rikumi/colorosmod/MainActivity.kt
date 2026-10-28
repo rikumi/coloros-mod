@@ -115,7 +115,7 @@ class MainActivity : ComponentActivity() {
                     val context = applicationContext
                     Thread {
                         runCatching { SystemFontStore.sync(context, service) }
-                            .onFailure { XposedInit.log("font settings sync failed: $it") }
+                            .onFailure { AppLog.log("font settings sync failed: $it") }
                     }.start()
                     scopeObservers.forEach { it.run() }
                 }
@@ -201,6 +201,7 @@ internal data class SelectItem(
     val masterManaged: Boolean = false,
     val masterEnabledValue: Int = 1,
     val optionValues: List<Int>? = null,
+    val subtitle: Int? = null,
 ) : SettingsItem
 
 private val DESKTOP: List<SettingsItem> = listOf(
@@ -360,8 +361,9 @@ private val PURIFICATION: List<SettingsItem> = listOf(
     SelectItem("about_device_card_style", R.string.ui_about_device_card,
         listOf(R.string.ui_about_card_default, R.string.ui_about_card_coloros17, R.string.ui_about_card_coloros161, R.string.ui_about_card_coloros16, R.string.ui_about_card_coloros15,
             R.string.ui_about_card_oxygenos, R.string.ui_about_card_oxygenos15, R.string.ui_about_card_realme16, R.string.ui_about_card_realme15, R.string.ui_about_card_mod),
-        optionValues = listOf(0, 9, 6, 1, 2, 3, 5, 8, 7, 4)),
-    SwitchItem("sms_list_sender_id_enabled", R.string.ui_sms_list_sender_id),
+        optionValues = listOf(0, 9, 6, 1, 2, 3, 5, 8, 7, 4),
+        subtitle = R.string.ui_about_device_card_hint),
+    SwitchItem("about_device_hide_marketing_enabled", R.string.ui_about_device_hide_marketing),
     SwitchItem("settings_disabled_module_spacing", R.string.ui_settings_disabled_module_spacing),
     GroupTitleItem(R.string.installer_group),
     SwitchItem(InstallerSettings.RESTORE, R.string.installer_restore_legacy, rootBacked = true, masterManaged = false),
@@ -410,7 +412,10 @@ private val PURIFICATION: List<SettingsItem> = listOf(
 private val SYSTEM_FONTS: List<SettingsItem> = listOf(
     SelectItem("system_font_zh", R.string.ui_system_font_zh, listOf(R.string.ui_font_default, R.string.ui_font_source_han, R.string.ui_font_custom)),
     SelectItem("system_font_latin", R.string.ui_system_font_latin, listOf(R.string.ui_font_default, R.string.ui_font_inter, R.string.ui_font_manrope, R.string.ui_font_custom)),
-    SelectItem("system_font_mono", R.string.ui_system_font_mono, listOf(R.string.ui_font_maple, R.string.ui_font_jetbrains, R.string.ui_font_fira, R.string.ui_font_cascadia, R.string.ui_font_custom)),
+    SelectItem("system_font_mono", R.string.ui_system_font_mono, listOf(R.string.ui_font_default, R.string.ui_font_maple, R.string.ui_font_jetbrains, R.string.ui_font_fira, R.string.ui_font_cascadia, R.string.ui_font_custom), defaultValue = -1, optionValues = listOf(-1, 0, 1, 2, 3, 4)),
+    SelectItem("system_font_emoji", R.string.ui_system_font_emoji, listOf(R.string.ui_font_default, R.string.ui_font_emoji_apple, R.string.ui_font_emoji_joypixels, R.string.ui_font_emoji_twitter, R.string.ui_font_emoji_samsung)),
+    SwitchItem("system_font_disable_replacement", R.string.ui_system_font_disable_replacement, subtitle = R.string.ui_system_font_disable_replacement_hint),
+    SwitchItem("system_font_mount_enabled", R.string.ui_system_font_mount_enabled, subtitle = R.string.ui_system_font_mount_hint, masterManaged = false),
 )
 
 private val STORAGE: List<SettingsItem> = listOf(
@@ -672,26 +677,25 @@ private fun HomeScreen(
     val listState = rememberLazyListState()
     // 回弹位移: 共享给标题栏分割线, 让不可滚动页面上滑回弹时分割线也出现。
     val overscrollOffset = remember { mutableFloatStateOf(0f) }
-    // 系统名要读 getprop(root shell), 不能阻塞首帧: 先空着, IO 线程取到后再补上。
-    var system by remember { mutableStateOf<String?>(null) }
-    var automaticCardStyle by remember { mutableStateOf(1) }
+    // 系统信息与背景样式一起发布，避免先显示占位背景再切换。
+    var headerInfo by remember { mutableStateOf<Pair<Int, String?>?>(null) }
     LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
+        headerInfo = withContext(Dispatchers.IO) {
             val properties = runRoot("getprop").orEmpty().lineSequence().mapNotNull { line ->
                 val match = Regex("^\\[([^]]+)]: \\[(.*)]$").matchEntire(line)
                 match?.let { it.groupValues[1] to it.groupValues[2] }
             }.toMap()
-            automaticCardStyle = AboutCardStyleResolver.resolve(
+            val resolvedStyle = AboutCardStyleResolver.resolve(
                 properties["ro.oplus.image.system_ext.area"],
                 properties["ro.oplus.image.system_ext.brand"],
                 properties["ro.build.version.ota"],
                 properties["ro.build.version.oplusrom.display"],
                 properties["ro.build.version.oplusrom"], Build.DISPLAY,
             )
-            system = systemLabel()
+            resolvedStyle to systemLabel()
         }
     }
-    val headerStyle = if (cardStyle in listOf(1, 2, 3, 5, 6, 7, 8, 9)) cardStyle else automaticCardStyle
+    val headerStyle = if (cardStyle in listOf(1, 2, 3, 5, 6, 7, 8, 9)) cardStyle else headerInfo?.first
     Scaffold(
         topBar = {
             CouixLargeTitle(
@@ -723,7 +727,8 @@ private fun HomeScreen(
                         CouixDeviceHeader(
                             backgroundStyle = headerStyle,
                             model = deviceName(ctx),
-                            system = system,
+                            system = headerInfo?.second,
+                            contentReady = headerInfo != null,
                             shape = RoundedCornerShape(
                                 topStart = COUIX_CARD_CORNER,
                                 topEnd = COUIX_CARD_CORNER,
@@ -1364,6 +1369,16 @@ internal fun setBool(ctx: Context, key: String, value: Boolean) {
     val editor = prefs.edit().putBoolean(key, value)
     if (key == "qs_merged_hollow" && !value) editor.putBoolean("qs_merged_radiant", false)
     editor.commit()
+    if (key == "system_font_disable_replacement") SystemFontStore.syncReplacementSettings(ctx)
+    if (key == "system_font_mount_enabled") {
+        val context = ctx.applicationContext
+        Thread {
+            if (value) MainActivity.xposedServices.firstOrNull()?.let { service ->
+                runCatching { SystemFontStore.sync(context, service) }
+                    .onFailure { AppLog.log("font mount preference sync failed: $it") }
+            } else SystemFontMounts.resume(context)
+        }.start()
+    }
     if (key == HomeControlsTileSettings.KEY) HomeControlsTileSettings.sync(ctx)
     SettingsProvider.notifySettingsChanged(ctx)
 }

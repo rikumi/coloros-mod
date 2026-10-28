@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="ui_about_device_card">替换关于本机卡片</string>
+    <string name="ui_about_device_card_hint">版本号和品牌始终根据真实信息显示</string>
+    <string name="ui_about_card_latest">已是最新版本</string>
     <string name="ui_about_card_default">不修改</string>
     <string name="ui_about_card_coloros17" translatable="false">ColorOS 17</string>
     <string name="ui_about_card_coloros161" translatable="false">ColorOS 16.1</string>

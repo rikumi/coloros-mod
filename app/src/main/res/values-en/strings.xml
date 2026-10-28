@@ -3,5 +3,4 @@
     <string name="xposed_description">A comprehensive ColorOS enhancement module, free forever\nSharing, reposting, unauthorized resale and other prohibited uses are not allowed\nDeveloper: rikumi</string>
     <string name="ui_system_settings_group">System settings</string>
     <string name="ui_settings_disabled_module_spacing">Fix spacing for disabled Settings modules</string>
-    <string name="ui_sms_list_sender_id">Support international SIM Sender IDs in SMS blocklists and allowlists</string>
 </resources>

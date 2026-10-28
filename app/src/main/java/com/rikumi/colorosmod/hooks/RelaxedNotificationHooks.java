@@ -8,9 +8,6 @@ import android.view.Gravity;
 import android.widget.RelativeLayout;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.graphics.Rect;
-import android.graphics.RectF;
-import android.graphics.Matrix;
 import java.util.WeakHashMap;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
@@ -21,7 +18,6 @@ final class RelaxedNotificationHooks {
     private static final WeakHashMap<View, IconAnchor> anchors = new WeakHashMap<>();
     private static final WeakHashMap<View, java.lang.ref.WeakReference<View>> messageRoots = new WeakHashMap<>();
     private static final WeakHashMap<View, Integer> messageLineStarts = new WeakHashMap<>();
-    private static final WeakHashMap<View, Integer> headsUpLineMargins = new WeakHashMap<>();
     private static final WeakHashMap<ViewGroup, boolean[]> messageClips = new WeakHashMap<>();
     private static final ThreadLocal<Boolean> compactMessage = new ThreadLocal<>();
     private static final ThreadLocal<Boolean> fullReloadNotice = new ThreadLocal<>();
@@ -106,19 +102,16 @@ final class RelaxedNotificationHooks {
             int expanded = (Integer) XposedHelpers.getStaticObjectField(params, "VIEW_TYPE_EXPANDED");
             int headsUp = (Integer) XposedHelpers.getStaticObjectField(params, "VIEW_TYPE_HEADS_UP");
             // The compact heads-up shell places sender and app name on the same line.
-            // Reuse the notification-center messaging shell, keeping its collapsed content.
+            // Reuse the expanded messaging layout so sender avatars remain visible.
             XposedHelpers.findAndHookMethod("android.app.Notification$MessagingStyle", lp.classLoader,
                     "makeCompactHeadsUpContentView", new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             if (!enabled()) return;
                             boolean previous = Boolean.TRUE.equals(compactMessage.get());
-                            compactMessage.set(true);
+                            compactMessage.set(false);
                             try {
                                 Object result = XposedHelpers.callMethod(p.thisObject, "makeMessagingView", expanded);
-                                if (result instanceof android.widget.RemoteViews views) {
-                                    alignHeadsUpText(p.thisObject, views);
-                                    p.setResult(views);
-                                }
+                                if (result instanceof android.widget.RemoteViews) p.setResult(result);
                             } finally {
                                 if (previous) compactMessage.set(true); else compactMessage.remove();
                             }
@@ -130,9 +123,9 @@ final class RelaxedNotificationHooks {
                             if (!enabled()) return;
                             int type = (Integer) p.args[0];
                             if (type != normal && type != headsUp) return;
-                            p.setObjectExtra("relaxedHeadsUpMessage", type == headsUp);
                             p.setObjectExtra("relaxedCompactMessage", Boolean.TRUE.equals(compactMessage.get()));
-                            compactMessage.set(true);
+                            // Only the notification-center contracted view hides avatars.
+                            compactMessage.set(type == normal);
                             p.args[0] = expanded;
                         }
                         @Override protected void afterHookedMethod(MethodHookParam p) {
@@ -140,10 +133,6 @@ final class RelaxedNotificationHooks {
                             if (previous == null) return;
                             if (Boolean.TRUE.equals(previous)) compactMessage.set(true);
                             else compactMessage.remove();
-                            if (Boolean.TRUE.equals(p.getObjectExtra("relaxedHeadsUpMessage"))
-                                    && p.getResult() instanceof android.widget.RemoteViews views) {
-                                alignHeadsUpText(p.thisObject, views);
-                            }
                         }
                     });
             XposedHelpers.findAndHookMethod("android.widget.RemoteViews", lp.classLoader,
@@ -215,23 +204,6 @@ final class RelaxedNotificationHooks {
                         }
                     });
         } catch (Throwable error) { log("relaxed notification hook failed: " + error); }
-    }
-
-    private static void alignHeadsUpText(Object style, android.widget.RemoteViews views) {
-        Object builder = XposedHelpers.getObjectField(style, "mBuilder");
-        android.content.Context context = (android.content.Context) XposedHelpers.getObjectField(builder, "mContext");
-        // The expanded messaging group keeps an 80dp message-icon column even when
-        // collapsed mode hides the avatar. Offset that column so sender and body
-        // begin at the same 58dp edge as the app-name row.
-        float start = 58f * context.getResources().getDisplayMetrics().density;
-        views.setViewLayoutMargin(android.R.id.title, 4, start, android.util.TypedValue.COMPLEX_UNIT_PX);
-        int messages = NotificationResourceIds.get(context.getResources(), "notification_messaging", "id", "android");
-        int contentStart = NotificationResourceIds.get(context.getResources(), "conversation_content_start", "dimen", "android");
-        float groupInset = contentStart != 0
-                ? context.getResources().getDimension(contentStart)
-                : 80f * context.getResources().getDisplayMetrics().density;
-        if (messages != 0)
-            views.setViewLayoutMargin(messages, 4, start - groupInset, android.util.TypedValue.COMPLEX_UNIT_PX);
     }
 
     private static boolean hasRedundantBigText(Object builder) {
@@ -310,16 +282,7 @@ final class RelaxedNotificationHooks {
         View icon = root.findViewById(iconId), line = root.findViewById(lineId);
         if (icon == null || line == null) return;
         float density = root.getResources().getDisplayMetrics().density;
-        boolean headsUp = isHeadsUp(root);
-        if (!headsUp) {
-            Integer margin = headsUpLineMargins.remove(line);
-            if (margin != null && line.getLayoutParams() instanceof ViewGroup.MarginLayoutParams margins) {
-                margins.setMarginStart(margin); line.setLayoutParams(margins);
-                IconAnchor saved = anchors.get(icon);
-                if (saved != null) icon.setTranslationX(saved.translationX);
-            }
-        }
-        boolean collapsed = headsUp || XposedHelpers.getBooleanField(root, "mIsCollapsed");
+        boolean collapsed = XposedHelpers.getBooleanField(root, "mIsCollapsed");
         float expandedStart = 16f + (58f - 16f - 16f) / 2f;
         int parentTop = 0;
         for (View current = (View) icon.getParent(); current != root;) {
@@ -330,12 +293,15 @@ final class RelaxedNotificationHooks {
         int collapsedSize = Math.round(32f * density);
         float top = root.getPaddingTop() + Math.max(16f * density,
                 (root.getHeight() - root.getPaddingTop() - root.getPaddingBottom() - collapsedSize) / 2f);
-        int requestedTop = collapsed ? Math.max(0, Math.round(top) - parentTop - ((View) icon.getParent()).getPaddingTop()) : -1;
-        anchorIcon(icon, Math.round((collapsed ? 16f : expandedStart) * density), requestedTop);
+        // The fixed-height header constrains children by their layout margins. Moving a
+        // 32dp icon down with topMargin shrinks its measured height (95x75 on PKT110).
+        // Keep the square inside the header while measuring, then offset its drawing.
+        int requestedTop = Math.max(0, Math.round(top) - parentTop);
+        anchorIcon(icon, Math.round((collapsed ? 16f : expandedStart) * density), collapsed ? 0 : -1);
         messageRoots.put(icon, new java.lang.ref.WeakReference<>(root));
         int start = Math.round(58f * density); // 16dp inset + 32dp icon + 10dp gap.
         messageLineStarts.putIfAbsent(line, line.getPaddingStart());
-        if (!headsUp && line.getPaddingStart() != start)
+        if (line.getPaddingStart() != start)
             line.setPaddingRelative(start, line.getPaddingTop(), line.getPaddingEnd(), line.getPaddingBottom());
         int size = collapsed ? collapsedSize : Math.round(16f * density);
         ViewGroup.LayoutParams params = icon.getLayoutParams();
@@ -353,77 +319,13 @@ final class RelaxedNotificationHooks {
             }
             current = parent;
         }
-        icon.setTranslationY(0f);
-        if (headsUp) alignHeadsUpHeader(root, icon, line);
-    }
-
-    private static boolean isHeadsUp(View root) {
-        for (View child = root; child.getParent() instanceof View parent; child = parent) {
-            if (parent.getClass().getName().equals("com.android.systemui.statusbar.notification.row.NotificationContentView"))
-                return XposedHelpers.callMethod(parent, "getHeadsUpChild") == child;
-        }
-        return false;
-    }
-
-    private static Rect boundsIn(ViewGroup root, View view) {
-        Matrix rootToGlobal = new Matrix(), globalToRoot = new Matrix(), viewToGlobal = new Matrix();
-        root.transformMatrixToGlobal(rootToGlobal);
-        rootToGlobal.invert(globalToRoot);
-        view.transformMatrixToGlobal(viewToGlobal);
-        globalToRoot.preConcat(viewToGlobal);
-        RectF mapped = new RectF(0, 0, view.getWidth(), view.getHeight());
-        globalToRoot.mapRect(mapped);
-        Rect bounds = new Rect();
-        mapped.round(bounds);
-        return bounds;
-    }
-
-    private static void alignHeadsUpHeader(View view, View icon, View line) {
-        if (!(view instanceof ViewGroup root)) return;
-        View name = root.findViewById(NotificationResourceIds.get(root.getResources(), "app_name_text", "id", "android"));
-        if (name == null || name.getVisibility() != View.VISIBLE || name.getHeight() <= 0) return;
-        // 顶部行可能带有厂商额外边距；仅在弹出通知中清除，并以实际发送者文字边缘对齐。
-        if (line.getLayoutParams() instanceof ViewGroup.MarginLayoutParams margins) {
-            headsUpLineMargins.putIfAbsent(line, margins.getMarginStart());
-            if (margins.getMarginStart() != 0) {
-                margins.setMarginStart(0);
-                line.setLayoutParams(margins);
-            }
-        }
-        View sender = root.findViewById(NotificationResourceIds.get(root.getResources(), "message_name", "id", "android"));
-        if (sender == null || !sender.isShown() || sender.getHeight() <= 0) sender = root.findViewById(android.R.id.title);
-        float density = root.getResources().getDisplayMetrics().density;
-        boolean rtl = root.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL;
-        Rect nameBounds = boundsIn(root, name);
-        int nameStart = (rtl ? root.getWidth() - nameBounds.right : nameBounds.left) + name.getPaddingStart();
-        int textStart = Math.round(58f * density);
-        if (sender != null && sender.isShown() && sender.getHeight() > 0) {
-            Rect senderBounds = boundsIn(root, sender);
-            textStart = (rtl ? root.getWidth() - senderBounds.right : senderBounds.left) + sender.getPaddingStart();
-        }
-        int padding = Math.max(0, line.getPaddingStart() + textStart - nameStart);
-        if (line.getPaddingStart() != padding)
-            line.setPaddingRelative(padding, line.getPaddingTop(), line.getPaddingEnd(), line.getPaddingBottom());
-        int size = Math.round(32f * density), gap = Math.round(10f * density);
-        int iconStart = Math.max(0, textStart - gap - size);
-        int left = rtl ? root.getWidth() - iconStart - size : iconStart;
-        int top = nameBounds.centerY() - size / 2;
-        Rect iconBounds = boundsIn(root, icon);
-        icon.setTranslationX(icon.getTranslationX() + left - iconBounds.left);
-        icon.setTranslationY(icon.getTranslationY() + top - iconBounds.top);
+        icon.setTranslationY(collapsed ? requestedTop - icon.getTop() : 0f);
     }
 
     static void cleanup() {
         compactMessage.remove();
         fullReloadNotice.remove();
         messageRoots.clear();
-        for (var entry : headsUpLineMargins.entrySet()) {
-            View line = entry.getKey();
-            if (line.getLayoutParams() instanceof ViewGroup.MarginLayoutParams margins) {
-                margins.setMarginStart(entry.getValue()); line.setLayoutParams(margins);
-            }
-        }
-        headsUpLineMargins.clear();
         for (var entry : messageLineStarts.entrySet()) {
             View line = entry.getKey();
             line.setPaddingRelative(entry.getValue(), line.getPaddingTop(), line.getPaddingEnd(), line.getPaddingBottom());

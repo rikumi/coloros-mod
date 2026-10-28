@@ -34,5 +34,11 @@
             android:textSize="8dp" android:textStyle="bold" android:fontFamily="sans-serif-semibold"
             android:paddingStart="8dp" android:paddingEnd="8dp" android:visibility="gone"
             android:background="@drawable/about_card15_update_chip" android:textColor="@color/about_card15_text_color" />
+        <TextView android:tag="colorosmod:aboutcard:update_text"
+            android:layout_width="wrap_content" android:layout_height="18dp"
+            android:layout_gravity="center_vertical" android:gravity="center"
+            android:textSize="8dp" android:fontFamily="sans-serif-semibold"
+            android:paddingStart="8dp" android:visibility="gone"
+            android:textColor="@color/about_card15_text_color" />
     </LinearLayout>
 </RelativeLayout>

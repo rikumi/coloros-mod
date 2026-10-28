@@ -14,4 +14,16 @@
     <string name="ui_font_cascadia">Cascadia Code</string>
     <string name="ui_system_font_zygote_hint">Restart Zygote for font changes to take effect</string>
     <string name="ui_font_not_monospace">Selected font contains no monospace face</string>
+    <string name="ui_system_font_disable_replacement">Disable system font substitution</string>
+    <string name="ui_system_font_disable_replacement_hint">Fix monospace font request issues</string>
+    <string name="ui_font_mount_failed">Could not apply WebView fonts. Check root access and module logs</string>
+    <string name="ui_system_font_emoji">System Emoji font</string>
+    <string name="ui_font_emoji_apple">Apple</string>
+    <string name="ui_font_emoji_joypixels">JoyPixels</string>
+    <string name="ui_font_emoji_twitter">Twitter</string>
+    <string name="ui_font_emoji_samsung">Samsung</string>
+    <string name="ui_system_font_mount_enabled">Mount font configuration in all processes (experimental)</string>
+    <string name="ui_system_font_mount_hint">Apply selected fonts to web rendering processes</string>
+    <string name="ui_font_emoji_downloading">Downloading Emoji font…</string>
+    <string name="ui_font_emoji_ready">Font is ready. Restart Zygote to apply</string>
 </resources>

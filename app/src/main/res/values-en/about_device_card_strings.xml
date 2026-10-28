@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="ui_about_device_card">Replace About device card</string>
+    <string name="ui_about_device_card_hint">The version number and brand always reflect the actual information</string>
+    <string name="ui_about_card_latest">Up to date</string>
     <string name="ui_about_card_default">Unchanged</string>
 </resources>

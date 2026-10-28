@@ -13,6 +13,7 @@ public final class FontFileInfo {
         public int index, weight = 400;
         public boolean italic;
         public boolean monospace;
+        public boolean color;
         public float minWeight, maxWeight;
         public String name = "";
         public boolean variable() { return maxWeight > 0; }
@@ -51,6 +52,7 @@ public final class FontFileInfo {
                 Face face = new Face(); face.index = i;
                 long os2 = -1, head = -1, fvar = -1, name = -1, cmap = -1, hhea = -1, hmtx = -1;
                 long os2Len = 0, headLen = 0, fvarLen = 0, nameLen = 0, cmapLen = 0, hheaLen = 0, hmtxLen = 0;
+                boolean cbdt = false, cblc = false, colr = false, cpal = false;
                 for (int t = 0; t < count; t++) {
                     f.seek(offset + 12 + t * 16L);
                     int tag = f.readInt(); f.readInt();
@@ -62,7 +64,10 @@ public final class FontFileInfo {
                     if (tag == 0x636d6170) { cmap = start; cmapLen = length; }
                     if (tag == 0x68686561) { hhea = start; hheaLen = length; }
                     if (tag == 0x686d7478) { hmtx = start; hmtxLen = length; }
+                    cbdt |= tag == 0x43424454; cblc |= tag == 0x43424c43;
+                    colr |= tag == 0x434f4c52; cpal |= tag == 0x4350414c;
                 }
+                face.color = (cbdt && cblc) || (colr && cpal);
                 if (os2Len >= 6) {
                     f.seek(os2 + 4); face.weight = Math.max(1, Math.min(1000, f.readUnsignedShort()));
                     if (os2Len >= 64) { f.seek(os2 + 62); face.italic = (f.readUnsignedShort() & 1) != 0; }
@@ -176,23 +181,26 @@ public final class FontFileInfo {
 
     public static Face match(List<Face> faces, int weight, boolean italic, String language) {
         Face best = null; int bestScore = Integer.MAX_VALUE;
-        boolean hongKong = language.contains("HK");
-        boolean traditional = language.contains("Hant") || language.contains("TW") || hongKong;
         for (Face face : faces) {
-            String name = face.name.toLowerCase(java.util.Locale.ROOT);
-            boolean hk = name.contains("hk") || name.contains(" hc") || name.endsWith("hc");
-            boolean tw = name.contains("tc") || name.contains("tw");
-            boolean hant = tw || hk || name.contains("hant");
-            boolean hans = name.contains("sc") || name.contains("cn") || name.contains("hans");
-            boolean foreign = name.endsWith(" jp") || name.endsWith(" kr") || name.endsWith("japanese") || name.endsWith("korean");
-            int localePenalty = language.startsWith("zh")
-                    ? (traditional ? (hant ? 0 : hans ? 10000 : 1000) : (hans ? 0 : hant ? 10000 : 1000)) : 0;
-            int score = Math.abs(face.weightAt(weight) - weight) + (face.italic == italic ? 0 : 2000)
-                    + localePenalty + (foreign && language.startsWith("zh") ? 20000 : 0)
-                    + (traditional && hant && (hongKong ? !hk : !tw) ? 5000 : 0);
+            int score = matchScore(face, weight, italic, language);
             if (score < bestScore) { bestScore = score; best = face; }
         }
         return best;
+    }
+    public static int matchScore(Face face, int weight, boolean italic, String language) {
+        boolean hongKong = language.contains("HK");
+        boolean traditional = language.contains("Hant") || language.contains("TW") || hongKong;
+        String name = face.name.toLowerCase(java.util.Locale.ROOT);
+        boolean hk = name.contains("hk") || name.contains(" hc") || name.endsWith("hc");
+        boolean tw = name.contains("tc") || name.contains("tw");
+        boolean hant = tw || hk || name.contains("hant");
+        boolean hans = name.contains("sc") || name.contains("cn") || name.contains("hans");
+        boolean foreign = name.endsWith(" jp") || name.endsWith(" kr") || name.endsWith("japanese") || name.endsWith("korean");
+        int localePenalty = language.startsWith("zh")
+                ? (traditional ? (hant ? 0 : hans ? 10000 : 1000) : (hans ? 0 : hant ? 10000 : 1000)) : 0;
+        return Math.abs(face.weightAt(weight) - weight) + (face.italic == italic ? 0 : 2000)
+                + localePenalty + (foreign && language.startsWith("zh") ? 20000 : 0)
+                + (traditional && hant && (hongKong ? !hk : !tw) ? 5000 : 0);
     }
     private FontFileInfo() {}
 }

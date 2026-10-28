@@ -12,11 +12,12 @@ import java.security.MessageDigest
 
 internal object SystemFontStore {
     class NotMonospaceFontException : IllegalArgumentException()
-    private val slots = listOf(SystemFontHooks.ZH, SystemFontHooks.LATIN, SystemFontHooks.MONO)
+    private val slots = listOf(SystemFontHooks.ZH, SystemFontHooks.LATIN, SystemFontHooks.MONO, SystemFontHooks.EMOJI)
     fun isFont(key: String) = key in slots
     fun customIndex(key: String) = when (key) {
         SystemFontHooks.ZH -> 2
         SystemFontHooks.LATIN -> 3
+        SystemFontHooks.EMOJI -> -2
         else -> 4
     }
     private fun directory(context: Context) = File(context.createDeviceProtectedStorageContext().filesDir, "system_fonts")
@@ -31,28 +32,54 @@ internal object SystemFontStore {
         val remote = service.getRemotePreferences(SystemFontHooks.PREFS)
         val editor = remote.edit()
         for (key in slots) {
-            val file = cache(context, key)
+            val choice = local.getInt(key, if (key == SystemFontHooks.MONO) -1 else 0)
+            val file = if (key == SystemFontHooks.EMOJI && choice > 0) EmojiFontStore.obtain(context, choice) else cache(context, key)
             if (file.isFile) editor.putString(key + "_file", publish(service, key, file))
-            editor.putInt(key, local.getInt(key, 0))
+            editor.putInt(key, choice)
         }
-        editor.putString("native_manifest", NativeFontBridge.prepare(context, service))
+        editor.putBoolean(SystemFontHooks.DISABLE_REPLACEMENT, local.getBoolean(SystemFontHooks.DISABLE_REPLACEMENT, false))
+        val manifest = NativeFontBridge.prepare(context, service)
+        editor.putString("native_manifest", manifest)
         check(editor.commit()) { "Cannot save font settings" }
+        SystemFontMounts.schedule(context, service, manifest)
+    }
+
+    @Synchronized
+    fun syncReplacementSettings(context: Context) {
+        val local = context.settingsPrefs()
+        for (service in MainActivity.xposedServices) {
+            runCatching {
+                check(service.getRemotePreferences(SystemFontHooks.PREFS).edit()
+                    .putBoolean(SystemFontHooks.DISABLE_REPLACEMENT, local.getBoolean(SystemFontHooks.DISABLE_REPLACEMENT, false)).commit())
+            }.onFailure { AppLog.log("font replacement settings sync failed: $it") }
+        }
     }
 
     @Synchronized
     fun select(context: Context, key: String, value: Int) {
         val service = service()
+        val emoji = if (key == SystemFontHooks.EMOJI && value > 0) EmojiFontStore.obtain(context, value) else null
+        val emojiRemote = emoji?.let { publish(service, key, it) }
         val manifest = NativeFontBridge.prepare(context, service, key, value)
-        check(service.getRemotePreferences(SystemFontHooks.PREFS).edit().putInt(key, value)
-            .putString("native_manifest", manifest).commit()) {
+        val editor = service.getRemotePreferences(SystemFontHooks.PREFS).edit().putInt(key, value)
+            .putString("native_manifest", manifest)
+        if (emojiRemote != null) editor.putString(key + "_file", emojiRemote)
+        check(editor.commit()) {
             "Cannot save font settings"
         }
         setInt(context, key, value)
+        if (key == SystemFontHooks.EMOJI && value > 0) {
+            val app = context.applicationContext
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(app, R.string.ui_font_emoji_ready, android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+        SystemFontMounts.schedule(context, service, manifest)
     }
 
     @Synchronized
     fun import(context: Context, key: String, uri: Uri) {
-        require(isFont(key))
+        require(isFont(key) && key != SystemFontHooks.EMOJI)
         val service = service()
         val temporary = File.createTempFile("import-", ".font", directory(context))
         var backup: File? = null
@@ -95,6 +122,7 @@ internal object SystemFontStore {
             }
             committed = true
             setInt(context, key, customIndex(key))
+            SystemFontMounts.schedule(context, service, manifest)
             if (oldFile != null && oldFile != name) runCatching { service.deleteRemoteFile(oldFile) }
         } finally {
             if (replaced && !committed) {

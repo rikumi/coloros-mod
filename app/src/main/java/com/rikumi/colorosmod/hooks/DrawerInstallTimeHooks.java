@@ -27,11 +27,23 @@ public final class DrawerInstallTimeHooks {
         if (previous != null && previous == next) return;
         android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
         main.removeCallbacksAndMessages(REFRESH_TOKEN);
-        main.postAtTime(() -> {
+        Runnable refresh = () -> {
             if (!active) return;
             refreshLists();
             DrawerIndexHooks.refresh();
-        }, REFRESH_TOKEN, android.os.SystemClock.uptimeMillis());
+        };
+        if (previous == null) {
+            // A fresh process already applies the hooks while building its lists.
+            // Recover only lists built before settings arrived, once home is idle.
+            boolean needsRefresh = false;
+            synchronized (lists) {
+                for (Boolean applied : lists.values()) if (applied != next) { needsRefresh = true; break; }
+            }
+            if (needsRefresh) LauncherIdleRefresh.post(REFRESH_TOKEN, refresh);
+        } else {
+            LauncherIdleRefresh.cancel(REFRESH_TOKEN);
+            main.postAtTime(refresh, REFRESH_TOKEN, android.os.SystemClock.uptimeMillis());
+        }
     }
 
     public static void cleanupForHotReload() {

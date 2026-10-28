@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="installer_group">Installer</string>
-    <string name="installer_restore_legacy">Restore legacy installer</string>
+    <string name="installer_restore_legacy">Restore legacy installer (disable AppDetail)</string>
     <string name="installer_disable_virus_scan">Disable legacy installer virus scanning</string>
     <string name="installer_hide_finish_suggestions">Remove suggestions from legacy installer completion page</string>
     <string name="installer_show_first_header">Add title bar to legacy installer first page</string>

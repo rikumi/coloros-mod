@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="ui_about_device_card">替換關於本機卡片</string>
+    <string name="ui_about_device_card_hint">版本號和品牌始終根據真實資訊顯示</string>
+    <string name="ui_about_card_latest">已是最新版本</string>
     <string name="ui_about_card_default">不修改</string>
 </resources>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_about_device_hide_marketing">關於本機精簡並隱藏行銷用語</string>
+    <string name="ui_about_device_wired_power">有線 %1$s</string>
+    <string name="ui_about_device_wireless_power">無線 %1$s</string>
+</resources>

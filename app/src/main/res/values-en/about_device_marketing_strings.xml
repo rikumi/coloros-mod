@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_about_device_hide_marketing">Simplify About device and hide marketing language</string>
+    <string name="ui_about_device_wired_power">Wired %1$s</string>
+    <string name="ui_about_device_wireless_power">Wireless %1$s</string>
+</resources>

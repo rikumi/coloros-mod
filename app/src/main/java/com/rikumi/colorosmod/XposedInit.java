@@ -261,6 +261,12 @@ public class XposedInit extends XposedModule {
     }
 
     public static java.util.Set<android.content.ComponentName> getHiddenLauncherComponents() {
+        if (!sSettingsLoaded && "com.android.launcher".equals(sProcessName)
+                && android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            requestRefresh();
+            LauncherHooks.onHiddenLauncherSettingsUnavailable();
+            return hiddenLauncherComponents(sSnapshot);
+        }
         // 首次模型加载仍等待完整快照，避免把未过滤的列表缓存到 Launcher 模型。
         ensureFirstLoad();
         java.util.Map<String, Integer> settings = sSnapshot;
@@ -517,9 +523,6 @@ public class XposedInit extends XposedModule {
         if ("com.android.settings".equals(sHookedPackageName)) {
             SettingsHooks.onSettingsSnapshotPublished();
         }
-        if ("com.oplus.blacklistapp".equals(sHookedPackageName)) {
-            com.rikumi.colorosmod.hooks.SenderIdHooks.onSettingsSnapshotPublished();
-        }
         if ("com.android.launcher".equals(sProcessName)) {
             LauncherHooks.onSettingsSnapshotPublished(all);
         }
@@ -740,9 +743,6 @@ public class XposedInit extends XposedModule {
         if ("com.android.settings".equals(sHookedPackageName)) {
             SettingsHooks.cleanupForHotReload();
         }
-        if ("com.oplus.blacklistapp".equals(sHookedPackageName)) {
-            com.rikumi.colorosmod.hooks.SenderIdHooks.cleanupForHotReload();
-        }
         if ("com.android.systemui".equals(sHookedPackageName)) {
             com.rikumi.colorosmod.hooks.LegacyNotificationLayoutHooks.cleanupForHotReload();
             try { AncTileHooks.cleanupForHotReload(); }
@@ -841,7 +841,8 @@ public class XposedInit extends XposedModule {
         com.rikumi.colorosmod.hooks.SystemFontHooks.attach(this);
         sProcessName = param.getProcessName();
         sIsSystemServer = param.isSystemServer();
-        com.rikumi.colorosmod.hooks.MonospaceHooks.hook(ClassLoader.getSystemClassLoader());
+        if (sIsSystemServer) com.rikumi.colorosmod.hooks.SystemFontDistributionHooks.hook(ClassLoader.getSystemClassLoader());
+        com.rikumi.colorosmod.hooks.SystemFontReplacementHooks.hook(ClassLoader.getSystemClassLoader());
         if (!sIsSystemServer) com.rikumi.colorosmod.hooks.NativeFontHooks.hook(this);
         // 尽早启动设置预热, 使 Launcher 首次加载应用列表时已能读取隐藏图标开关。
         if (!sIsSystemServer) {
@@ -969,7 +970,8 @@ public class XposedInit extends XposedModule {
         }
         log("onHotReloaded: process=" + sProcessName + " isSystemServer=" + sIsSystemServer);
 
-        com.rikumi.colorosmod.hooks.MonospaceHooks.hook(sIsSystemServer
+        if (sIsSystemServer) com.rikumi.colorosmod.hooks.SystemFontDistributionHooks.hook(sSystemServerClassLoader);
+        com.rikumi.colorosmod.hooks.SystemFontReplacementHooks.hook(sIsSystemServer
                 ? sSystemServerClassLoader : ClassLoader.getSystemClassLoader());
         android.content.Context app = sIsSystemServer ? null : currentApplication();
         if (app != null) sAppContext = app;
@@ -1171,7 +1173,6 @@ public class XposedInit extends XposedModule {
                 || "com.android.systemui".equals(packageName)
                 || "com.oplus.pscanvas".equals(packageName)
                 || "com.oplus.safecenter".equals(packageName)
-                || "com.oplus.blacklistapp".equals(packageName)
                 || "com.oplus.securitypermission".equals(packageName)
                 || "com.android.settings".equals(packageName)
                 || "com.oplus.wallpapers".equals(packageName)
@@ -1205,7 +1206,7 @@ public class XposedInit extends XposedModule {
         // 先取得 Application Context 再启动预热, 避免 worker 在 Context 尚未创建时进入退避重试。
         startSettingsLoader();
         com.rikumi.colorosmod.hooks.SystemIconPackHooks.hook(lpparam.classLoader);
-        com.rikumi.colorosmod.hooks.MonospaceHooks.hook(lpparam.classLoader);
+        com.rikumi.colorosmod.hooks.SystemFontReplacementHooks.hook(lpparam.classLoader);
         if ("com.android.launcher".equals(lpparam.packageName)) {
             LauncherHooks.hookLauncher(lpparam);
         } else if ("com.android.systemui".equals(lpparam.packageName)) {
@@ -1221,8 +1222,6 @@ public class XposedInit extends XposedModule {
             MultiWindowHooks.hookCanvasControlBar(lpparam);
         } else if ("com.oplus.safecenter".equals(lpparam.packageName)) {
             SafecenterHooks.hookSafecenter(lpparam);
-        } else if ("com.oplus.blacklistapp".equals(lpparam.packageName)) {
-            com.rikumi.colorosmod.hooks.SenderIdHooks.hook(lpparam);
         } else if ("com.oplus.securitypermission".equals(lpparam.packageName)) {
             AppStartConfirmHooks.hook(lpparam);
         } else if ("com.android.settings".equals(lpparam.packageName)) {
@@ -1316,12 +1315,13 @@ public class XposedInit extends XposedModule {
         return def;
     }
 
-    // 取值顺序: 后台预热的全量快照(零 IPC) -> (首次)有限等待预热 -> 同步 Provider 查询 -> 粘性缓存 -> 无。
+    // 桌面与 system_server 只读本地值；其他进程保留首次等待和同步查询兜底。
     private static Object settingsValue(String key) {
         Integer v = sSnapshot.get(key);
         if (v != null) return v;
 
-        if (sIsSystemServer) {
+        if (sIsSystemServer || "com.android.launcher".equals(sProcessName)) {
+            if (!sIsSystemServer && !sSettingsLoaded) requestRefresh();
             Object[] cached = sCache.get(key);
             return cached != null ? cached[1] : null;
         }

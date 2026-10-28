@@ -14,4 +14,16 @@
     <string name="ui_font_cascadia">Cascadia Code</string>
     <string name="ui_system_font_zygote_hint">修改字型需重新啟動 Zygote 生效</string>
     <string name="ui_font_not_monospace">所選字型不包含等寬字型</string>
+    <string name="ui_system_font_disable_replacement">關閉系統字體替換</string>
+    <string name="ui_system_font_disable_replacement_hint">修復等寬字體呼叫問題</string>
+    <string name="ui_font_mount_failed">無法套用 WebView 字體，請檢查 root 授權並查看模組日誌</string>
+    <string name="ui_system_font_emoji">系統 Emoji 字型</string>
+    <string name="ui_font_emoji_apple">Apple</string>
+    <string name="ui_font_emoji_joypixels">JoyPixels</string>
+    <string name="ui_font_emoji_twitter">Twitter</string>
+    <string name="ui_font_emoji_samsung">Samsung</string>
+    <string name="ui_system_font_mount_enabled">全程序掛載字型設定（試驗性）</string>
+    <string name="ui_system_font_mount_hint">使設定的字型對網頁呈現程序生效</string>
+    <string name="ui_font_emoji_downloading">正在下載 Emoji 字型…</string>
+    <string name="ui_font_emoji_ready">字型已就緒，可重新啟動 Zygote 套用</string>
 </resources>

@@ -22,7 +22,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
 import android.widget.ImageView;
-import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import com.rikumi.colorosmod.R;
@@ -275,13 +274,19 @@ public final class AboutDeviceCardHooks {
         version.setOnClickListener(hasUpdater ? v -> XposedHelpers.callMethod(preference, "performClick") : null);
         version.setClickable(hasUpdater);
         if (version.getParent() instanceof LinearLayout row) row.setGravity(Gravity.CENTER);
-        if (!hasUpdater) { hide(card, "update_text"); hide(card, "update_find"); }
-        else {
-            TextView status = find(card, "update_text", TextView.class);
-            if (status != null) {
-                status.setTextColor(selected == 9 ? Color.WHITE : artwork == 5 ? color : 0xe6ffffff);
-                if (selected == 9) style17Status(status, module, false);
+        TextView status = find(card, "update_text", TextView.class);
+        if (status != null) {
+            if (!hasUpdater) {
+                int latest = host.getResources().getIdentifier("about_phone_already_last_version", "string", host.getPackageName());
+                status.setText(latest != 0 ? host.getString(latest) : module.getString(R.string.ui_about_card_latest));
+                status.setVisibility(View.VISIBLE);
+                status.setClickable(false);
             }
+            status.setTextColor(selected == 9 ? Color.WHITE : artwork == 5 || selected == 7 ? color : 0xe6ffffff);
+            if (selected == 9) style17Status(status, module, false);
+        }
+        if (!hasUpdater) hide(card, "update_find");
+        else {
             TextView update = find(card, "update_find", TextView.class);
             if (update != null) {
                 if (selected == 9) style17Status(update, module, true);
@@ -326,53 +331,6 @@ public final class AboutDeviceCardHooks {
         root.addView(card);
         root.setClickable(hasUpdater);
         binding.replacement = new WeakReference<>(card);
-        centerContent(root, card, binding);
-    }
-
-    private static void centerContent(ViewGroup root, ViewGroup card, Binding binding) {
-        ViewGroup content = find(card, "lin_center", ViewGroup.class);
-        if (content == null) return;
-        ViewGroup.LayoutParams original = content.getLayoutParams();
-        card.removeView(content);
-        // Both the background and the foreground coordinate space fill the card.
-        // Native LinearLayout content keeps its natural height; the OxygenOS 15
-        // RelativeLayout uses MATCH_PARENT; its visible content is centered as a group.
-        FrameLayout foreground = new FrameLayout(card.getContext());
-        foreground.addView(content, new FrameLayout.LayoutParams(original.width,
-                original.height == ViewGroup.LayoutParams.MATCH_PARENT
-                        ? ViewGroup.LayoutParams.MATCH_PARENT : ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP | Gravity.CENTER_HORIZONTAL));
-        card.addView(foreground, new ViewGroup.LayoutParams(-1, -1));
-        View.OnLayoutChangeListener recenter = (view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
-            if (bindings.get(root) != binding || card.getParent() != root || mode() == 0) return;
-            Rect bounds = new Rect(0, Integer.MAX_VALUE, 0, 0);
-            visibleBounds(content, content, bounds);
-            AboutCardGeometry.Layout geometry = AboutCardGeometry.layoutContent(
-                    card.getHeight(), bounds.top, bounds.bottom);
-            if (geometry == null) return;
-            content.setPivotX(content.getWidth() / 2f);
-            content.setPivotY((bounds.top + bounds.bottom) / 2f);
-            content.setScaleX(geometry.scale());
-            content.setScaleY(geometry.scale());
-            content.setTranslationY(geometry.contentTop());
-        };
-        card.addOnLayoutChangeListener(recenter);
-        content.addOnLayoutChangeListener(recenter);
-    }
-
-    private static void visibleBounds(ViewGroup coordinateSpace, ViewGroup group, Rect visible) {
-        for (int i = 0; i < group.getChildCount(); i++) {
-            View child = group.getChildAt(i);
-            if (child.getVisibility() != View.VISIBLE) continue;
-            if (child instanceof ViewGroup children && children.getChildCount() > 0) {
-                visibleBounds(coordinateSpace, children, visible);
-            } else if (child.getHeight() > 0) {
-                Rect bounds = new Rect(0, 0, child.getWidth(), child.getHeight());
-                coordinateSpace.offsetDescendantRectToMyCoords(child, bounds);
-                visible.top = Math.min(visible.top, bounds.top);
-                visible.bottom = Math.max(visible.bottom, bounds.bottom);
-            }
-        }
     }
 
     private static boolean isStraightPhone(Context host) {

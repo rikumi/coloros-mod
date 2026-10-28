@@ -14,6 +14,9 @@ import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -116,6 +119,10 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.view.HapticFeedbackConstants
 import top.yukonga.miuix.kmp.theme.miuixShape
+import android.graphics.Paint
+import android.graphics.Typeface
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -215,16 +222,40 @@ private val COUIX_CATEGORY_SUBTITLE_GAP = 12.dp
 // 分类入口行标题左边缘相对卡片左缘的距离: 带图标 item 的分割线从此处起，避开图标。
 internal val COUIX_CATEGORY_TEXT_START = COUIX_ROW_HPADDING + COUIX_CATEGORY_ICON + COUIX_CATEGORY_ICON_GAP
 
+// Read metrics from firmware files, independent of the selected/replaced system typeface.
+private val couixDefaultTypefaces: List<Typeface> by lazy {
+    runCatching {
+        (SystemOppoFonts.find(false) + SystemOppoFonts.find(true)).map {
+            Typeface.Builder(it).setWeight(500).build()
+        }
+    }.getOrDefault(emptyList())
+}
+
+private fun defaultFontLineHeight(size: Float, fallback: Float) =
+    (couixDefaultTypefaces.maxOfOrNull { font ->
+        val metrics = Paint().apply { typeface = font; textSize = size }.fontMetrics
+        kotlin.math.ceil((metrics.descent - metrics.ascent + metrics.leading).toDouble()).toFloat()
+    } ?: fallback).sp
+
+private val couixTitleLineHeight by lazy { defaultFontLineHeight(16f, 24f) }
+private val couixSubtitleLineHeight by lazy { defaultFontLineHeight(14f, 20f) }
+
 fun couixTextStyles(): TextStyles {
     val base = defaultTextStyles()
+    val fixedLines = LineHeightStyle(
+        alignment = LineHeightStyle.Alignment.Center,
+        trim = LineHeightStyle.Trim.None,
+        mode = LineHeightStyle.Mode.Fixed,
+    )
+    val platform = PlatformTextStyle(includeFontPadding = false)
     return base.copy(
-        body1 = base.body1.copy(fontSize = 16.sp, fontWeight = FontWeight.Medium),
-        body2 = base.body2.copy(fontSize = 14.sp, lineHeight = COUIX_SUBTITLE_LINE_HEIGHT),
+        body1 = base.body1.copy(fontSize = 16.sp, fontWeight = FontWeight.Medium,
+            lineHeight = couixTitleLineHeight, platformStyle = platform, lineHeightStyle = fixedLines),
+        body2 = base.body2.copy(fontSize = 14.sp,
+            lineHeight = couixSubtitleLineHeight, platformStyle = platform, lineHeightStyle = fixedLines),
     )
 }
 
-// 副标题(body2)行高: 略高于默认行距, 长副标题折行后行与行之间不至于挤在一起。
-private val COUIX_SUBTITLE_LINE_HEIGHT = 20.sp
 
 @Composable
 fun CouixSmallTitle(
@@ -592,7 +623,7 @@ internal fun CouixCategoryRow(
                 modifier = Modifier.size(COUIX_CATEGORY_ICON),
             )
         }
-        BasicText(
+        CouixSettingText(
             text = title,
             style = MiuixTheme.textStyles.body1.copy(color = onSurface),
             modifier = Modifier
@@ -600,7 +631,7 @@ internal fun CouixCategoryRow(
                 .padding(start = if (icon != null) COUIX_CATEGORY_ICON_GAP else 0.dp),
         )
         if (subtitle != null) {
-            BasicText(
+            CouixSettingText(
                 text = subtitle,
                 style = MiuixTheme.textStyles.body2.copy(
                     color = summary,
@@ -623,19 +654,34 @@ internal fun CouixCategoryRow(
 
 @Composable
 internal fun CouixDeviceHeader(
-    backgroundStyle: Int,
+    backgroundStyle: Int?,
     model: String,
     system: String?,
+    contentReady: Boolean = true,
     modifier: Modifier = Modifier,
     shape: Shape = RoundedCornerShape(COUIX_CARD_CORNER),
 ) {
     val light = !isSystemInDarkTheme()
     val textColor = if (backgroundStyle == 5 && light) Color.Black else Color.White
     val configuration = LocalConfiguration.current
-    val background = AboutCardStyleResolver.backgroundResource(
-        backgroundStyle,
-        configuration.smallestScreenWidthDp >= 600 && configuration.orientation == 2,
-    )
+    val background = backgroundStyle?.let {
+        AboutCardStyleResolver.backgroundResource(
+            it,
+            configuration.smallestScreenWidthDp >= 600 && configuration.orientation == 2,
+        )
+    }
+    // painterResource 返回时已完成资源解码；隐藏期间仍保留横幅的固定尺寸。
+    val painter = background?.let { painterResource(it) }
+    var placement by remember(background, configuration, contentReady) { mutableStateOf<Rect?>(null) }
+    var ready by remember(background, configuration, contentReady) { mutableStateOf(false) }
+    LaunchedEffect(painter, placement, contentReady) {
+        if (contentReady && painter != null && placement?.isEmpty == false && !ready) {
+            // 布局连续两帧未变化再显示；位置变化会取消当前等待。
+            withFrameNanos { }
+            withFrameNanos { }
+            ready = true
+        }
+    }
 
     val view = LocalView.current
     val scope = rememberCoroutineScope()
@@ -665,15 +711,21 @@ internal fun CouixDeviceHeader(
         modifier = modifier
             .fillMaxWidth()
             .height(COUIX_HEADER_HEIGHT)
+            .onGloballyPositioned { coordinates ->
+                if (!ready) placement = coordinates.boundsInWindow()
+            }
+            .drawWithContent { if (ready) drawContent() }
             .clip(shape)
             .then(longPressModifier),
     ) {
-        Image(
-            painter = painterResource(background),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.matchParentSize(),
-        )
+        if (painter != null) {
+            Image(
+                painter = painter,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize(),
+            )
+        }
         // 设备名在横幅正中, 再上移 COUIX_HEADER_MODEL_LIFT。
         Box(
             modifier = Modifier
@@ -697,7 +749,7 @@ internal fun CouixDeviceHeader(
                     .padding(bottom = COUIX_HEADER_SYSTEM_BOTTOM),
                 contentAlignment = Alignment.BottomCenter,
             ) {
-                BasicText(
+                CouixSettingText(
                     text = system,
                     style = MiuixTheme.textStyles.body1.copy(
                         color = textColor.copy(alpha = COUIX_HEADER_SYSTEM_ALPHA),
@@ -763,7 +815,7 @@ private fun CouixActionCell(
             modifier = Modifier.fillMaxWidth().height(22.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            BasicText(
+            CouixSettingText(
                 text = title,
                 style = MiuixTheme.textStyles.body1.copy(
                     color = MiuixTheme.colorScheme.onSurface,
@@ -882,12 +934,14 @@ fun CouixSwitchPreference(
                     Column(
                         modifier = Modifier.weight(1f),
                     ) {
-                        BasicText(
+                        CouixSettingText(
                             text = title,
-                            style = MiuixTheme.textStyles.body1.copy(color = MiuixTheme.colorScheme.onSurface),
+                            style = MiuixTheme.textStyles.body1.copy(
+                                color = MiuixTheme.colorScheme.onSurface,
+                            ),
                         )
                         if (subtitle != null) {
-                            BasicText(
+                            CouixSettingText(
                                 text = subtitle,
                                 style = MiuixTheme.textStyles.body2.copy(
                                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
@@ -1056,7 +1110,7 @@ private fun CouixDropdownItem(
             .padding(horizontal = 16.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BasicText(
+        CouixSettingText(
             text = text,
             style = MiuixTheme.textStyles.body1.copy(
                 color = if (selected) primary else onSurface,
@@ -1170,23 +1224,41 @@ private fun CouixSelectRow(
         mutableStateOf(item.optionValues?.indexOf(stored)?.takeIf { it >= 0 }
             ?: if (item.optionValues == null) stored.coerceIn(0, item.options.lastIndex) else 0)
     }
+    DisposableEffect(prefs, item.key, version) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == null || key == item.key) {
+                val stored = prefs.getInt(item.key, item.defaultValue)
+                selected = item.optionValues?.indexOf(stored)?.takeIf { it >= 0 }
+                    ?: if (item.optionValues == null) stored.coerceIn(0, item.options.lastIndex) else 0
+            }
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
     val scope = rememberCoroutineScope()
     var importing by remember { mutableStateOf(false) }
+    var pendingSelection by remember(item.key) { mutableStateOf<Int?>(null) }
+    val displayedSelection = pendingSelection ?: selected
     val fontPicker = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri != null) {
             importing = true
+            val custom = SystemFontStore.customIndex(item.key)
+            pendingSelection = item.optionValues?.indexOf(custom) ?: custom
             scope.launch {
                 try {
                     withContext(Dispatchers.IO) { SystemFontStore.import(ctx, item.key, uri) }
-                    selected = SystemFontStore.customIndex(item.key)
+                    val custom = SystemFontStore.customIndex(item.key)
+                    selected = item.optionValues?.indexOf(custom) ?: custom
                     onItemChanged()
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    throw error
                 } catch (error: Exception) {
                     android.widget.Toast.makeText(ctx, if (error is SystemFontStore.NotMonospaceFontException) ctx.getString(R.string.ui_font_not_monospace)
                         else ctx.getString(R.string.ui_font_import_failed), android.widget.Toast.LENGTH_LONG).show()
-                    XposedInit.log("font import failed: $error")
-                } finally { importing = false }
+                    AppLog.log("font import failed: $error")
+                } finally { importing = false; pendingSelection = null }
             }
         }
     }
@@ -1225,13 +1297,21 @@ private fun CouixSelectRow(
                 .heightIn(min = COUIX_SWITCH_H),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            BasicText(
-                text = androidx.compose.ui.res.stringResource(item.label),
-                style = MiuixTheme.textStyles.body1.copy(color = onSurface),
-                modifier = Modifier.weight(1f),
-            )
-            BasicText(
-                text = options.getOrElse(selected) { "" },
+            Column(modifier = Modifier.weight(1f)) {
+                CouixSettingText(
+                    text = androidx.compose.ui.res.stringResource(item.label),
+                    style = MiuixTheme.textStyles.body1.copy(color = onSurface),
+                )
+                item.subtitle?.let { subtitle ->
+                    CouixSettingText(
+                        text = androidx.compose.ui.res.stringResource(subtitle),
+                        style = MiuixTheme.textStyles.body2.copy(color = summary),
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+            CouixSettingText(
+                text = options.getOrElse(displayedSelection) { "" },
                 style = MiuixTheme.textStyles.body2.copy(color = summary),
             )
             Spacer(modifier = Modifier.width(6.dp))
@@ -1266,23 +1346,27 @@ private fun CouixSelectRow(
                         if (index > 0) CouixDropdownDivider()
                         CouixDropdownItem(
                             text = opt,
-                            selected = index == selected,
+                            selected = index == displayedSelection,
                         ) {
                             expanded = false
                             if (SystemFontStore.isFont(item.key)) {
-                                if (!importing && index == SystemFontStore.customIndex(item.key)) {
+                                val value = item.optionValues?.get(index) ?: index
+                                if (!importing && value == SystemFontStore.customIndex(item.key)) {
                                     fontPicker.launch(arrayOf("*/*"))
                                 } else if (!importing && index != selected) {
                                     importing = true
+                                    pendingSelection = index
                                     scope.launch {
                                         try {
-                                            withContext(Dispatchers.IO) { SystemFontStore.select(ctx, item.key, index) }
+                                            withContext(Dispatchers.IO) { SystemFontStore.select(ctx, item.key, value) }
                                             selected = index
                                             onItemChanged()
+                                        } catch (error: kotlinx.coroutines.CancellationException) {
+                                            throw error
                                         } catch (error: Exception) {
                                             android.widget.Toast.makeText(ctx, ctx.getString(R.string.ui_font_import_failed), android.widget.Toast.LENGTH_LONG).show()
-                                            XposedInit.log("font selection failed: $error")
-                                        } finally { importing = false }
+                                            AppLog.log("font selection failed: $error")
+                                        } finally { importing = false; pendingSelection = null }
                                     }
                                 }
                             } else if (index != selected) {
@@ -1328,14 +1412,14 @@ fun CouixMasterToggle(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                BasicText(
+                CouixSettingText(
                     text = title,
                     style = MiuixTheme.textStyles.body1.copy(
                         color = MiuixTheme.colorScheme.onSurface,
                     ),
                 )
                 if (subtitle != null) {
-                    BasicText(
+                    CouixSettingText(
                         text = subtitle,
                         style = MiuixTheme.textStyles.body2.copy(
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
@@ -1729,7 +1813,7 @@ private fun CouixSwitchRow(
             },
             leftTrailingContent = {
                 if (checked) {
-                    BasicText(
+                    CouixSettingText(
                         text = if (item.sliderDisplayScale == 1f) {
                             "${intVal}${if (item.sliderUnitRes != 0) ctx.getString(item.sliderUnitRes) else item.sliderUnit}"
                         } else {

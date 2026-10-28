@@ -15,12 +15,15 @@ public final class FontOverlayXml {
         public final List<FontFileInfo.Face> faces;
         public Source(String path, List<FontFileInfo.Face> faces) { this.path = path; this.faces = faces; }
     }
-    public static byte[] rewrite(byte[] original, Map<String, List<Source>> selected) throws Exception {
+    private static Document parse(byte[] original) throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         factory.setExpandEntityReferences(false);
         javax.xml.parsers.DocumentBuilder parser = factory.newDocumentBuilder();
         parser.setEntityResolver((publicId, systemId) -> new InputSource(new StringReader("")));
-        Document document = parser.parse(new ByteArrayInputStream(original));
+        return parser.parse(new ByteArrayInputStream(original));
+    }
+    public static byte[] rewrite(byte[] original, Map<String, List<Source>> selected) throws Exception {
+        Document document = parse(original);
         NodeList families = document.getElementsByTagName("family");
         for (int i = 0; i < families.getLength(); i++) {
             Element family = (Element) families.item(i);
@@ -29,7 +32,8 @@ public final class FontOverlayXml {
                 name = ((Element) family.getParentNode()).getAttribute("name");
             String language = family.getAttribute("lang");
             String role = null;
-            if (MonospaceNames.matches(name)) role = "mono";
+            if (Arrays.stream(language.split(",")).anyMatch(lang -> lang.contains("Zsye"))) role = "emoji";
+            else if (MonospaceNames.matches(name)) role = "mono";
             else if (name.equals("sans-serif") || name.startsWith("sans-serif-")
                     || name.equals("sys-sans-en") || name.equals("op-sans-en")) role = "latin";
             else if (language.startsWith("zh")) role = "zh";
@@ -53,12 +57,60 @@ public final class FontOverlayXml {
                     alias.setAttribute("to", "monospace");
             }
         }
+        if (!selected.isEmpty()) {
+            // Keep the default named text family first. Emoji precedes other fallback families;
+            // selected text fonts omit ambiguous emoji from nominal cmap while retaining VS15.
+            List<Element> emoji = new ArrayList<>();
+            Element firstFallback = null;
+            for (int i = 0; i < families.getLength(); i++) {
+                Element family = (Element) families.item(i);
+                if (family.getParentNode() != document.getDocumentElement()) continue;
+                if (family.getAttribute("lang").contains("Zsye")) {
+                    if (!family.getAttribute("ignore").equals("true")) emoji.add(family);
+                } else if (firstFallback == null && family.getAttribute("name").isEmpty()) firstFallback = family;
+            }
+            if (firstFallback != null) for (Element family : emoji)
+                document.getDocumentElement().insertBefore(family, firstFallback);
+        }
+        return serialize(document);
+    }
+
+    /** Skia prepends the partition's fonts directory, so walk back to / before entering /data. */
+    public static byte[] filesystem(byte[] original) throws Exception {
+        Document document = parse(original);
+        NodeList fonts = document.getElementsByTagName("font");
+        for (int i = 0; i < fonts.getLength(); i++) {
+            Element font = (Element) fonts.item(i);
+            String path = font.getTextContent().trim();
+            if (!path.matches("(?:\\.\\./\\.\\./system/fonts/)?colorosmod/[0-9a-f]{64}\\.ttf")) continue;
+            String hash = path.substring(path.lastIndexOf('/') + 1, path.length() - 4);
+            for (Node child = font.getFirstChild(); child != null; child = child.getNextSibling())
+                if (child.getNodeType() == Node.TEXT_NODE) child.setNodeValue("");
+            font.insertBefore(document.createTextNode("../../data/fonts/files/coloros-mod-webview/" + hash + ".font"),
+                    font.getFirstChild());
+        }
+        return serialize(document);
+    }
+
+    private static byte[] serialize(Document document) throws Exception {
         Transformer transformer = TransformerFactory.newInstance().newTransformer();
         transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
         transformer.setOutputProperty(OutputKeys.INDENT, "yes");
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         transformer.transform(new DOMSource(document), new StreamResult(output));
         return output.toByteArray();
+    }
+
+    /** Insert ownership outside all stock comments, regardless of declaration/comment line breaks. */
+    public static byte[] mountSnapshot(byte[] original, String version) throws Exception {
+        if (!version.matches("[0-9a-f]{64}")) throw new IOException("Invalid font snapshot version");
+        Document document = parse(filesystem(original));
+        document.insertBefore(document.createComment(" coloros-mod-fonts:" + version + " "),
+                document.getDocumentElement());
+        byte[] result = serialize(document);
+        // Validate the exact bytes handed to the privileged copier, not just the unmarked XML.
+        parse(result);
+        return result;
     }
     private static List<Element> directFonts(Element family) {
         List<Element> fonts = new ArrayList<>();
@@ -86,7 +138,7 @@ public final class FontOverlayXml {
                 if (mono) faces.removeIf(face -> !face.monospace);
                 if (faces.isEmpty()) continue;
                 FontFileInfo.Face face = FontFileInfo.match(faces, weight, italic, language);
-                int score = Math.abs(face.weightAt(weight) - weight) + (face.italic == italic ? 0 : 2000);
+                int score = FontFileInfo.matchScore(face, weight, italic, language);
                 if (score < bestScore) { bestScore = score; bestFace = face; bestSource = source; }
             }
             if (bestFace == null) throw new IOException("Selected font has no usable faces");

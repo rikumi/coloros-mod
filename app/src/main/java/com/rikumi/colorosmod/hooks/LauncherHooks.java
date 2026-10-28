@@ -53,6 +53,8 @@ public final class LauncherHooks {
     }
 
     public static void onSettingsSnapshotPublished(java.util.Map<String, Integer> settings) {
+        LauncherIconGapHooks.onSettingsSnapshotPublished(settings);
+        LauncherStartupRefresh.onSettingsSnapshotPublished();
         DrawerInstallTimeHooks.onSettingsSnapshotPublished(settings);
         refreshPowerSaveTaskLocks(settingValue(settings, KEY_POWER_SAVE_KEEP_LOCKED_TASKS_ENABLED) == 1);
         if (!sModelReloadActive) return;
@@ -97,6 +99,11 @@ public final class LauncherHooks {
             @Override
             public void run() {
                 if (!sModelReloadActive) return;
+                if (waitForInitialLoad && !LauncherIdleRefresh.isIdle()) {
+                    LauncherIdleRefresh.post(sModelReloadToken,
+                            () -> reloadLauncherModelWhenReady(main, attempt, true));
+                    return;
+                }
                 try {
                     ClassLoader classLoader = sLauncherClassLoader;
                     if (classLoader == null) {
@@ -148,6 +155,16 @@ public final class LauncherHooks {
             finishModelReload();
             log("hide launcher apps model readiness timeout, initial=" + waitForInitialLoad);
         }
+    }
+
+    static void refreshAfterZygote(Object model) {
+        synchronized (sHiddenSettingsLock) {
+            sNeedsInitialModelReload = false;
+            sInitialModelReloadPending = false;
+        }
+        XposedHelpers.callMethod(model, "forceReload");
+        // forceReload 只重新绑定模型，不保证每个已有图标重新设置名称间距。
+        LauncherIconGapHooks.refresh();
     }
 
     public static Object captureHotReloadSettings() {
@@ -500,6 +517,8 @@ public final class LauncherHooks {
 
     public static Object captureHotReloadHosts() {
         java.util.ArrayList<Object> saved = new java.util.ArrayList<>();
+        saved.add(new Object[] { "idleRefreshActivity", LauncherIdleRefresh.captureActivity() });
+        saved.add(new Object[] { "iconGapViews", LauncherIconGapHooks.captureViews() });
         synchronized (sDrawerIconStates) {
             for (java.util.Map.Entry<Object, DrawerIconState> entry : sDrawerIconStates.entrySet()) {
                 Object owner = entry.getKey();
@@ -567,6 +586,14 @@ public final class LauncherHooks {
         for (Object value : (Object[]) saved) {
             if (!(value instanceof Object[])) continue;
             Object[] state = (Object[]) value;
+            if (state.length >= 2 && "iconGapViews".equals(state[0])) {
+                LauncherIconGapHooks.restoreViews(state[1]);
+                continue;
+            }
+            if (state.length >= 2 && "idleRefreshActivity".equals(state[0])) {
+                LauncherIdleRefresh.restoreActivity(state[1]);
+                continue;
+            }
             if (state.length >= 3 && "recentsBlend".equals(state[0])
                     && state[1] != null && state[2] instanceof float[]) {
                 try {
@@ -675,6 +702,9 @@ public final class LauncherHooks {
     }
 
     public static void cleanupForHotReload() {
+        LauncherStartupRefresh.cleanup();
+        LauncherIconGapHooks.cleanup();
+        LauncherIdleRefresh.cleanup();
         LauncherIconClarityHooks.cleanup();
         DrawerInstallTimeHooks.cleanupForHotReload();
         sLastPowerSaveTaskLockEnabled = null;
@@ -830,10 +860,13 @@ public final class LauncherHooks {
     private static void refreshPowerSaveTaskLocks(boolean enabled) {
         ClassLoader loader = sLauncherClassLoader;
         if (loader == null || Boolean.valueOf(enabled).equals(sLastPowerSaveTaskLockEnabled)) return;
+        Boolean previous = sLastPowerSaveTaskLockEnabled;
         sLastPowerSaveTaskLockEnabled = enabled;
+        // Native initialization already goes through the hooks; no startup UI refresh is needed.
+        if (previous == null) return;
         android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
         main.removeCallbacksAndMessages(sPowerSaveTaskLockToken);
-        main.postAtTime(() -> {
+        LauncherIdleRefresh.post(sPowerSaveTaskLockToken, () -> {
             if (sLauncherClassLoader != loader) return;
             try {
                 Class<?> type = XposedHelpers.findClass("com.oplus.quickstep.applock.OplusLockManager", loader);
@@ -842,7 +875,7 @@ public final class LauncherHooks {
                 Object companion = XposedHelpers.getStaticObjectField(type, "INSTANCE");
                 XposedHelpers.callMethod(companion, "notifyLockViewUiUpdate");
             } catch (Throwable t) { log("launcher power-save task lock refresh failed: " + t); }
-        }, sPowerSaveTaskLockToken, android.os.SystemClock.uptimeMillis());
+        });
     }
 
     private static void hookUpdateDotAndSecondaryMenu(XC_LoadPackage.LoadPackageParam lp) {
@@ -907,12 +940,15 @@ public final class LauncherHooks {
         try { LauncherIconClarityHooks.hook(lpparam); }
         catch (Throwable error) { log("launcher icon clarity unavailable: " + error); }
         sLauncherClassLoader = lpparam.classLoader;
+        try { LauncherIdleRefresh.hook(lpparam); }
+        catch (Throwable error) { log("launcher idle refresh hooks unavailable: " + error); }
         try {
 
             XposedHelpers.findAndHookDeclaredMethod("com.android.launcher3.Launcher", lpparam.classLoader,
                     "finishBindingItems", XposedHelpers.findClass("com.android.launcher3.util.IntSet", lpparam.classLoader),
                     new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
+                            LauncherStartupRefresh.onBound(p.thisObject, lpparam.classLoader);
                             synchronized (sHiddenSettingsLock) {
                                 if (!sModelReloadActive || !sInitialModelReloadPending || sPendingModelReloads > 0) return;
                                 sPendingModelReloads++;
@@ -935,6 +971,8 @@ public final class LauncherHooks {
         hookPxRuntime(lpparam, "com.android.launcher.layoutparam.AllAppsParam",
                 "getAllAppsIconDrawablePaddingPx", density, KEY_ICON_GAP_ENABLED, KEY_ICON_GAP_DP, ICON_GAP_DP, 8, 1);
 
+        try { LauncherIconGapHooks.hook(lpparam); }
+        catch (Throwable error) { log("launcher icon-label spacing hooks unavailable: " + error); }
         hookDrawerLayout(lpparam);
 
         // 字母索引滚动定位: 始终注入, 运行时按 KEY_DRAWER_LETTER_SCROLL_ENABLED 门控。
@@ -1055,6 +1093,8 @@ public final class LauncherHooks {
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
                                 // 运行时动态门控: 关闭则不响应手势。
+                                LauncherIdleRefresh.onTouch((View) param.thisObject,
+                                        (android.view.MotionEvent) param.args[0]);
                                 if (!readBool(KEY_PINCH_OUT_OPEN_HIDE_APPS_ENABLED, false)) return;
                                 Object dragLayer = param.thisObject;
                                 if (!(dragLayer instanceof android.view.View)) return;

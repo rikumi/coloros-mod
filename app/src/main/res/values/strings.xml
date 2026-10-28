@@ -4,5 +4,4 @@
     <string name="xposed_description">一个针对 ColorOS 的全方位体验增强模块，永久免费\n禁止分享、转载、盗卖以及其他违规用途\n开发者：rikumi</string>
     <string name="ui_system_settings_group">系统设置</string>
     <string name="ui_settings_disabled_module_spacing">修复设置已停用模块上下间距</string>
-    <string name="ui_sms_list_sender_id">信息黑白名单支持境外卡 Sender ID</string>
 </resources>

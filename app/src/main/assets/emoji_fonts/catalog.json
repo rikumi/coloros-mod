@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Apple",
+    "size": 47202864,
+    "sha256": "a1cde922888ff0afaff13e7b1bedd913dc9a58029cedbe8810ece2e0b35758e1",
+    "url": "https://raw.githubusercontent.com/EmojiReplacer/Emoji-Replacer/4778cd5032978d286d5175a734f43cce6abe4a92/Emoji/2024/iOS17.4.ttf"
+  },
+  {
+    "name": "JoyPixels",
+    "size": 13863292,
+    "sha256": "3a93923414461f7cfe6d2071a62b275a66c66675924d00ba25e61b266b465fdf",
+    "url": "https://raw.githubusercontent.com/EmojiReplacer/Emoji-Replacer/4778cd5032978d286d5175a734f43cce6abe4a92/Emoji/JoyPixel9.0.ttf"
+  },
+  {
+    "name": "Twitter",
+    "size": 16433128,
+    "sha256": "bf4e85ab8fb5717e82de567f633ff62a18bf2ed0a22b686808b5fb1d41e7ef53",
+    "url": "https://raw.githubusercontent.com/EmojiReplacer/Emoji-Replacer/4778cd5032978d286d5175a734f43cce6abe4a92/Emoji/Twemoji15.ttf"
+  },
+  {
+    "name": "Samsung",
+    "size": 19895088,
+    "sha256": "7e7475c047b96faf4781fa619d504313d4700004a305daa31a052927070f4960",
+    "url": "https://raw.githubusercontent.com/EmojiReplacer/Emoji-Replacer/4778cd5032978d286d5175a734f43cce6abe4a92/Emoji/Samsung_OneUi6_beta8_u15.1.ttf"
+  }
+]
