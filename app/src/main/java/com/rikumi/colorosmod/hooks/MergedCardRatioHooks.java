@@ -464,9 +464,13 @@ public final class MergedCardRatioHooks {
             }
             if (reference > 0) break;
         }
-        if (reference <= 0) {
-            int id = root.getResources().getIdentifier("qs_footer_hl_tile_height_with_volume", "dimen", "com.android.systemui");
-            if (id != 0) reference = root.getResources().getDimensionPixelSize(id);
+        if (MergedLandscapeHooks.enabled(root) || reference <= 0) {
+            // 横屏采用竖屏宽度和比例布局，内容也必须以竖屏标准卡片高度为基准。
+            // 原生 mBgHeight 在媒体模式下由 66dp 降为 52dp；将其用于分母会额外
+            // 放大字体、图标和内部间距，而卡片外框仍由同一个网格栏宽决定。
+            android.content.res.Resources resources = MergedLandscapeHooks.resources(root);
+            int id = resources.getIdentifier("qs_footer_hl_tile_height_with_volume", "dimen", "com.android.systemui");
+            if (id != 0) reference = resources.getDimensionPixelSize(id);
         }
         return column > 0 && reference > 0 ? column / reference : 1f;
     }
