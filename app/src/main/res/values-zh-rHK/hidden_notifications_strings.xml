@@ -16,4 +16,6 @@
     <string name="hidden_notifications_read_failed">讀取通知失敗，請重新整理後重試。</string>
     <string name="hidden_notifications_action_failed">系統尚未確認通知狀態已變更，請稍後重新整理並重試。</string>
     <string name="hidden_notifications_settings_failed">無法開啟通知存取權設定。</string>
+    <string name="hidden_notifications_state_visible">未隱藏</string>
+    <string name="hidden_notifications_state_hidden">已隱藏</string>
 </resources>

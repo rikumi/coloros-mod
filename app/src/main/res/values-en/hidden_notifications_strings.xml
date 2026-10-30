@@ -16,4 +16,6 @@
     <string name="hidden_notifications_read_failed">Could not read notifications. Refresh to try again.</string>
     <string name="hidden_notifications_action_failed">The system has not confirmed the change. Refresh and try again later.</string>
     <string name="hidden_notifications_settings_failed">Could not open notification access settings.</string>
+    <string name="hidden_notifications_state_visible">Not hidden</string>
+    <string name="hidden_notifications_state_hidden">Hidden</string>
 </resources>

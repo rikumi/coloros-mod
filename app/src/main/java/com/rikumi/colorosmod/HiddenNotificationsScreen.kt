@@ -160,7 +160,11 @@ private fun HiddenNotificationRow(
             if (entry.text.isNotBlank()) BasicText(entry.text, style = detailStyle,
                 maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
         }
-        BasicText(if (busy) ctx.getString(R.string.hidden_notifications_processing) else action,
+        BasicText(ctx.getString(when {
+            busy -> R.string.hidden_notifications_processing
+            entry.hidden -> R.string.hidden_notifications_state_hidden
+            else -> R.string.hidden_notifications_state_visible
+        }),
             style = detailStyle, modifier = Modifier.padding(start = 12.dp))
     }
 }
