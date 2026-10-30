@@ -22,6 +22,7 @@ final class ColorOsNavigationEffect implements AutoCloseable {
     private int frameRate = -1000;
     private float downX, downY;
     private Rect crop;
+    private final NavigationBufferRetainer buffers = new NavigationBufferRetainer();
 
     ColorOsNavigationEffect(ClassLoader loader, Handler main, AppNavigationTaskSurface.Target target,
             Rect navigation, BiConsumer<Integer, Float> colors) throws ReflectiveOperationException {
@@ -85,9 +86,9 @@ final class ColorOsNavigationEffect implements AutoCloseable {
         catch (ReflectiveOperationException | RuntimeException error) { close(); throw error; }
     }
 
-    synchronized void submit(HardwareBuffer buffer, ColorSpace colorSpace, Rect navigation, Rect bounds)
+    synchronized boolean submit(HardwareBuffer buffer, ColorSpace colorSpace, Rect navigation, Rect bounds)
             throws ReflectiveOperationException {
-        if (closed) return;
+        if (closed) return false;
         Rect next = local(navigation, bounds);
         try (SurfaceControl.Transaction t = new SurfaceControl.Transaction()) {
             setBuffer.invoke(t, parent, buffer);
@@ -96,6 +97,8 @@ final class ColorOsNavigationEffect implements AutoCloseable {
             t.apply();
         }
         if (!crop.equals(next)) { crop = next; refresh(200); }
+        buffers.replace(buffer);
+        return true;
     }
 
     synchronized void input(int action, float x, float y) throws ReflectiveOperationException {
@@ -148,6 +151,9 @@ final class ColorOsNavigationEffect implements AutoCloseable {
         closed = true;
         main.removeCallbacks(reduce);
         try { AppNavigationTaskSurface.remove(layer); }
-        finally { AppNavigationTaskSurface.remove(parent); }
+        finally {
+            try { AppNavigationTaskSurface.remove(parent); }
+            finally { buffers.close(); }
+        }
     }
 }

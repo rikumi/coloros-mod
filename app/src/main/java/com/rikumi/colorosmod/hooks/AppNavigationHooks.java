@@ -508,8 +508,9 @@ public final class AppNavigationHooks {
                                     && allocation.getHeight() == bounds.height() && !paused && !closed && attached
                                     && token == generation && request == activeCapture && !recentsCached) {
 
-                                currentEffect.submit(allocation, (ColorSpace) getColorSpace.invoke(buffer), navigation, bounds);
-                                submitted = true;
+                                submitted = currentEffect.submit(allocation,
+                                        (ColorSpace) getColorSpace.invoke(buffer), navigation, bounds);
+                                if (submitted) allocation = null; // Ownership moved to the effect.
                             }
                         }
                     } catch (ReflectiveOperationException | RuntimeException error) { report(error); }
