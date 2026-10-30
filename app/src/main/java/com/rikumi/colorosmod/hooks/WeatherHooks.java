@@ -96,6 +96,7 @@ public final class WeatherHooks {
         });
         hookApi(cl);
         hookMeteorologyBackground(cl);
+        WeatherForecastHooks.install(cl);
     }
 
     private static final String NAV_PADDING_STATE = "colorosmod.weather.navigationPadding";

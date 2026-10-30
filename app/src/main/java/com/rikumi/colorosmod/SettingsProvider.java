@@ -28,6 +28,7 @@ public class SettingsProvider extends ContentProvider {
         if (getContext() != null) HomeControlsTileSettings.sync(getContext());
         if (getContext() != null) {
             Context context = getContext().getApplicationContext();
+            FontFailureLog.initialize(context);
             new Thread(() -> SystemFontMounts.INSTANCE.resume(context), "font-mount-recovery").start();
         }
         return true;

@@ -29,7 +29,7 @@ internal object SystemFontStore {
                 result.complete(Unit)
             } catch (error: Throwable) {
                 changeFailure = error
-                AppLog.log("font settings operation failed: $error")
+                FontFailureLog.record("font settings operation failed", error)
                 result.completeExceptionally(error)
             }
         }

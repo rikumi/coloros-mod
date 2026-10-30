@@ -42,3 +42,4 @@ app/build
 /device-state/
 
 /.kotlin/
+!/scripts/check-font-app-mounts.py

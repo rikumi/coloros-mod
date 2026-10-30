@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="weather_horizontal_forecast">多日天氣預報橫向配置</string>
     <string name="weather_hide_air_quality">隱藏空氣品質</string>
     <string name="weather_hide_sun">隱藏日出日落</string>
     <string name="weather_hide_cctv">隱藏央視天氣預報</string>

@@ -23,10 +23,13 @@
     <string name="ui_font_emoji_joypixels">JoyPixels</string>
     <string name="ui_font_emoji_twitter">Twitter</string>
     <string name="ui_font_emoji_samsung">Samsung</string>
-    <string name="ui_system_font_mount_enabled">Mount font configuration in all processes (experimental)</string>
-    <string name="ui_system_font_mount_hint">Apply selected fonts to web rendering processes</string>
+    <string name="ui_system_font_mount_enabled">Mount font configuration for WebView apps</string>
     <string name="ui_font_emoji_downloading">Downloading Emoji font…</string>
     <string name="ui_font_emoji_ready">Font is ready. Restart Zygote to apply</string>
     <string name="ui_font_restart_preparing">Waiting for fonts to finish saving and mounting…</string>
     <string name="ui_font_restart_failed">Fonts are not ready. Restart cancelled. Reapply font settings and check the module logs</string>
+    <string name="ui_system_font_mount_apps">WebView apps with mounted fonts</string>
+    <string name="ui_font_show_system">Show system</string>
+    <string name="ui_font_hide_system">Hide system</string>
+    <string name="ui_font_all_apps">All apps</string>
 </resources>

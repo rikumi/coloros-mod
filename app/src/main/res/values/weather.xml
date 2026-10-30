@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="weather_horizontal_forecast">多日天气预报横向布局</string>
     <string name="weather_hide_air_quality">隐藏空气质量</string>
     <string name="weather_hide_sun">隐藏日出日落</string>
     <string name="weather_hide_cctv">隐藏央视天气预报</string>

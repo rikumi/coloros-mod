@@ -39,7 +39,7 @@ final class MergedSplitShadeHooks {
     }
 
     static boolean phoneLayout(View view) {
-        if (view == null || !enabled(view.getResources())) return false;
+        if (view == null || !enabled(view.getResources()) || onKeyguard(view)) return false;
         for (View current = view; current != null;
                 current = current.getParent() instanceof View parent ? parent : null) {
             if ((mediaClass != null && mediaClass.isInstance(current))
@@ -71,6 +71,16 @@ final class MergedSplitShadeHooks {
             XposedHelpers.findAndHookMethod(shadeClass, "updateResources", new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) { shades.put(p.thisObject, true); }
             });
+            XposedHelpers.findAndHookMethod("com.android.systemui.statusbar.notification.stack.NotificationStackScrollLayout",
+                    pkg.classLoader, "setStatusBarState", int.class, new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            View stack = (View) p.thisObject;
+                            // State changes need a measure pass even without a configuration change.
+                            for (View root : new ArrayList<>(layouts.keySet())) {
+                                if (root.getRootView() == stack.getRootView()) root.requestLayout();
+                            }
+                        }
+                    });
             XposedHelpers.findAndHookMethod(containerClass, "updateResources", new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     containers.put(p.thisObject, true);
@@ -94,7 +104,11 @@ final class MergedSplitShadeHooks {
                     if (!enabled(root.getResources())) {
                         layouts.remove(root);
                         layout.restoreClearAllTranslation(root);
-                        XposedHelpers.callMethod(layout.original, "applyTo", root);
+                        applyLayoutOnly(layout.original, root);
+                        return;
+                    }
+                    if (onKeyguard(root)) {
+                        layout.suspend(root);
                         return;
                     }
                     int spec = (Integer) p.args[0];
@@ -134,7 +148,8 @@ final class MergedSplitShadeHooks {
                     "updateClearAllPosition", boolean.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             View button = (View) XposedHelpers.getObjectField(p.thisObject, "clearAll");
-                            if (button != null && enabled(button.getResources()) && enclosingLayout(button) != null)
+                            if (button != null && enabled(button.getResources()) && !onKeyguard(button)
+                                    && enclosingLayout(button) != null)
                                 p.args[0] = false;
                         }
                     });
@@ -298,6 +313,26 @@ final class MergedSplitShadeHooks {
         return NotificationResourceIds.get(root.getResources(), name, "id", "com.android.systemui");
     }
 
+    private static boolean onKeyguard(View view) {
+        View stack = view.getRootView().findViewById(id(view, "notification_stack_scroller"));
+        // Use the notification stack's own state, including transitions to/from locked shade.
+        return stack != null && XposedHelpers.getIntField(stack, "mStatusBarState") == 1;
+    }
+
+    private static void applyLayoutOnly(Object set, View root) {
+        ViewGroup group = (ViewGroup) root;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View child = group.getChildAt(i);
+            Object constraint = XposedHelpers.callMethod(set, "getConstraint", child.getId());
+            if (constraint == null) continue;
+            // ConstraintSet.applyTo also restores captured visibility, alpha and transforms.
+            // Those belong to the current keyguard/shade animations, not our layout snapshot.
+            ViewGroup.LayoutParams params = child.getLayoutParams();
+            XposedHelpers.callMethod(constraint, "applyTo", params);
+            child.setLayoutParams(params);
+        }
+    }
+
     private static Object constraints(View root) {
         Object set = XposedHelpers.newInstance(constraintSetClass);
         XposedHelpers.callMethod(set, "clone", root);
@@ -320,7 +355,7 @@ final class MergedSplitShadeHooks {
         SplitLayout layout = new SplitLayout(original, qs, notifications, id(root, "split_shade_status_bar"),
                 Math.max(qsMargin, notificationMargin), qsMargin + notificationMargin);
         layouts.put(root, layout);
-        layout.apply(root, root.getWidth());
+        if (!onKeyguard(root)) layout.apply(root, root.getWidth());
         root.requestLayout();
     }
 
@@ -382,9 +417,17 @@ final class MergedSplitShadeHooks {
                 Object constraint = XposedHelpers.callMethod(set, "getConstraint", target);
                 XposedHelpers.setFloatField(XposedHelpers.getObjectField(constraint, "layout"), "horizontalBias", .5f);
             }
-            XposedHelpers.callMethod(set, "applyTo", root);
+            applyLayoutOnly(set, root);
             applied = panels;
             appliedTop = top;
+        }
+
+        void suspend(View root) {
+            if (applied == null) return;
+            restoreClearAllTranslation(root);
+            applyLayoutOnly(original, root);
+            applied = null;
+            appliedTop = Integer.MIN_VALUE;
         }
 
         void restoreClearAllTranslation(View root) {
@@ -423,7 +466,7 @@ final class MergedSplitShadeHooks {
         SplitLayout layout = layouts.remove(root);
         if (layout != null) layout.restoreClearAllTranslation(root);
         Object original = nativeConstraints.remove(controller);
-        if (original != null) XposedHelpers.callMethod(original, "applyTo", root);
+        if (original != null) applyLayoutOnly(original, root);
     }
 
     private static void updateMedia(View media) {

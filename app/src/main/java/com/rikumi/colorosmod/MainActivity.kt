@@ -219,6 +219,7 @@ internal sealed interface SettingsItem
 internal data class GroupTitleItem(val title: Int) : SettingsItem
 
 internal data class NavigationAppsItem(val title: Int) : SettingsItem
+internal data class FontAppsItem(val title: Int) : SettingsItem
 
 internal data class SwitchItem(
     val key: String,
@@ -453,6 +454,7 @@ private val PURIFICATION: List<SettingsItem> = listOf(
     SwitchItem("store_hide_update_recommendations", R.string.store_hide_update_recommendations),
     SwitchItem("store_clean_search", R.string.store_clean_search),
     GroupTitleItem(R.string.weather_group_weather),
+    SwitchItem("weather_horizontal_forecast", R.string.weather_horizontal_forecast),
     SwitchItem("weather_hide_air_quality", R.string.weather_hide_air_quality),
     SwitchItem("weather_hide_sun", R.string.weather_hide_sun),
     SwitchItem("weather_hide_cctv", R.string.weather_hide_cctv),
@@ -480,7 +482,8 @@ private val SYSTEM_FONTS: List<SettingsItem> = listOf(
     SelectItem("system_font_mono", R.string.ui_system_font_mono, listOf(R.string.ui_font_default, R.string.ui_font_maple, R.string.ui_font_jetbrains, R.string.ui_font_fira, R.string.ui_font_cascadia, R.string.ui_font_custom), defaultValue = -1, optionValues = listOf(-1, 0, 1, 2, 3, 4)),
     SelectItem("system_font_emoji", R.string.ui_system_font_emoji, listOf(R.string.ui_font_default, R.string.ui_font_emoji_apple, R.string.ui_font_emoji_joypixels, R.string.ui_font_emoji_twitter, R.string.ui_font_emoji_samsung)),
     SwitchItem("system_font_disable_replacement", R.string.ui_system_font_disable_replacement, subtitle = R.string.ui_system_font_disable_replacement_hint),
-    SwitchItem("system_font_mount_enabled", R.string.ui_system_font_mount_enabled, subtitle = R.string.ui_system_font_mount_hint, masterManaged = false),
+    SwitchItem("system_font_mount_enabled", R.string.ui_system_font_mount_enabled, masterManaged = false),
+    FontAppsItem(R.string.ui_system_font_mount_apps),
 )
 
 private val STORAGE: List<SettingsItem> = listOf(
@@ -531,6 +534,7 @@ private const val DISABLED_APPS_ID = "disabled_apps"
 private const val HIDDEN_NOTIFICATIONS_ID = "hidden_notifications"
 private const val HIDDEN_LAUNCHER_APPS_ID = "hidden_launcher_apps"
 private const val NAVIGATION_APPS_ID = "navigation_apps"
+private const val FONT_APPS_ID = "font_mount_apps"
 
 private data class MasterOverride(val scope: String?, val value: Boolean)
 
@@ -556,7 +560,7 @@ private fun SettingsItem.isEnabledInMaster(prefs: SharedPreferences): Boolean = 
     is SwitchItem -> prefs.getBoolean(settingKey, false)
     is FolderBlockItem -> prefs.getBoolean(settingKey, false)
     is SelectItem -> prefs.getInt(key, 0) != 0
-    is GroupTitleItem, is NavigationAppsItem -> false
+    is GroupTitleItem, is NavigationAppsItem, is FontAppsItem -> false
 }
 
 private val SettingsItem.settingKey: String
@@ -564,7 +568,7 @@ private val SettingsItem.settingKey: String
         is SwitchItem -> key
         is FolderBlockItem -> key
         is SelectItem -> key
-        is GroupTitleItem, is NavigationAppsItem -> ""
+        is GroupTitleItem, is NavigationAppsItem, is FontAppsItem -> ""
     }
 
 private fun List<SettingsItem>.splitByDivider(): List<SwitchGroup> {
@@ -583,6 +587,7 @@ private fun List<SettingsItem>.splitByDivider(): List<SwitchGroup> {
             is FolderBlockItem -> current.add(item)
             is SelectItem -> current.add(item)
             is NavigationAppsItem -> current.add(item)
+            is FontAppsItem -> current.add(item)
         }
     }
     if (current.isNotEmpty()) result.add(SwitchGroup(desc, current))
@@ -626,6 +631,7 @@ fun SettingsScreen(resumeRequest: Int = 0) {
         openCategoryId = when (openCategoryId) {
             HIDDEN_LAUNCHER_APPS_ID -> "hidden_apps"
             NAVIGATION_APPS_ID -> "navigation"
+            FONT_APPS_ID -> "system_fonts"
             else -> null
         }
     }
@@ -711,6 +717,7 @@ fun SettingsScreen(resumeRequest: Int = 0) {
                     selectedCategoryId = when (openCategoryId) {
                         HIDDEN_LAUNCHER_APPS_ID -> "hidden_apps"
                         NAVIGATION_APPS_ID -> "navigation"
+                        FONT_APPS_ID -> "system_fonts"
                         else -> openCategoryId ?: "desktop"
                     },
                     showRestartMenu = false,
@@ -728,7 +735,7 @@ fun SettingsScreen(resumeRequest: Int = 0) {
                     transitionSpec = {
                         // 二级页(隐藏/导航应用)层级更深, 返回所属分类使用 pop。
                         fun depth(id: String) = when (id) {
-                            HIDDEN_LAUNCHER_APPS_ID, NAVIGATION_APPS_ID -> 2
+                            HIDDEN_LAUNCHER_APPS_ID, NAVIGATION_APPS_ID, FONT_APPS_ID -> 2
                             else -> 1
                         }
                         val enter = if (depth(targetState) < depth(initialState)) -1 else 1
@@ -763,7 +770,7 @@ fun SettingsScreen(resumeRequest: Int = 0) {
                 // 按层级判断 push/pop，二级列表返回所属分类也使用 pop。
                 fun depth(id: String?) = when (id) {
                     null -> 0
-                    HIDDEN_LAUNCHER_APPS_ID, NAVIGATION_APPS_ID -> 2
+                    HIDDEN_LAUNCHER_APPS_ID, NAVIGATION_APPS_ID, FONT_APPS_ID -> 2
                     else -> 1
                 }
                 val enter = if (depth(targetState) < depth(initialState)) -1 else 1
@@ -820,6 +827,7 @@ private fun DetailPane(
     when (targetId) {
         HIDDEN_LAUNCHER_APPS_ID -> HiddenAppsScreen(context = ctx, onBack = { navigate("hidden_apps") })
         NAVIGATION_APPS_ID -> HiddenAppsScreen(context = ctx, onBack = { navigate("navigation") }, navigationApplications = true)
+        FONT_APPS_ID -> HiddenAppsScreen(context = ctx, onBack = { navigate("system_fonts") }, fontApplications = true)
         DISABLED_APPS_ID -> DisabledAppsScreen(ctx = ctx, onBack = { navigate(null) }, showBack = showBack)
         HIDDEN_NOTIFICATIONS_ID -> HiddenNotificationsScreen(ctx = ctx, onBack = { navigate(null) }, showBack = showBack)
         else -> {
@@ -838,6 +846,7 @@ private fun DetailPane(
                 onBack = { navigate(null) },
                 onOpenHiddenApps = { navigate(HIDDEN_LAUNCHER_APPS_ID) },
                 onOpenNavigationApps = { navigate(NAVIGATION_APPS_ID) },
+                onOpenFontApps = { navigate(FONT_APPS_ID) },
                 showBack = showBack,
             )
         }
@@ -968,6 +977,7 @@ private fun CategoryScreen(
     onBack: () -> Unit,
     onOpenHiddenApps: () -> Unit,
     onOpenNavigationApps: () -> Unit,
+    onOpenFontApps: () -> Unit,
     showBack: Boolean = true,
 ) {
     val listState = rememberLazyListState()
@@ -1043,6 +1053,7 @@ private fun CategoryScreen(
                         overrideValue = overrideValue,
                         onItemChanged = onItemChanged,
                         onOpenNavigationApps = onOpenNavigationApps,
+                        onOpenFontApps = onOpenFontApps,
                         footerContent = if (group.items.any { it is SwitchItem && it.key == "hidden_launcher_apps_enabled" }) {
                             { CouixCategoryRow(null, ctx.getString(R.string.ui_hidden_apps_list), onOpenHiddenApps) }
                         } else null,

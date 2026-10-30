@@ -7,6 +7,10 @@ SELF=$BASE/backend.sh
 CACHE=/data/fonts/files/coloros-mod-webview
 TAB=$(printf '\t')
 fail() { echo "coloros-mod fonts: $*" >&2; exit 1; }
+trace() {
+    read -r uptime remainder < /proc/uptime
+    echo "coloros-mod fonts: t=$uptime $*"
+}
 valid_version() { [ ${#1} -eq 64 ] && case "$1" in *[!0-9a-f]*) return 1;; *) return 0;; esac; }
 config_target() {
     case "$1" in
@@ -29,12 +33,38 @@ in_namespace() {
 # services/apps (including isolated WebView UIDs), never root housekeeping workers.
 namespace_candidate() {
     [ "$1" = 1 ] && return 0
-    name=$(tr '\000' '\n' < "/proc/$1/cmdline" 2>/dev/null | head -n 1)
-    case "$name" in zygote|zygote64|webview_zygote|chrome_zygote|com.android.chrome_zygote) return 0;; esac
-    uid=$(awk '$1 == "Uid:" { print $2; exit }' "/proc/$1/status" 2>/dev/null)
-    case "$uid" in ''|0) return 1;; *) return 0;; esac
+    uid=
+    while read -r key value remainder; do
+        if [ "$key" = Uid: ]; then uid=$value; break; fi
+    done < "/proc/$1/status" 2>/dev/null || return 1
+    case "$uid" in
+        '') return 1;;
+        0)
+            name=$(tr '\000' '\n' < "/proc/$1/cmdline" 2>/dev/null | head -n 1)
+            case "$name" in zygote|zygote64|webview_zygote|chrome_zygote|com.android.chrome_zygote) return 0;; *) return 1;; esac;;
+        *) return 0;;
+    esac
 }
-namespace_id() { readlink "/proc/$1/ns/mnt" 2>/dev/null | tr -cd '0-9'; }
+# Only explicitly selected browser/WebView hosts and their child processes receive mounts.
+# WebView's browser code lives in its host app; adding that host covers it as well.
+selected_pids() {
+    packages=$(cat "$BASE/packages" 2>/dev/null || true)
+    provider=$(cat "$BASE/webview-provider" 2>/dev/null || true)
+    ps -A -o PID,ARGS | while read -r process_id process_name rest; do
+        case "$process_id" in ''|*[!0-9]*) continue;; esac
+        for package in $packages; do
+            case "$process_name" in
+                "$package"|"$package":*|"${package}_zygote") echo "$process_id"; break;;
+                webview_zygote) if [ "$package" = "$provider" ]; then echo "$process_id"; break; fi;;
+            esac
+        done
+    done
+}
+
+namespace_id() {
+    link=$(readlink "/proc/$1/ns/mnt" 2>/dev/null || true)
+    case "$link" in mnt:\[*\]) link=${link#*:}; link=${link#?}; printf '%s\n' "${link%?}";; esac
+}
 namespace_matches() { [ -n "$2" ] && [ "$(namespace_id "$1")" = "$2" ]; }
 # XML markers identify inherited mounts even when the namespace ID changes after Zygote restarts.
 current_version() { sed -n 's/.*<!-- coloros-mod-fonts:\([0-9a-f]*\) -->.*/\1/p' /system/etc/fonts.xml; }
@@ -204,13 +234,35 @@ if [ "${1:-}" = worker ]; then
 fi
 
 [ "$(id -u)" = 0 ] || fail 'root is required'
+if [ "${1:-}" = watch ]; then
+    # One detached watcher per boot. It only starts a transaction for a newly created
+    # selected namespace; ordinary apps are never periodically remounted.
+    exec 7>"$BASE/watch.lock"
+    flock -n 7 7>&7 || exit 0
+    while [ -s "$BASE/requested" ]; do
+        desired=$(cat "$BASE/requested")
+        for process_id in $(selected_pids); do
+            [ -r "/proc/$process_id/root/system/etc/fonts.xml" ] || continue
+            actual=$(sed -n 's/.*<!-- coloros-mod-fonts:\([0-9a-f]*\) -->.*/\1/p' "/proc/$process_id/root/system/etc/fonts.xml" 2>/dev/null || true)
+            if [ "$actual" != "$desired" ]; then
+                /system/bin/sh "$SELF" resume >"$BASE/last-watch.log" 2>&1 || cp "$BASE/last-watch.log" "$BASE/last-failure.log"
+                break
+            fi
+        done
+        sleep 2
+    done
+    exit 0
+fi
+
 mkdir -p "$BASE"
 chmod 0700 "$BASE"
 # Kernel-managed lock: startup recovery and preference updates must wait for one
 # another, and a crashed process must never leave a permanent busy marker.
+trace "waiting for transaction lock"
 exec 9>"$BASE/transaction.lock"
 # mksh marks exec-opened descriptors close-on-exec; explicitly pass this one.
 flock -x 9 9>&9 || fail 'cannot acquire transaction lock'
+trace "transaction lock acquired"
 # Let a transaction started by an older APK finish before migrating its mkdir lock.
 legacy_owner=$(cat "$BASE/lock/pid" 2>/dev/null || true)
 case "$legacy_owner" in
@@ -244,13 +296,32 @@ case "$mode" in
     *) fail 'invalid action';;
 esac
 [ -z "$version" ] || in_namespace 1 worker prepare "$version"
-: > "$BASE/transaction"
-seen=' '
-for pid in 1 $(pidof zygote zygote64 webview_zygote chrome_zygote 2>/dev/null || true) $(
+trace "snapshot prepared"
+# Global migration is done once. After that, inspect unrelated namespaces only
+# when removing an app or restoring the backend, never for routine font changes.
+cleanup_all=0
+if [ "$mode" = restore ] || [ ! -f "$BASE/scoped-policy" ]; then
+    cleanup_all=1
+else
+    packages=" $(cat "$BASE/packages" 2>/dev/null || true) "
+    packages=$(printf '%s' "$packages" | tr '\n' ' ')
+    for package in $(cat "$BASE/applied-packages" 2>/dev/null || true); do
+        case "$packages" in *" $package "*) ;; *) cleanup_all=1; break;; esac
+    done
+fi
+cleanup_pids() {
+    [ "$cleanup_all" = 1 ] || return 0
+    echo 1
+    pidof zygote zygote64 webview_zygote chrome_zygote 2>/dev/null || true
     for process in /proc/[0-9]*; do
         [ -f "$process/root/system/etc/fonts.xml" ] && echo "${process##*/}"
     done
-); do
+}
+: > "$BASE/transaction"
+seen=' '
+selected=" $(selected_pids | tr '\n' ' ') "
+# Selected namespaces come first so shared namespaces retain the requested font.
+for pid in $selected $(cleanup_pids); do
     [ -r "/proc/$pid/ns/mnt" ] || continue
     namespace_candidate "$pid" || continue
     ns=$(namespace_id "$pid")
@@ -262,14 +333,23 @@ for pid in 1 $(pidof zygote zygote64 webview_zygote chrome_zygote 2>/dev/null ||
     fi
     namespace_matches "$pid" "$ns" || continue
     [ -z "$old" ] || valid_version "$old" || fail 'unrecognized inherited XML'
-    # Mark seen only after a stable read, allowing another process in the same namespace to represent it.
+    desired=
+    if [ "$mode" != restore ]; then
+        case "$selected" in *" $pid "*) desired=$version;; esac
+    fi
+    # Remember stock namespaces too; hundreds of native processes can share one.
+    # A disappearing/changing representative is still skipped before marking seen.
     seen="$seen$ns "
-    printf '%s\t%s\t%s\n' "$pid" "$ns" "$old" >> "$BASE/transaction"
+    [ -n "$desired" ] || [ -n "$old" ] || continue
+    printf '%s\t%s\t%s\t%s\n' "$pid" "$ns" "${old:-stock}" "${desired:-stock}" >> "$BASE/transaction"
 done
+trace "namespace scan complete (legacy cleanup=$cleanup_all)"
 okay=1
-while IFS="$TAB" read -r pid ns old; do
+while IFS="$TAB" read -r pid ns old desired; do
+    [ "$old" != stock ] || old=
+    [ "$desired" != stock ] || desired=
     namespace_matches "$pid" "$ns" || continue
-    if ! in_namespace "$pid" worker apply "$version" "$ns"; then
+    if ! in_namespace "$pid" worker apply "$desired" "$ns"; then
         namespace_matches "$pid" "$ns" || continue
         echo "coloros-mod fonts: failed namespace pid=$pid" >&2
         okay=0; break
@@ -277,7 +357,9 @@ while IFS="$TAB" read -r pid ns old; do
 done < "$BASE/transaction"
 if [ "$okay" != 1 ]; then
     rollback=1
-    while IFS="$TAB" read -r pid ns old; do
+    while IFS="$TAB" read -r pid ns old desired; do
+        [ "$old" != stock ] || old=
+        [ "$desired" != stock ] || desired=
         namespace_matches "$pid" "$ns" || continue
         if ! in_namespace "$pid" worker apply "${old:-}" "$ns"; then
             namespace_matches "$pid" "$ns" || continue
@@ -289,4 +371,12 @@ fi
 printf '%s\n' "$version" > "$BASE/current.tmp"
 mv "$BASE/current.tmp" "$BASE/current"
 if [ "$mode" = restore ]; then rm -f "$BASE/requested"; fi
+if [ "$mode" != restore ]; then
+    cp "$BASE/packages" "$BASE/applied-packages.tmp"
+    mv "$BASE/applied-packages.tmp" "$BASE/applied-packages"
+    touch "$BASE/scoped-policy"
+    # Close the transaction lock before detaching; the watcher acquires its own lock.
+    ( /system/bin/sh "$SELF" watch 9>&- 7>&- >/dev/null 2>&1 </dev/null & )
+fi
+trace "transaction complete"
 echo "coloros-mod fonts: applied ${version:-stock} to$seen"

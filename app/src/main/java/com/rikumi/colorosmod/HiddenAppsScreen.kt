@@ -73,8 +73,8 @@ private fun readLauncherApps(context: Context): List<HiddenAppEntry> {
     }
 }
 
-private fun readNavigationApps(context: Context): List<HiddenAppEntry> {
-    val output = runRoot("cmd package list packages -3 --user current") ?: error(context.getString(R.string.ui_cannot_read_apps))
+private fun readNavigationApps(context: Context, includeSystem: Boolean = false): List<HiddenAppEntry> {
+    val output = runRoot("cmd package list packages ${if (includeSystem) "" else "-3"} --user current") ?: error(context.getString(R.string.ui_cannot_read_apps))
     val collator = Collator.getInstance(context.resources.configuration.locales[0])
     return output.lineSequence().map { it.trim() }.filter { it.startsWith("package:") }
         .map { appEntry(context, it.removePrefix("package:"), true) }.distinctBy { it.component }
@@ -85,40 +85,42 @@ private fun readNavigationApps(context: Context): List<HiddenAppEntry> {
 }
 
 @Composable
-internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit, navigationApplications: Boolean = false) {
+internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit, navigationApplications: Boolean = false, fontApplications: Boolean = false) {
     val preferences = remember(context) { context.settingsPrefs() }
-    val packagesKey = if (navigationApplications) AppNavigationSettings.PACKAGES else HiddenLauncherApps.COMPONENTS
-    var hidden by remember(packagesKey) { mutableStateOf(if (navigationApplications) AppNavigationSettings.applications(preferences).toSet()
+    val packagesKey = if (fontApplications) SystemFontMounts.PACKAGES else if (navigationApplications) AppNavigationSettings.PACKAGES else HiddenLauncherApps.COMPONENTS
+    var hidden by remember(packagesKey) { mutableStateOf(if (fontApplications) SystemFontMounts.applications(context) else if (navigationApplications) AppNavigationSettings.applications(preferences).toSet()
         else preferences.getStringSet(packagesKey, emptySet()).orEmpty().toSet()) }
     var picking by remember { mutableStateOf(false) }
+    var showSystemApplications by remember(picking) { mutableStateOf(false) }
     var choices by remember { mutableStateOf<List<HiddenAppEntry>?>(null) }
     var entries by remember { mutableStateOf<List<HiddenAppEntry>>(emptyList()) }
     val listState = rememberLazyListState()
     val overscroll = remember { mutableFloatStateOf(0f) }
     fun save(components: Set<String>) {
         val editor = preferences.edit().putStringSet(packagesKey, components)
-        if (!navigationApplications) editor.putBoolean(HiddenLauncherApps.ENABLED, true)
+        if (!navigationApplications && !fontApplications) editor.putBoolean(HiddenLauncherApps.ENABLED, true)
         if (editor.commit()) {
             hidden = components
+            if (fontApplications) SystemFontMounts.applicationsChanged(context)
             SettingsProvider.notifySettingsChanged(context)
         } else Toast.makeText(context, context.getString(R.string.ui_save_failed), Toast.LENGTH_SHORT).show()
     }
     BackHandler(enabled = picking) { picking = false }
     LaunchedEffect(hidden) {
-        entries = withContext(Dispatchers.IO) { hidden.sorted().map { appEntry(context, it, navigationApplications) } }
+        entries = withContext(Dispatchers.IO) { hidden.sorted().map { appEntry(context, it, navigationApplications || fontApplications) } }
     }
-    LaunchedEffect(picking) {
+    LaunchedEffect(picking, showSystemApplications) {
         listState.scrollToItem(0)
         if (picking) {
             choices = null
-            val result = withContext(Dispatchers.IO) { runCatching { if (navigationApplications) readNavigationApps(context) else readLauncherApps(context) } }
+            val result = withContext(Dispatchers.IO) { runCatching { if (navigationApplications || fontApplications) readNavigationApps(context, includeSystem = fontApplications && showSystemApplications) else readLauncherApps(context) } }
             choices = result.getOrDefault(emptyList())
             if (result.isFailure) Toast.makeText(context, context.getString(R.string.ui_read_apps_failed), Toast.LENGTH_SHORT).show()
         }
     }
     Scaffold(topBar = {
         CouixTopAppBar(
-            title = if (picking) context.getString(R.string.ui_select_apps) else context.getString(if (navigationApplications) R.string.ui_navigation_apps else R.string.ui_fully_hidden_apps),
+            title = if (picking) context.getString(R.string.ui_select_apps) else context.getString(if (fontApplications) R.string.ui_system_font_mount_apps else if (navigationApplications) R.string.ui_navigation_apps else R.string.ui_fully_hidden_apps),
             dividerProgress = couixTopBarDividerProgress(listState, overscroll),
             navigationIcon = {
                 IconButton(onClick = { if (picking) picking = false else onBack() }) {
@@ -128,12 +130,19 @@ internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit, navigationAp
             actions = {
                 if (!picking) BasicText(context.getString(R.string.ui_add), style = MiuixTheme.textStyles.body1.copy(color = MiuixTheme.colorScheme.primary),
                     modifier = Modifier.clickable { picking = true }.padding(horizontal = 12.dp, vertical = 10.dp))
-                RestartMenu(context)
+                if (picking && fontApplications) {
+                    BasicText(context.getString(if (showSystemApplications) R.string.ui_font_hide_system else R.string.ui_font_show_system),
+                        style = MiuixTheme.textStyles.body1.copy(color = MiuixTheme.colorScheme.primary),
+                        modifier = Modifier.clickable { showSystemApplications = !showSystemApplications }
+                            .padding(horizontal = 12.dp, vertical = 10.dp))
+                } else RestartMenu(context)
             },
         )
     }) { padding ->
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding).couixOverscroll(listState, overscroll)) {
             item { Spacer(Modifier.height(12.dp)) }
+            if (fontApplications) item { CouixSmallTitle(context.getString(if (!picking) R.string.ui_system_font_mount_apps
+                else if (showSystemApplications) R.string.ui_font_all_apps else R.string.ui_non_system_apps)) }
             if (navigationApplications) item { CouixSmallTitle(context.getString(if (picking) R.string.ui_non_system_apps else R.string.ui_navigation_apps)) }
             val current = if (picking) choices?.filter { it.component !in hidden } else entries
             when {
@@ -151,11 +160,11 @@ internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit, navigationAp
                                 CouixCardRow(first = index == 0, last = index == apps.lastIndex) {
                                     if (index > 0) CouixItemDivider()
                                     HiddenAppRow(app, picking,
-                                        removeLabel = context.getString(if (navigationApplications) R.string.ui_remove_app else R.string.ui_unhide),
+                                        removeLabel = context.getString(if (navigationApplications || fontApplications) R.string.ui_remove_app else R.string.ui_unhide),
                                         onAdd = { save(hidden + app.component); picking = false },
                                         onRemove = { save(hidden - app.component) },
                                         onOpen = {
-                                            val launch = if (navigationApplications) context.packageManager.getLaunchIntentForPackage(app.component)
+                                            val launch = if (navigationApplications || fontApplications) context.packageManager.getLaunchIntentForPackage(app.component)
                                             else ComponentName.unflattenFromString(app.component)?.let {
                                                 android.content.Intent(android.content.Intent.ACTION_MAIN)
                                                     .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
@@ -163,7 +172,7 @@ internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit, navigationAp
                                             }
                                             if (launch == null || runCatching { context.startActivity(launch); true }.getOrDefault(false).not())
                                                 Toast.makeText(context, context.getString(R.string.ui_cannot_open_app), Toast.LENGTH_SHORT).show()
-                                        }, packageName = if (navigationApplications) app.component else ComponentName.unflattenFromString(app.component)?.packageName)
+                                        }, packageName = if (navigationApplications || fontApplications) app.component else ComponentName.unflattenFromString(app.component)?.packageName)
                                 }
                             }
                         }

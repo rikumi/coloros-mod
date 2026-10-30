@@ -23,10 +23,13 @@
     <string name="ui_font_emoji_joypixels">JoyPixels</string>
     <string name="ui_font_emoji_twitter">Twitter</string>
     <string name="ui_font_emoji_samsung">Samsung</string>
-    <string name="ui_system_font_mount_enabled">全程序掛載字型設定（試驗性）</string>
-    <string name="ui_system_font_mount_hint">使設定的字型對網頁算繪程序生效</string>
+    <string name="ui_system_font_mount_enabled">為 WebView 應用程式掛載字型設定</string>
     <string name="ui_font_emoji_downloading">正在下載 Emoji 字型…</string>
     <string name="ui_font_emoji_ready">字型已就緒，可重新啟動 Zygote 套用</string>
     <string name="ui_font_restart_preparing">正在等待字型儲存和掛載完成…</string>
     <string name="ui_font_restart_failed">字型尚未就緒，已取消重新啟動。請重新套用字型設定並查看模組日誌</string>
+    <string name="ui_system_font_mount_apps">掛載字型的 WebView 應用程式</string>
+    <string name="ui_font_show_system">顯示系統</string>
+    <string name="ui_font_hide_system">隱藏系統</string>
+    <string name="ui_font_all_apps">所有應用程式</string>
 </resources>

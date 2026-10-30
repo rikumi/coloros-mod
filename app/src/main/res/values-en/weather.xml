@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="weather_horizontal_forecast">Horizontal daily forecast</string>
     <string name="weather_hide_air_quality">Hide air quality</string>
     <string name="weather_hide_sun">Hide sunrise and sunset</string>
     <string name="weather_hide_cctv">Hide CCTV forecast</string>

@@ -1009,6 +1009,7 @@ internal fun CouixGroup(
     overrideValue: Boolean? = null,
     onItemChanged: () -> Unit = {},
     onOpenNavigationApps: () -> Unit = {},
+    onOpenFontApps: () -> Unit = {},
     modifier: Modifier = Modifier,
     footerContent: (@Composable () -> Unit)? = null,
 ) {
@@ -1032,6 +1033,11 @@ internal fun CouixGroup(
                         }
                     }
                     is GroupTitleItem -> Unit
+                    is FontAppsItem -> CouixCategoryRow(
+                        icon = null,
+                        title = ctx.getString(item.title),
+                        onClick = onOpenFontApps,
+                    )
                     is NavigationAppsItem -> CouixCategoryRow(
                         icon = null,
                         title = ctx.getString(item.title),
@@ -1054,6 +1060,7 @@ private val SettingsItem.keyForCompose: String
         is SelectItem -> key
         is GroupTitleItem -> "group:$title"
         is NavigationAppsItem -> "navigation_apps"
+        is FontAppsItem -> "font_mount_apps"
     }
 
 @Composable
