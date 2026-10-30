@@ -26,6 +26,7 @@ final class MergedSplitShadeHooks {
     private static final WeakHashMap<View, SplitLayout> layouts = new WeakHashMap<>();
     private static final WeakHashMap<View, Boolean> mediaViews = new WeakHashMap<>();
     private static final ThreadLocal<Boolean> phoneScope = new ThreadLocal<>();
+    private static final ThreadLocal<Float> panelExpansion = new ThreadLocal<>();
     private static boolean restoring;
     private static Boolean lastEnabled;
 
@@ -106,8 +107,18 @@ final class MergedSplitShadeHooks {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             View view = (View) XposedHelpers.callMethod(p.thisObject, "getView");
                             if (!phoneLayout(view) || XposedHelpers.getIntField(p.thisObject, "mStatusBarState") == 1) return;
+                            p.setObjectExtra("mergedPanelExpansionScoped", true);
+                            p.setObjectExtra("mergedPreviousPanelExpansion", panelExpansion.get());
+                            panelExpansion.set((Float) p.args[1]);
+                            // 保持分栏磁贴布局展开；内容显隐仍使用真实的面板进度。
                             p.args[0] = 1f;
                             p.args[3] = 1f;
+                        }
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            if (!Boolean.TRUE.equals(p.getObjectExtra("mergedPanelExpansionScoped"))) return;
+                            Float previous = (Float) p.getObjectExtra("mergedPreviousPanelExpansion");
+                            if (previous == null) panelExpansion.remove();
+                            else panelExpansion.set(previous);
                         }
                     });
         } catch (Throwable error) { log("merged split shade hook failed: " + error); }
@@ -161,12 +172,15 @@ final class MergedSplitShadeHooks {
                             (Integer) p.args[1]);
                 }
             });
-            // 分栏时 QS 始终展开，不能再由单栏的 elementShowing 判定进入 0.8 倍隐藏态。
+            // 布局展开度与面板显隐进度独立，收起时交还原生分层动画。
             XposedHelpers.findAndHookMethod("com.oplus.systemui.qs.OplusQSContainerImplController", pkg.classLoader,
                     "updatePanelExpansion", float.class, boolean.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     View root = (View) XposedHelpers.callMethod(p.thisObject, "getView");
-                    if (phoneLayout(root) && (Float) p.args[0] > 0f) p.args[1] = true;
+                    Float fraction = panelExpansion.get();
+                    if (!phoneLayout(root) || fraction == null) return;
+                    p.args[0] = fraction;
+                    if (fraction >= 1f) p.args[1] = true;
                 }
             });
             Class<?> editor = XposedHelpers.findClass("com.oplus.systemui.qs.customize.OplusQSCustomizer", pkg.classLoader);
@@ -464,6 +478,7 @@ final class MergedSplitShadeHooks {
             shades.clear(); containers.clear(); nativeConstraints.clear(); layouts.clear(); mediaViews.clear();
             lastEnabled = null;
             phoneScope.remove();
+            panelExpansion.remove();
         }
     }
 }

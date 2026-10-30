@@ -136,6 +136,7 @@ import top.yukonga.miuix.kmp.basic.CardColors
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.basic.IconButtonDefaults
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.ChevronForward
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -299,7 +300,9 @@ private fun CouixTopBarFrame(
                     end = COUIX_TOP_BAR_END,
                     top = COUIX_TOP_BAR_VPADDING,
                     bottom = COUIX_TOP_BAR_VPADDING,
-                ),
+                )
+                // 无按钮时保留相同的内容区高度；Row 将标题放在该区域中央。
+                .heightIn(min = IconButtonDefaults.MinHeight),
             verticalAlignment = Alignment.CenterVertically,
         ) { content() }
         CouixTopBarDivider(progress = dividerProgress)
