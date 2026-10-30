@@ -22,7 +22,7 @@ final class MergedLandscapeHooks {
     private static final WeakHashMap<View, Resources> portraitResources = new WeakHashMap<>();
 
     static boolean enabled(View view) {
-        return view != null && readBool(KEY_QS_MERGED_CARD_RATIO, false)
+        return view != null && (readBool(KEY_QS_MERGED_CARD_RATIO, false) || MergedSplitShadeHooks.phoneLayout(view))
                 && view.getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE
                 && root(view) != null;
     }
@@ -66,8 +66,7 @@ final class MergedLandscapeHooks {
     }
 
     private static boolean hideMediaHeader(View root) {
-        if (!enabled(root) || root.getResources().getConfiguration().smallestScreenWidthDp >= 600)
-            return false;
+        if (!enabled(root) || (root.getResources().getConfiguration().smallestScreenWidthDp >= 600)) return false;
         View media = root.findViewById(id(root, "media_container"));
         return media != null && media.getVisibility() == View.VISIBLE
                 && mediaContainerClass.isInstance(media.getParent())
@@ -192,6 +191,7 @@ final class MergedLandscapeHooks {
                     roots.put(root, true);
                     updateMediaHeader(root);
                     if (!enabled(root)) { restore(root); return; }
+                    if (MergedSplitShadeHooks.phoneLayout(root)) return;
                     int width = View.MeasureSpec.getSize((Integer) p.args[0]);
                     WindowManager manager = root.getContext().getSystemService(WindowManager.class);
                     android.graphics.Rect bounds = manager.getMaximumWindowMetrics().getBounds();
@@ -213,7 +213,7 @@ final class MergedLandscapeHooks {
                     "onLayout", boolean.class, int.class, int.class, int.class, int.class, new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             ViewGroup root = (ViewGroup) p.thisObject;
-                            if (!enabled(root)) return;
+                            if (!enabled(root) || MergedSplitShadeHooks.phoneLayout(root)) return;
                             for (int i = 0; i < root.getChildCount(); i++) {
                                 View child = root.getChildAt(i);
                                 if (child.getId() == id(root, "qs_customize")) continue;

@@ -8,6 +8,7 @@
     <string name="ui_font_source_han">Source Han Sans</string>
     <string name="ui_font_custom">Custom</string>
     <string name="ui_font_import_failed">Failed to import or save font</string>
+    <string name="ui_font_importing">Importing custom font…</string>
     <string name="ui_font_maple">Maple Mono</string>
     <string name="ui_font_jetbrains">JetBrains Mono</string>
     <string name="ui_font_fira">Fira Code</string>
@@ -26,4 +27,6 @@
     <string name="ui_system_font_mount_hint">Apply selected fonts to web rendering processes</string>
     <string name="ui_font_emoji_downloading">Downloading Emoji font…</string>
     <string name="ui_font_emoji_ready">Font is ready. Restart Zygote to apply</string>
+    <string name="ui_font_restart_preparing">Waiting for fonts to finish saving and mounting…</string>
+    <string name="ui_font_restart_failed">Fonts are not ready. Restart cancelled. Reapply font settings and check the module logs</string>
 </resources>

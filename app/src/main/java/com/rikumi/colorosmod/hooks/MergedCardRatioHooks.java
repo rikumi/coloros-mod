@@ -24,6 +24,7 @@ import java.util.WeakHashMap;
 public final class MergedCardRatioHooks {
     private static Class<?> containerClass, constraintParamsClass, highlightClass, mediaClass, roundRectClass, iconClass, normalTileClass;
     private static final WeakHashMap<ViewGroup, Boolean> hosts = new WeakHashMap<>();
+    private static final WeakHashMap<ViewGroup, MediaTilePlacement> mediaTilePlacements = new WeakHashMap<>();
     private static final WeakHashMap<View, Boolean> nativeLabelPadding = new WeakHashMap<>();
     private static final WeakHashMap<View, Boolean> layoutListeners = new WeakHashMap<>();
     private static final View.OnLayoutChangeListener layoutListener = (view, l, t, r, b, ol, ot, or, ob) -> {
@@ -45,9 +46,9 @@ public final class MergedCardRatioHooks {
     private static final Handler handler = new Handler(Looper.getMainLooper());
     private static final ThreadLocal<Boolean> remeasuring = new ThreadLocal<>();
     static boolean ratioEnabled(View view) {
-        return readBool(KEY_QS_MERGED_CARD_RATIO, false)
+        return MergedSplitShadeHooks.phoneLayout(view) || (readBool(KEY_QS_MERGED_CARD_RATIO, false)
                 && (view.getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT
-                    || MergedLandscapeHooks.enabled(view));
+                    || MergedLandscapeHooks.enabled(view)));
     }
 
     private static float iconFactor(View view) {
@@ -57,34 +58,41 @@ public final class MergedCardRatioHooks {
         return .95f;
     }
 
-    static float gapFraction() {
-        if (!readBool(KEY_QS_MERGED_GAP_ENABLED, false)) return 0.05f;
-        int value = Math.max(40, Math.min(60, readInt(KEY_QS_MERGED_GAP_PERCENT_TENTHS, 50)));
-        value = 40 + Math.round((value - 40) / 5f) * 5;
-        return value / 1000f;
+    static float gapFraction(View view) {
+        boolean tablet = view.getResources().getConfiguration().smallestScreenWidthDp >= 600;
+        int value = readBool(KEY_QS_MERGED_GAP_ENABLED, false)
+                ? readInt(KEY_QS_MERGED_GAP_PERCENT_TENTHS, 50) : 50;
+        return MergedLandscapeGeometry.columnGapFraction(value, tablet,
+                MergedSplitShadeHooks.enabled(view.getResources()));
+    }
+
+    private static int contentWidth(View cards) {
+        return Math.max(0, cards.getMeasuredWidth() - cards.getPaddingLeft() - cards.getPaddingRight());
     }
 
     static Float regionGap(View panel) {
-        int width = 0;
-        for (ViewGroup cards : hosts.keySet()) {
-            if (cards != null && cards.getRootView() == panel.getRootView() && cards.getMeasuredWidth() > 0) {
-                width = cards.getMeasuredWidth() - cards.getPaddingLeft() - cards.getPaddingRight();
-                break;
-            }
+        if (containerClass == null) return null;
+        int containerId = NotificationResourceIds.get(panel.getResources(), "quick_settings_container", "id", "com.android.systemui");
+        int cardsId = NotificationResourceIds.get(panel.getResources(), "oplus_qs_tile_media_container", "id", "com.android.systemui");
+        if (containerId == 0 || cardsId == 0) return null;
+        for (View ancestor = panel; ancestor != null;
+                ancestor = ancestor.getParent() instanceof View parent ? parent : null) {
+            if (ancestor.getId() != containerId) continue;
+            View cards = ancestor.findViewById(cardsId);
+            if (cards == null || !containerClass.isInstance(cards)) return null;
+            int width = contentWidth(cards);
+            return width > 0 ? (float) Math.round(width * gapFraction(cards)) : null;
         }
-        if (width <= 0 && panel.getMeasuredWidth() > 0) {
-            int id = panel.getResources().getIdentifier("qs_footer_side_padding", "dimen", "com.android.systemui");
-            int side = id != 0 ? panel.getResources().getDimensionPixelSize(id) : 0;
-            width = panel.getMeasuredWidth() - 2 * side;
-        }
-        return width > 0 ? (float) Math.round(width * gapFraction()) : null;
+        return null;
     }
 
     public static void hook(XC_LoadPackage.LoadPackageParam pkg) {
         try {
             containerClass = XposedHelpers.findClass("com.oplus.systemui.qs.OplusQSTileMediaContainer", pkg.classLoader);
             constraintParamsClass = XposedHelpers.findClass("androidx.constraintlayout.widget.ConstraintLayout$LayoutParams", pkg.classLoader);
+            hookMediaTilesOnTop(pkg);
             highlightClass = XposedHelpers.findClass("com.oplus.systemui.qs.base.tile.OplusQSHighlightTileView", pkg.classLoader);
+            MergedSplitShadeHooks.hook(pkg);
             MergedTileGridHooks.hook(pkg);
             MergedLandscapeHooks.hook(pkg);
             normalTileClass = XposedHelpers.findClass("com.oplus.systemui.qs.base.tile.OplusQSTileBaseView", pkg.classLoader);
@@ -241,6 +249,7 @@ public final class MergedCardRatioHooks {
             });
             XC_MethodHook containerResources = new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    restoreMediaTiles((ViewGroup) p.thisObject);
                     restore((ViewGroup) p.thisObject);
                 }
             };
@@ -258,18 +267,20 @@ public final class MergedCardRatioHooks {
                     ViewGroup root = (ViewGroup) p.thisObject;
                     hosts.put(root, true);
                     ensureLayoutListener(root);
-                    int width = View.MeasureSpec.getSize((Integer) p.args[0]) - root.getPaddingLeft() - root.getPaddingRight();
-                    int gap = Math.max(0, Math.round(width * gapFraction()));
-                    for (int i = 0; i < root.getChildCount(); i++) margins(root.getChildAt(i), gap, true);
-                    ViewGroup sliders = (ViewGroup) field(root, "mQsSeekBarContainer");
-                    if (sliders != null) for (int i = 0; i < sliders.getChildCount(); i++)
-                        margins(sliders.getChildAt(i), gap, false);
-                    p.setObjectExtra("gridGap", gap);
                 }
                 @Override protected void afterHookedMethod(MethodHookParam p) {
-                    if (!enabled(p) || p.getObjectExtra("gridGap") == null || p.hasThrowable()) return;
+                    if (!enabled(p) || p.hasThrowable()) return;
                     ViewGroup root = (ViewGroup) p.thisObject;
-                    int gap = (Integer) p.getObjectExtra("gridGap");
+                    int width = contentWidth(root);
+                    if (width <= 0) return;
+                    int gap = Math.round(width * gapFraction(root));
+                    boolean marginsChanged = false;
+                    for (int i = 0; i < root.getChildCount(); i++)
+                        marginsChanged |= margins(root.getChildAt(i), gap);
+                    ViewGroup sliderContainer = (ViewGroup) field(root, "mQsSeekBarContainer");
+                    if (sliderContainer != null) for (int i = 0; i < sliderContainer.getChildCount(); i++)
+                        marginsChanged |= margins(sliderContainer.getChildAt(i), gap);
+                    if (marginsChanged) remeasure(root, p);
                     boolean changed = highlight((ViewGroup) field(root, "mFirstTileContainer"), gap);
                     changed |= highlight((ViewGroup) field(root, "mSecondTileContainer"), gap);
                     View media = field(root, "mQsMediaPanelContainer");
@@ -295,16 +306,134 @@ public final class MergedCardRatioHooks {
                     }
                     cardScales.put(root, calculateCardScale(root));
                     changed |= applyGeometryIfNeeded(root);
-                    if (changed) {
-                        // 首轮取得约束求解后的实际宽度，再在同一测量周期内更新高度和区域布局。
-                        remeasuring.set(true);
-                        try {
-                            XposedHelpers.callMethod(root, "onMeasure", new Class<?>[]{int.class, int.class}, p.args[0], p.args[1]);
-                        } finally { remeasuring.remove(); }
-                    }
+                    if (changed) remeasure(root, p);
                 }
             });
         } catch (Throwable t) { log("merged card ratio hook failed: " + t); }
+    }
+
+    private static void hookMediaTilesOnTop(XC_LoadPackage.LoadPackageParam pkg) {
+        try {
+            Class<?> layout = XposedHelpers.findClass("androidx.constraintlayout.widget.ConstraintLayout", pkg.classLoader);
+            XposedHelpers.findAndHookDeclaredMethod(layout, "onLayout", boolean.class,
+                    int.class, int.class, int.class, int.class, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (containerClass.isInstance(p.thisObject)) restoreMediaTiles((ViewGroup) p.thisObject);
+                }
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (p.hasThrowable() || !containerClass.isInstance(p.thisObject)) return;
+                    ViewGroup root = (ViewGroup) p.thisObject;
+                    hosts.put(root, true);
+                    if (!mediaTilesOnTop(root)) return;
+                    View first = field(root, "mFirstTileContainer"), second = field(root, "mSecondTileContainer");
+                    View media = field(root, "mQsMediaPanelContainer"), sliders = field(root, "mQsSeekBarContainer");
+                    if (!visibleCard(root, first) || !visibleCard(root, second)
+                            || !visibleCard(root, media) || !visibleCard(root, sliders)) return;
+                    if (first.getTop() != second.getTop() || media.getTop() != sliders.getTop()
+                            || !(first.getRight() <= second.getLeft() || second.getRight() <= first.getLeft())) return;
+                    int rowTop = first.getTop(), rowBottom = Math.max(first.getBottom(), second.getBottom());
+                    int controlsBottom = Math.max(media.getBottom(), sliders.getBottom());
+                    if (rowTop < controlsBottom) return;
+                    // 交换真实布局位置，保留测量高度、横向约束与原生/自定义行间距。
+                    MediaTilePlacement placement = new MediaTilePlacement(first, second, media, sliders,
+                            media.getTop() - rowTop, rowBottom - controlsBottom);
+                    mediaTilePlacements.put(root, placement);
+                    placement.applyTranslations();
+                }
+            });
+            Class<?> function = XposedHelpers.findClass("kotlin.jvm.functions.Function1", pkg.classLoader);
+            XposedHelpers.findAndHookDeclaredMethod(containerClass, "updateSubTranslationY",
+                    float.class, int.class, function, boolean.class, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    MediaTilePlacement placement = mediaTilePlacements.get((ViewGroup) p.thisObject);
+                    if (placement != null) placement.restoreTranslations();
+                }
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    ViewGroup root = (ViewGroup) p.thisObject;
+                    MediaTilePlacement placement = mediaTilePlacements.get(root);
+                    if (placement == null) return;
+                    if (p.hasThrowable() || !mediaTilesOnTop(root)) restoreMediaTiles(root);
+                    else placement.applyTranslations();
+                }
+            });
+        } catch (Throwable t) { log("merged media tiles on top hook failed: " + t); }
+    }
+
+    private static boolean mediaTilesOnTop(View root) {
+        return readBool(KEY_QS_MERGED_MEDIA_TILES_ON_TOP, false)
+                && (MergedSplitShadeHooks.phoneLayout(root)
+                    || (root.getResources().getConfiguration().smallestScreenWidthDp < 600
+                        && !XposedHelpers.getBooleanField(root, "isLargeFoldWithOpened")))
+                && Boolean.TRUE.equals(XposedHelpers.callMethod(root, "getMediaMode"));
+    }
+
+    private static boolean visibleCard(ViewGroup root, View view) {
+        return view != null && view.getParent() == root && view.getVisibility() == View.VISIBLE
+                && view.getWidth() > 0 && view.getHeight() > 0;
+    }
+
+    private static void restoreMediaTiles(ViewGroup root) {
+        MediaTilePlacement placement = mediaTilePlacements.remove(root);
+        if (placement != null) placement.restore();
+    }
+
+    private static final class MediaTilePlacement {
+        final ArrayList<WeakReference<View>> views = new ArrayList<>(4);
+        final int[] originalTop = new int[4], appliedTop = new int[4];
+        final float[] originalTranslation = new float[4], appliedTranslation = new float[4];
+        boolean translated;
+
+        MediaTilePlacement(View first, View second, View media, View sliders, int tileOffset, int controlsOffset) {
+            for (View view : new View[]{first, second, media, sliders}) {
+                int i = views.size();
+                views.add(new WeakReference<>(view));
+                originalTop[i] = view.getTop();
+                view.offsetTopAndBottom(i < 2 ? tileOffset : controlsOffset);
+                appliedTop[i] = view.getTop();
+            }
+        }
+
+        void applyTranslations() {
+            restoreTranslations();
+            View first = views.get(0).get();
+            if (first == null) return;
+            float lowerFloor = first.getTranslationY();
+            for (int i = 0; i < views.size(); i++) {
+                View view = views.get(i).get();
+                if (view == null) continue;
+                originalTranslation[i] = view.getTranslationY();
+                // 第二层的展开位移随播控和滑条下移，顶行磁贴改用第一层位移。
+                appliedTranslation[i] = i < 2 ? 0f : originalTranslation[i] + lowerFloor;
+                view.setTranslationY(appliedTranslation[i]);
+            }
+            translated = true;
+        }
+
+        void restoreTranslations() {
+            if (!translated) return;
+            for (int i = 0; i < views.size(); i++) {
+                View view = views.get(i).get();
+                if (view != null && view.getTranslationY() == appliedTranslation[i])
+                    view.setTranslationY(originalTranslation[i]);
+            }
+            translated = false;
+        }
+
+        void restore() {
+            restoreTranslations();
+            for (int i = 0; i < views.size(); i++) {
+                View view = views.get(i).get();
+                if (view != null && view.getTop() == appliedTop[i])
+                    view.offsetTopAndBottom(originalTop[i] - appliedTop[i]);
+            }
+        }
+    }
+
+    private static void remeasure(ViewGroup root, XC_MethodHook.MethodHookParam p) {
+        remeasuring.set(true);
+        try {
+            XposedHelpers.callMethod(root, "onMeasure", new Class<?>[]{int.class, int.class}, p.args[0], p.args[1]);
+        } finally { remeasuring.remove(); }
     }
 
     private static View field(Object host, String name) {
@@ -347,18 +476,33 @@ public final class MergedCardRatioHooks {
         return changed;
     }
 
-    private static void margins(View view, int gap, boolean outer) {
-        if (!(view.getLayoutParams() instanceof ViewGroup.MarginLayoutParams lp)) return;
+    private static boolean margins(View view, int gap) {
+        if (!(view.getLayoutParams() instanceof ViewGroup.MarginLayoutParams lp)) return false;
         remember(view);
         Original original = originals.get(view);
-        int start = original.start > 0 ? (outer ? Math.round(gap / 2f) : gap) : original.start;
-        int end = original.end > 0 ? (outer ? gap / 2 : gap) : original.end;
+        int startGap = gap, endGap = gap;
+        if (constraintParamsClass.isInstance(lp) && containerClass.isInstance(view.getParent())) {
+            int guide = NotificationResourceIds.get(view.getResources(), "guide_line", "id", "com.android.systemui");
+            // 共享中线两侧各承担半个间距；直接连接相邻卡片的单边约束保留完整间距。
+            if (guide != 0) {
+                if (XposedHelpers.getIntField(lp, "startToStart") == guide
+                        || XposedHelpers.getIntField(lp, "startToEnd") == guide)
+                    startGap = gap - gap / 2;
+                if (XposedHelpers.getIntField(lp, "endToStart") == guide
+                        || XposedHelpers.getIntField(lp, "endToEnd") == guide)
+                    endGap = gap / 2;
+            }
+        }
+        int start = original.start > 0 ? startGap : original.start;
+        int end = original.end > 0 ? endGap : original.end;
         int top = original.top > 0 ? gap : original.top;
         int bottom = original.bottom > 0 ? gap : original.bottom;
         if (lp.getMarginStart() != start || lp.getMarginEnd() != end || lp.topMargin != top || lp.bottomMargin != bottom) {
             lp.setMarginStart(start); lp.setMarginEnd(end); lp.topMargin = top; lp.bottomMargin = bottom;
             view.setLayoutParams(lp);
+            return true;
         }
+        return false;
     }
 
     private static ViewGroup mergedRoot(View view) {
@@ -443,13 +587,17 @@ public final class MergedCardRatioHooks {
     }
 
     private static float calculateCardScale(ViewGroup root) {
-        int width = root.getMeasuredWidth() - root.getPaddingLeft() - root.getPaddingRight();
+        int width = contentWidth(root);
         if (width <= 0) return 1f;
-        int gap = Math.round(width * gapFraction());
+        int gap = Math.round(width * gapFraction(root));
         // 一个网格单位的栏宽，也是比例布局中 2×1 卡片的高度。
         ViewGroup holder = (ViewGroup) field(root, "mFirstTileContainer");
-        float column = holder != null && holder.getMeasuredWidth() > 0
-                ? (holder.getMeasuredWidth() - gap) / 2f : (width - 3f * gap) / 4f;
+        // 平板端 6 列: 栏宽 = (可用宽度 - 5*栏间距) / 6。
+        float column = root.getResources().getConfiguration().smallestScreenWidthDp >= 600
+                && !MergedSplitShadeHooks.phoneLayout(root)
+                ? (width - 5f * gap) / 6f
+                : (holder != null && holder.getMeasuredWidth() > 0
+                    ? (holder.getMeasuredWidth() - gap) / 2f : (width - 3f * gap) / 4f);
         int reference = 0;
         for (String name : new String[]{"mFirstTileContainer", "mSecondTileContainer"}) {
             ViewGroup tiles = (ViewGroup) field(root, name);
@@ -568,7 +716,8 @@ public final class MergedCardRatioHooks {
         final int width, height, start, end, top, bottom, paddingStart, paddingEnd, paddingTop, paddingBottom;
         final boolean icon, margin, labelGroup, labelContainer;
         final boolean includeFontPadding;
-        final float density, textSize, fontScale;
+        final float density, fontScale;
+        final float textSize;
         Geometry(View view, boolean icon) {
             this.icon = icon;
             includeFontPadding = view instanceof TextView text && text.getIncludeFontPadding();
@@ -579,7 +728,9 @@ public final class MergedCardRatioHooks {
                     && view.getId() == view.getResources().getIdentifier("label_group", "id", "com.android.systemui");
             density = view.getResources().getDisplayMetrics().density;
             fontScale = view.getResources().getConfiguration().fontScale;
-            textSize = view instanceof TextView text && MergedTileGridHooks.root(view) != null ? text.getTextSize() : 0f;
+            // 前两张高亮磁贴保留系统字号；仅下方普通磁贴随网格缩放文字。
+            textSize = view instanceof TextView text && MergedTileGridHooks.root(view) != null
+                    ? text.getTextSize() : 0f;
             ViewGroup.LayoutParams lp = view.getLayoutParams();
             width = lp.width; height = lp.height;
             margin = lp instanceof ViewGroup.MarginLayoutParams;
@@ -823,10 +974,12 @@ public final class MergedCardRatioHooks {
 
     public static void refresh() {
         handler.post(() -> {
+            MergedSplitShadeHooks.refresh();
             MergedLandscapeHooks.refresh();
             MergedTileGridHooks.refresh();
             for (ViewGroup root : new ArrayList<>(hosts.keySet())) {
                 if (root == null) continue;
+                if (!mediaTilesOnTop(root)) restoreMediaTiles(root);
                 if (!ratioEnabled(root)) restore(root);
                 cardScales.remove(root);
                 geometryPasses.remove(root);
@@ -841,16 +994,23 @@ public final class MergedCardRatioHooks {
     public static Object captureHotReloadHosts() {
         ArrayList<Object> views = new ArrayList<>(hosts.keySet());
         views.addAll(MergedTileGridHooks.capture());
+        views.addAll(MergedSplitShadeHooks.capture());
         return views;
     }
     public static void restoreHotReloadHosts(Object state) {
         if (state instanceof Iterable<?> views) {
+            MergedSplitShadeHooks.restoreHosts(views);
             MergedTileGridHooks.restoreHosts(views);
             for (Object view : views) if (view instanceof ViewGroup root && containerClass.isInstance(root)) hosts.put(root, true);
         }
         refresh();
     }
     public static void cleanupForHotReload() {
+        for (ViewGroup root : new ArrayList<>(mediaTilePlacements.keySet())) if (root != null) {
+            restoreMediaTiles(root);
+            root.requestLayout();
+        }
+        MergedSplitShadeHooks.cleanup();
         MergedLandscapeHooks.cleanup();
         handler.removeCallbacksAndMessages(null);
         for (View view : new ArrayList<>(layoutListeners.keySet())) if (view != null) view.removeOnLayoutChangeListener(layoutListener);

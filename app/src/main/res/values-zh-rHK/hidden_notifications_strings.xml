@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_category_hidden_notifications">隱藏通知</string>
+    <string name="hidden_notifications_hidden">已隱藏的通知</string>
+    <string name="hidden_notifications_visible">未隱藏的通知</string>
+    <string name="hidden_notifications_no_hidden">暫無已隱藏的通知</string>
+    <string name="hidden_notifications_no_visible">暫無未隱藏的通知</string>
+    <string name="hidden_notifications_hide">隱藏</string>
+    <string name="hidden_notifications_restore">取消隱藏</string>
+    <string name="hidden_notifications_processing">處理中…</string>
+    <string name="hidden_notifications_refresh">重新整理通知</string>
+    <string name="hidden_notifications_permission">授予通知存取權</string>
+    <string name="hidden_notifications_permission_hint">讀取和隱藏通知需要通知存取權。通知內容僅供本機顯示，不會上傳或儲存至檔案。</string>
+    <string name="hidden_notifications_connecting">正在等待通知服務連線，可點選右上角重新整理；若仍未連線，請檢查通知存取權。</string>
+    <string name="hidden_notifications_connect_failed">通知服務連線失敗，請檢查權限後重試。</string>
+    <string name="hidden_notifications_read_failed">讀取通知失敗，請重新整理後重試。</string>
+    <string name="hidden_notifications_action_failed">系統尚未確認通知狀態已變更，請稍後重新整理並重試。</string>
+    <string name="hidden_notifications_settings_failed">無法開啟通知存取權設定。</string>
+</resources>

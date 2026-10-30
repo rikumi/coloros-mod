@@ -39,14 +39,21 @@ final class RelaxedGroupHeaderHooks {
             XposedHelpers.findAndHookMethod(FrameLayout.class, "onLayout", boolean.class, int.class, int.class,
                     int.class, int.class, new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
-                            HeaderLine line = headerLines.get((View) p.thisObject);
-                            if (line != null && enabled()) alignTime((View) p.thisObject, line);
+                            View header = (View) p.thisObject;
+                            HeaderLine line = headerLines.get(header);
+                            boolean compactHeader = headerPaddings.containsKey(header);
+                            if ((line == null && !compactHeader) || !enabled()) return;
+                            if (line != null) alignTime(header, line);
+                            if (compactHeader) alignCollapsedIcon(header);
                         }
                     });
             XposedHelpers.findAndHookMethod("android.view.NotificationHeaderView", lp.classLoader,
                     "onMeasure", int.class, int.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             if (enabled()) alignExpandedHeader((View) p.thisObject, false);
+                        }
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            if (enabled()) adjustExpandedHeaderHeight((View) p.thisObject);
                         }
                     });
             XposedHelpers.findAndHookMethod(container,
@@ -210,10 +217,24 @@ final class RelaxedGroupHeaderHooks {
         View iconContainer = id == 0 ? null : header.findViewById(id);
         if (iconContainer == null) return;
 
-        alignIcon(iconContainer, Gravity.CENTER_VERTICAL | Gravity.START, 0);
+        alignIcon(iconContainer, Gravity.TOP | Gravity.START, 0);
         id = header.getResources().getIdentifier("icon", "id", "com.android.systemui");
         View icon = id == 0 ? null : iconContainer.findViewById(id);
         if (icon != null) alignIcon(icon, Gravity.CENTER, 0);
+    }
+
+    private static void alignCollapsedIcon(View header) {
+        if (!(header.getParent() instanceof View container) || !names.containsKey(container)
+                || NotificationHooks.isMinimizedGroup(container)) return;
+        int containerId = NotificationResourceIds.get(header.getResources(), "icon_container", "id", "com.android.systemui");
+        View iconContainer = containerId == 0 ? null : header.findViewById(containerId);
+        if (iconContainer == null || iconContainer.getParent() != header) return;
+        int iconId = NotificationResourceIds.get(header.getResources(), "icon", "id", "com.android.systemui");
+        View icon = iconId == 0 ? null : iconContainer.findViewById(iconId);
+        if (icon == null || icon.getParent() != iconContainer || icon.getHeight() == 0) return;
+        int target = RelaxedNotificationHooks.iconMargin(icon) + NotificationGroupPaddingHooks.inset(container);
+        int current = header.getTop() + iconContainer.getTop() + icon.getTop();
+        iconContainer.offsetTopAndBottom(target - current);
     }
 
     private static void alignExpandedHeader(View header, boolean laidOut) {
@@ -241,6 +262,18 @@ final class RelaxedGroupHeaderHooks {
         int target = compactHeader.getTop() + compactName.getTop() + compactName.getBaseline();
         int current = header.getTop() + line.getTop() + appName.getTop() + appName.getBaseline();
         line.offsetTopAndBottom(target - current);
+    }
+
+    // 展开态: 原生 NotificationHeaderView 高度固定, 模块给折叠头加的上下内边距没有落到它身上,
+    // 导致基线对齐把 notification_top_line 下移后溢出。这里把展开头的高度补上模块额外内边距。
+    private static void adjustExpandedHeaderHeight(View header) {
+        if (!(header.getParent() instanceof View container) || !names.containsKey(container)
+                || NotificationHooks.isMinimizedGroup(container)
+                || XposedHelpers.getObjectField(container, "mGroupHeader") != header) return;
+        int extra = 2 * NotificationGroupPaddingHooks.inset(container) + fixedExtraHeight(container);
+        if (extra <= 0) return;
+        XposedHelpers.callMethod(header, "setMeasuredDimension",
+                header.getMeasuredWidth(), header.getMeasuredHeight() + extra);
     }
 
     private static void alignIcon(View icon, int gravity, int top) {

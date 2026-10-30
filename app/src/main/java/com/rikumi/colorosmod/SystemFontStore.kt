@@ -9,8 +9,47 @@ import io.github.libxposed.service.XposedService
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
+import java.util.concurrent.Executors
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 
 internal object SystemFontStore {
+    private val changes = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "font-settings-sync").also { it.isDaemon = true }
+    }
+    private var changeFailure: Throwable? = null
+
+    // Enqueue from the UI callback, before launching a cancellable UI coroutine.
+    fun enqueue(change: () -> Unit): Deferred<Unit> {
+        val result = CompletableDeferred<Unit>()
+        changes.execute {
+            try {
+                change()
+                changeFailure = null
+                result.complete(Unit)
+            } catch (error: Throwable) {
+                changeFailure = error
+                AppLog.log("font settings operation failed: $error")
+                result.completeExceptionally(error)
+            }
+        }
+        return result
+    }
+
+    fun whenReady(context: Context, action: () -> Unit, onFailure: (Throwable) -> Unit) {
+        val app = context.applicationContext
+        changes.execute {
+            try {
+                changeFailure?.let { throw IllegalStateException("Previous font change failed", it) }
+                SystemFontMounts.awaitPending(app)
+            } catch (error: Throwable) {
+                onFailure(error)
+                return@execute
+            }
+            action()
+        }
+    }
+
     class NotMonospaceFontException : IllegalArgumentException()
     private val slots = listOf(SystemFontHooks.ZH, SystemFontHooks.LATIN, SystemFontHooks.MONO, SystemFontHooks.EMOJI)
     fun isFont(key: String) = key in slots
@@ -51,7 +90,7 @@ internal object SystemFontStore {
             runCatching {
                 check(service.getRemotePreferences(SystemFontHooks.PREFS).edit()
                     .putBoolean(SystemFontHooks.DISABLE_REPLACEMENT, local.getBoolean(SystemFontHooks.DISABLE_REPLACEMENT, false)).commit())
-            }.onFailure { AppLog.log("font replacement settings sync failed: $it") }
+            }.onFailure { AppLog.log("font replacement settings sync failed: $it") }.getOrThrow()
         }
     }
 
@@ -68,18 +107,18 @@ internal object SystemFontStore {
             "Cannot save font settings"
         }
         setInt(context, key, value)
-        if (key == SystemFontHooks.EMOJI && value > 0) {
-            val app = context.applicationContext
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                android.widget.Toast.makeText(app, R.string.ui_font_emoji_ready, android.widget.Toast.LENGTH_LONG).show()
-            }
-        }
         SystemFontMounts.schedule(context, service, manifest)
+        if (key == SystemFontHooks.EMOJI && value > 0) notifyReady(context)
     }
 
     @Synchronized
     fun import(context: Context, key: String, uri: Uri) {
         require(isFont(key) && key != SystemFontHooks.EMOJI)
+        val app = context.applicationContext
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        handler.post {
+            android.widget.Toast.makeText(app, R.string.ui_font_importing, android.widget.Toast.LENGTH_LONG).show()
+        }
         val service = service()
         val temporary = File.createTempFile("import-", ".font", directory(context))
         var backup: File? = null
@@ -131,6 +170,15 @@ internal object SystemFontStore {
             }
             backup?.delete()
             temporary.delete()
+        }
+        notifyReady(context)
+    }
+
+    private fun notifyReady(context: Context) {
+        SystemFontMounts.awaitPending(context)
+        val app = context.applicationContext
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            android.widget.Toast.makeText(app, R.string.ui_font_emoji_ready, android.widget.Toast.LENGTH_LONG).show()
         }
     }
 

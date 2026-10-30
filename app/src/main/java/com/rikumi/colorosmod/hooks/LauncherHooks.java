@@ -53,6 +53,7 @@ public final class LauncherHooks {
     }
 
     public static void onSettingsSnapshotPublished(java.util.Map<String, Integer> settings) {
+        TaskbarGestureHooks.onSettingsSnapshotPublished();
         LauncherIconGapHooks.onSettingsSnapshotPublished(settings);
         LauncherStartupRefresh.onSettingsSnapshotPublished();
         DrawerInstallTimeHooks.onSettingsSnapshotPublished(settings);
@@ -519,6 +520,7 @@ public final class LauncherHooks {
         java.util.ArrayList<Object> saved = new java.util.ArrayList<>();
         saved.add(new Object[] { "idleRefreshActivity", LauncherIdleRefresh.captureActivity() });
         saved.add(new Object[] { "iconGapViews", LauncherIconGapHooks.captureViews() });
+        saved.add(new Object[] { "taskbarGestureControllers", TaskbarGestureHooks.captureControllers() });
         synchronized (sDrawerIconStates) {
             for (java.util.Map.Entry<Object, DrawerIconState> entry : sDrawerIconStates.entrySet()) {
                 Object owner = entry.getKey();
@@ -586,6 +588,10 @@ public final class LauncherHooks {
         for (Object value : (Object[]) saved) {
             if (!(value instanceof Object[])) continue;
             Object[] state = (Object[]) value;
+            if (state.length >= 2 && "taskbarGestureControllers".equals(state[0])) {
+                TaskbarGestureHooks.restoreControllers(state[1]);
+                continue;
+            }
             if (state.length >= 2 && "iconGapViews".equals(state[0])) {
                 LauncherIconGapHooks.restoreViews(state[1]);
                 continue;
@@ -702,6 +708,7 @@ public final class LauncherHooks {
     }
 
     public static void cleanupForHotReload() {
+        TaskbarGestureHooks.cleanupForHotReload();
         LauncherStartupRefresh.cleanup();
         LauncherIconGapHooks.cleanup();
         LauncherIdleRefresh.cleanup();
@@ -937,6 +944,8 @@ public final class LauncherHooks {
 
     public static void hookLauncher(final XC_LoadPackage.LoadPackageParam lpparam) {
         log(">>> matched launcher, classLoader=" + lpparam.classLoader);
+        try { TaskbarGestureHooks.hook(lpparam); }
+        catch (Throwable error) { log("taskbar gesture hooks unavailable: " + error); }
         try { LauncherIconClarityHooks.hook(lpparam); }
         catch (Throwable error) { log("launcher icon clarity unavailable: " + error); }
         sLauncherClassLoader = lpparam.classLoader;

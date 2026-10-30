@@ -16,12 +16,15 @@ import java.lang.ref.WeakReference;
 import java.util.WeakHashMap;
 
 final class MergedTileGridHooks {
-    private static Class<?> tileClass, headerClass, quickControllerClass;
+    private static Class<?> tileClass, headerClass, quickControllerClass, customizerClass;
+    private static final int SIX_COLUMN_MIN_TILES = 8;
+    private static final int HIGHLIGHT_TILE_COUNT = 2;
+    private static final WeakHashMap<View, CharSequence> customizerHints = new WeakHashMap<>();
     private static final WeakHashMap<ViewGroup, Boolean> pagedPages = new WeakHashMap<>();
     private static final WeakHashMap<ViewGroup, Boolean> columnHosts = new WeakHashMap<>();
     private static final WeakHashMap<Object, Boolean> quickControllers = new WeakHashMap<>();
     private static final ThreadLocal<Boolean> restoringColumns = new ThreadLocal<>();
-    private static Boolean lastFourColumns, lastRatio;
+    private static Boolean lastFourColumns, lastRatio, lastLandscapeSwap;
     private static final WeakHashMap<Object, Runnable> pendingAnimations = new WeakHashMap<>();
     private static final WeakHashMap<Object, Long> animatorGeometry = new WeakHashMap<>();
     private static final WeakHashMap<Object, Integer> fixedAnimators = new WeakHashMap<>();
@@ -30,6 +33,7 @@ final class MergedTileGridHooks {
     private static final String[] FIELDS = {"mCellWidth", "mCellHeight", "mResourceCellHeight", "mEstimatedCellHeight", "mCellMarginHorizontal", "mCellMarginVertical", "mSidePadding"};
 
     static void hook(XC_LoadPackage.LoadPackageParam pkg) {
+        hookCustomizerMinimum(pkg);
         try {
             tileClass = XposedHelpers.findClass("com.android.systemui.qs.TileLayout", pkg.classLoader);
             headerClass = XposedHelpers.findClass("com.oplus.systemui.qs.widget.OplusHeaderTileLayout", pkg.classLoader);
@@ -58,7 +62,7 @@ final class MergedTileGridHooks {
             });
             XposedHelpers.findAndHookDeclaredMethod("com.android.systemui.qs.QuickQSPanel", pkg.classLoader, "getNumQuickTiles", new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    if (fourColumns()) p.setResult(4);
+                    if (forceColumns((View) p.thisObject)) p.setResult(forcedColumns((View) p.thisObject));
 
                 }
             });
@@ -68,9 +72,10 @@ final class MergedTileGridHooks {
                     ViewGroup root = (ViewGroup) p.thisObject;
                     if (!isGrid(root)) return;
                     columnHosts.put(root, true);
-                    if (!fourColumns() || headerClass.isInstance(root)) return;
-                    XposedHelpers.setIntField(root, "mColumns", 4);
-                    p.setResult((Integer) p.getObjectExtra("oldColumns") != 4);
+                    if (!forceColumns(root) || headerClass.isInstance(root)) return;
+                    int columns = forcedColumns(root);
+                    XposedHelpers.setIntField(root, "mColumns", columns);
+                    p.setResult((Integer) p.getObjectExtra("oldColumns") != columns);
                 }
             });
             // 区域顶部间距同时用于容器高度计算与展开位置，不仅修改最终视觉坐标。
@@ -255,7 +260,7 @@ final class MergedTileGridHooks {
                         if (page instanceof ViewGroup root && isGrid(root)) {
                             columnHosts.put(root, true);
                             pagedPages.put(root, true);
-                            if (fourColumns()) XposedHelpers.setIntField(root, "mColumns", 4);
+                            if (fourColumns()) XposedHelpers.setIntField(root, "mColumns", forcedColumns(root));
                             if (enabled(root)) {
                                 View pager = (View) p.thisObject;
                                 int width = View.MeasureSpec.getSize((Integer) p.args[0]) - pager.getPaddingLeft() - pager.getPaddingRight();
@@ -281,6 +286,60 @@ final class MergedTileGridHooks {
             XposedHelpers.findAndHookDeclaredMethod(tileClass, "updateResources", resources);
             XposedHelpers.findAndHookDeclaredMethod(headerClass, "updateResources", resources);
         } catch (Throwable t) { log("merged tile grid hook failed: " + t); }
+    }
+
+    private static void hookCustomizerMinimum(XC_LoadPackage.LoadPackageParam pkg) {
+        try {
+            customizerClass = XposedHelpers.findClass("com.oplus.systemui.qs.customize.OplusQSCustomizer", pkg.classLoader);
+            Class<?> editType = XposedHelpers.findClass("com.oplus.systemui.qs.base.customizer.IQSCustomizer$EditType", pkg.classLoader);
+            XposedHelpers.findAndHookDeclaredMethod(customizerClass, "-$$Nest$mhandleCheckMinCount",
+                    customizerClass, editType, new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            if (!Boolean.TRUE.equals(p.getResult())) return;
+                            View customizer = (View) p.args[0];
+                            if (!sixColumnEditor(customizer)
+                                    || editableTileCount(customizer) <= SIX_COLUMN_MIN_TILES - HIGHLIGHT_TILE_COUNT) return;
+                            TextView more = (TextView) XposedHelpers.getObjectField(customizer, "mMoreFunctionLabel");
+                            int moreId = customizer.getResources().getIdentifier("qs_customizer_more_tiles", "string", "com.android.systemui");
+                            if (more != null && moreId != 0) more.setText(moreId);
+                            TextView hint = (TextView) XposedHelpers.getObjectField(customizer, "mLimitNumberHint");
+                            if (hint != null) hint.setVisibility(View.INVISIBLE);
+                            p.setResult(false);
+                        }
+                    });
+            XposedHelpers.findAndHookDeclaredMethod(customizerClass, "showMinCountHint", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (p.hasThrowable()) return;
+                    View customizer = (View) p.thisObject;
+                    TextView hint = (TextView) XposedHelpers.getObjectField(customizer, "mLimitNumberHint");
+                    if (hint == null) return;
+                    if (!customizerHints.containsKey(customizer)) customizerHints.put(customizer, hint.getText());
+                    if (sixColumnEditor(customizer)) {
+                        int id = customizer.getResources().getIdentifier("oplus_qs_edit_remove_disabled_at_least", "string", "com.android.systemui");
+                        if (id != 0) hint.setText(customizer.getResources().getString(id, SIX_COLUMN_MIN_TILES));
+                        hint.setVisibility(editableTileCount(customizer) <= SIX_COLUMN_MIN_TILES - HIGHLIGHT_TILE_COUNT
+                                ? View.VISIBLE : View.INVISIBLE);
+                    } else {
+                        hint.setText(customizerHints.get(customizer));
+                    }
+                }
+            });
+        } catch (Throwable t) { log("merged tile editor minimum hook failed: " + t); }
+    }
+
+    private static boolean sixColumnEditor(View customizer) {
+        return fourColumns() && forcedColumns(customizer) == 6;
+    }
+
+    private static int editableTileCount(View customizer) {
+        Object adapter = XposedHelpers.getObjectField(customizer, "mTileAdapterTop");
+        int count = (Integer) XposedHelpers.callMethod(adapter, "getItemCount");
+        // The top adapter excludes the two highlight tiles and may end with an empty drag slot.
+        if (count > 0) {
+            Object last = XposedHelpers.callMethod(adapter, "getTile", count - 1);
+            if (XposedHelpers.callMethod(last, "getSpec") == null) count--;
+        }
+        return count;
     }
 
     private static long viewGeometry(long hash, View view) {
@@ -373,12 +432,20 @@ final class MergedTileGridHooks {
     private static boolean fourColumns() {
         return !Boolean.TRUE.equals(restoringColumns.get()) && readBool(KEY_QS_MERGED_FOUR_COLUMNS, false);
     }
+    private static boolean forceColumns(View view) {
+        return !Boolean.TRUE.equals(restoringColumns.get())
+                && (fourColumns() || MergedSplitShadeHooks.enabled(view.getResources()));
+    }
+    private static int forcedColumns(View view) {
+        if (MergedSplitShadeHooks.enabled(view.getResources())) return 4;
+        return view.getResources().getConfiguration().smallestScreenWidthDp >= 600 ? 6 : 4;
+    }
     private static int columns(ViewGroup root) {
-        return fourColumns() ? 4 : Math.max(1, integer(root, "mColumns"));
+        return forceColumns(root) ? forcedColumns(root) : Math.max(1, integer(root, "mColumns"));
     }
     // 与系统收起布局相同，按固定直径决定可见数量；展开列数不参与磁贴直径计算。
     private static int collapsedColumns(ViewGroup root, int available) {
-        if (fourColumns()) return 4;
+        if (forceColumns(root)) return forcedColumns(root);
         android.content.res.Resources resources = MergedLandscapeHooks.resources(root);
         int sizeId = resources.getIdentifier("qs_quick_qs_tile_size", "dimen", "com.android.systemui");
         int paddingId = resources.getIdentifier("op_qs_quick_tile_padding", "dimen", "com.android.systemui");
@@ -445,7 +512,7 @@ final class MergedTileGridHooks {
         int available = Math.max(1, width - root.getPaddingLeft() - root.getPaddingRight());
         Original original = hosts.get(root);
         original.contentWidth = available;
-        int gap = Math.round(available * MergedCardRatioHooks.gapFraction());
+        int gap = Math.round(available * MergedCardRatioHooks.gapFraction(root));
         int diameterWidth = available;
         int diameterColumns = collapsedColumns(root, available);
 
@@ -472,7 +539,7 @@ final class MergedTileGridHooks {
             for (int i = 0; i < root.getChildCount(); i++) MergedLandscapeHooks.compact(root.getChildAt(i));
         }
         int count = columns(root);
-        int diameterGap = Math.round(diameterWidth * MergedCardRatioHooks.gapFraction());
+        int diameterGap = Math.round(diameterWidth * MergedCardRatioHooks.gapFraction(root));
         int size = Math.max(1, (diameterWidth - (diameterColumns - 1) * diameterGap) / diameterColumns);
         float scale = MergedCardRatioHooks.contentScale(root);
         float density = root.getResources().getDisplayMetrics().density;
@@ -533,14 +600,18 @@ final class MergedTileGridHooks {
         root.requestLayout();
     }
     static void refresh() {
+        for (View customizer : new ArrayList<>(customizerHints.keySet())) if (customizer != null)
+            XposedHelpers.callMethod(customizer, "showMinCountHint");
         for (View panel : new ArrayList<>(panelClips.keySet())) if (panel != null) {
             PanelClip clip = panelClips.get(panel);
             clip.updateListener(panel);
             panel.setClipBounds(clip.nativeBounds == null ? null : panelBounds(panel, clip));
         }
         boolean four = fourColumns(), ratio = readBool(KEY_QS_MERGED_CARD_RATIO, false);
-        if (lastFourColumns == null || lastFourColumns != four || lastRatio == null || lastRatio != ratio) {
-            lastFourColumns = four; lastRatio = ratio;
+        boolean swap = readBool(KEY_QS_MERGED_LANDSCAPE_SWAP, false);
+        if (lastFourColumns == null || lastFourColumns != four || lastRatio == null || lastRatio != ratio
+                || lastLandscapeSwap == null || lastLandscapeSwap != swap) {
+            lastFourColumns = four; lastRatio = ratio; lastLandscapeSwap = swap;
             for (Object controller : new ArrayList<>(quickControllers.keySet())) if (controller != null)
                 XposedHelpers.callMethod(controller, "setTiles");
             for (ViewGroup root : new ArrayList<>(columnHosts.keySet())) if (root != null) {
@@ -561,6 +632,7 @@ final class MergedTileGridHooks {
     static ArrayList<Object> capture() {
         ArrayList<Object> result = new ArrayList<>(hosts.keySet());
         result.addAll(columnHosts.keySet()); result.addAll(quickControllers.keySet());
+        result.addAll(customizerHints.keySet());
         for (View panel : new ArrayList<>(panelClips.keySet())) if (panel != null) {
             Rect bounds = panelClips.get(panel).nativeBounds;
             result.add(new Object[]{panel, bounds == null ? null : new Rect(bounds)});
@@ -574,6 +646,10 @@ final class MergedTileGridHooks {
                 clip.nativeBounds = record[1] instanceof Rect bounds ? new Rect(bounds) : null;
                 panelClips.put(panel, clip);
                 clip.updateListener(panel);
+                continue;
+            }
+            if (customizerClass != null && customizerClass.isInstance(view)) {
+                XposedHelpers.callMethod(view, "showMinCountHint");
                 continue;
             }
             if (quickControllerClass.isInstance(view)) quickControllers.put(view, true);
@@ -599,6 +675,12 @@ final class MergedTileGridHooks {
         for (ViewGroup root : new ArrayList<>(hosts.keySet())) if (root != null) restore(root);
         restoringColumns.set(true);
         try {
+            for (View customizer : new ArrayList<>(customizerHints.keySet())) if (customizer != null) {
+                TextView hint = (TextView) XposedHelpers.getObjectField(customizer, "mLimitNumberHint");
+                if (hint != null) hint.setText(customizerHints.get(customizer));
+                XposedHelpers.callMethod(customizer, "showMinCountHint");
+            }
+            customizerHints.clear();
             for (ViewGroup root : new ArrayList<>(columnHosts.keySet())) if (root != null) XposedHelpers.callMethod(root, "updateResources");
             for (Object controller : new ArrayList<>(quickControllers.keySet())) if (controller != null) XposedHelpers.callMethod(controller, "setTiles");
         } finally { restoringColumns.remove(); }

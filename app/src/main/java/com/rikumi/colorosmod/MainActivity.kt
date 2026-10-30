@@ -12,6 +12,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.Bundle
 import android.util.Log
+import android.view.WindowInsets
+import android.view.WindowManager
 import android.widget.Toast
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -26,12 +28,22 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets as ComposeWindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.exclude
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,9 +59,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -90,6 +104,14 @@ import androidx.navigationevent.NavigationEventDispatcher
 import androidx.navigationevent.NavigationEventDispatcherOwner
 import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
 
+// 平板适配: 对话框等内容宽度不超过该值(480dp), 居中显示, 两侧留白用主题 surface 色填充。
+internal val CONTENT_MAX_WIDTH_DP = 480.dp
+
+// 平板两栏布局: 屏幕宽度超过 480dp 时启用; 左右栏按系统设置的 4:7 比例分配宽度。
+private const val TABLET_MIN_WIDTH_DP = 480
+private const val TABLET_LEFT_PANE_WEIGHT = 4f
+private const val TABLET_RIGHT_PANE_WEIGHT = 7f
+
 class MainActivity : ComponentActivity() {
     private var resumeRequest by mutableStateOf(0)
 
@@ -107,16 +129,41 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                } else {
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+            }
+        }
+        window.decorView.setOnApplyWindowInsetsListener { view, insets ->
+            val applied = view.onApplyWindowInsets(insets)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && applied.displayCutout == null) {
+                // ColorOS may omit the cutout from dispatched insets while retaining it in window metrics.
+                val metricsInsets = windowManager.currentWindowMetrics.windowInsets
+                val cutout = metricsInsets.displayCutout
+                    ?: return@setOnApplyWindowInsetsListener applied
+                val type = WindowInsets.Type.displayCutout()
+                WindowInsets.Builder(applied)
+                    .setDisplayCutout(cutout)
+                    .setInsets(type, metricsInsets.getInsets(type))
+                    .setInsetsIgnoringVisibility(type, metricsInsets.getInsetsIgnoringVisibility(type))
+                    .setVisible(type, metricsInsets.isVisible(type))
+                    .build()
+            } else {
+                applied
+            }
+        }
         restoreRemovedThemeColor(this)
         if (listenerRegistered.compareAndSet(false, true)) {
             XposedServiceHelper.registerListener(object : XposedServiceHelper.OnServiceListener {
                 override fun onServiceBind(service: XposedService) {
                     xposedServices.add(service)
                     val context = applicationContext
-                    Thread {
-                        runCatching { SystemFontStore.sync(context, service) }
-                            .onFailure { AppLog.log("font settings sync failed: $it") }
-                    }.start()
+                    SystemFontStore.enqueue { SystemFontStore.sync(context, service) }
                     scopeObservers.forEach { it.run() }
                 }
                 override fun onServiceDied(service: XposedService) {
@@ -152,7 +199,14 @@ class MainActivity : ComponentActivity() {
                     textStyles = couixTextStyles(),
                 ) {
                     CouixStatusBar()
-                    CouixOverscrollHost { SettingsScreen(resumeRequest) }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MiuixTheme.colorScheme.surface),
+                    ) {
+                        // 两栏布局(平板)在 SettingsScreen 内部根据屏幕宽度决定。
+                        CouixOverscrollHost { SettingsScreen(resumeRequest) }
+                    }
                 }
             }
         }
@@ -184,6 +238,14 @@ internal data class SwitchItem(
     val masterEnableAllowed: Boolean = true,
     val defaultEnabled: Boolean = false,
 ) : SettingsItem
+
+private fun SettingsItem.forDevice(isPad: Boolean): SettingsItem =
+    if (isPad && this is SwitchItem) {
+        when (key) {
+            XposedInit.KEY_QS_MERGED_LANDSCAPE_SWAP -> copy(label = R.string.qs_merged_landscape_split_tablet)
+            else -> this
+        }
+    } else this
 
 internal data class FolderBlockItem(
     val key: String,
@@ -246,9 +308,11 @@ private val QS: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.qs_merged_modernization),
     SwitchItem("qs_merged_hollow", R.string.qs_merged_hollow),
     SwitchItem("qs_merged_radiant", R.string.qs_merged_radiant),
+    SwitchItem(XposedInit.KEY_QS_MERGED_LANDSCAPE_SWAP, R.string.qs_merged_landscape_swap),
     SwitchItem("qs_merged_card_ratio", R.string.qs_merged_card_ratio),
     SwitchItem("qs_merged_gap_enabled", R.string.qs_merged_gap_enabled, sliderKey = "qs_merged_gap_percent_tenths", sliderMin = 40, sliderMax = 60, sliderStep = 5, sliderDefault = 50, sliderDisplayScale = 0.1f, sliderUnit = "%"),
     SwitchItem("qs_merged_four_columns", R.string.qs_merged_four_columns),
+    SwitchItem(XposedInit.KEY_QS_MERGED_MEDIA_TILES_ON_TOP, R.string.qs_merged_media_tiles_on_top),
     SwitchItem("qs_merged_settings_rotation", R.string.qs_merged_settings_rotation),
     SwitchItem("qs_merged_tile_scale_animation", R.string.qs_merged_tile_scale_animation),
     SwitchItem("qs_merged_tile_clip_animation", R.string.qs_merged_tile_clip_animation),
@@ -315,7 +379,8 @@ private val NAV: List<SettingsItem> = listOf(
     SwitchItem("mback_enabled", R.string.ui_mback, R.string.ui_mback_hint),
     SwitchItem("gesture_touch_through_enabled", R.string.ui_gesture_touch_through),
     SwitchItem("rotation_button_fixed_position_enabled", R.string.ui_rotation_button, R.string.ui_rotation_button_hint),
-    SwitchItem("disable_rotation_suggestions", R.string.ui_disable_rotation_suggestions, rootBacked = true),
+    SwitchItem("disable_rotation_suggestions", R.string.ui_disable_rotation_suggestions, rootBacked = true,
+        masterEnableAllowed = false),
     SwitchItem("long_press_timeout_enabled", R.string.ui_long_press_timeout, sliderKey = "long_press_timeout_ms", sliderMax = 600, sliderDefault = 300, sliderUnit = "ms", sliderMin = 100, sliderStep = 50, rootBacked = true),
     SwitchItem("animation_duration_scale_enabled", R.string.ui_animation_scale, sliderKey = "animation_duration_scale", sliderMax = 20, sliderDefault = 15, sliderUnit = "", sliderUnitRes = R.string.ui_unit_multiplier, sliderDisplayScale = 0.05f, rootBacked = true),
     GroupTitleItem(R.string.ui_gesture_visual),
@@ -456,12 +521,14 @@ private val CATEGORY_GROUPS: List<List<Category>> = listOf(
         Category("purification", R.string.weather_category_purification, MiuixIcons.Tune, PURIFICATION),
         Category("storage", R.string.ui_category_storage, MiuixIcons.Folder, STORAGE),
         Category(DISABLED_APPS_ID, R.string.ui_category_disabled, MiuixIcons.Blocklist, emptyList()),
+        Category(HIDDEN_NOTIFICATIONS_ID, R.string.ui_category_hidden_notifications, MiuixIcons.Hide, emptyList()),
     ),
 )
 private val CATEGORIES = CATEGORY_GROUPS.flatten()
 
 // "停用应用"分类 id: 该分类没有开关项, 子页面在路由里特判渲染为只读列表。
 private const val DISABLED_APPS_ID = "disabled_apps"
+private const val HIDDEN_NOTIFICATIONS_ID = "hidden_notifications"
 private const val HIDDEN_LAUNCHER_APPS_ID = "hidden_launcher_apps"
 private const val NAVIGATION_APPS_ID = "navigation_apps"
 
@@ -483,10 +550,12 @@ private val List<SettingsItem>.masterItems: List<SettingsItem>
                 || (it is SelectItem && it.masterManaged)
     }
 
+// 一键启用开关的“已启用”判定只看显式落盘的值, 忽略 defaultEnabled/defaultValue,
+// 这样全新安装时(默认开启项尚未写入)主开关保持关闭, 由用户主动一键启用。
 private fun SettingsItem.isEnabledInMaster(prefs: SharedPreferences): Boolean = when (this) {
-    is SwitchItem -> prefs.getBoolean(settingKey, defaultEnabled)
+    is SwitchItem -> prefs.getBoolean(settingKey, false)
     is FolderBlockItem -> prefs.getBoolean(settingKey, false)
-    is SelectItem -> prefs.getInt(key, defaultValue) != 0
+    is SelectItem -> prefs.getInt(key, 0) != 0
     is GroupTitleItem, is NavigationAppsItem -> false
 }
 
@@ -543,6 +612,7 @@ fun SettingsScreen(resumeRequest: Int = 0) {
     val missingScopes = rememberMissingScopes(resumeRequest)
     val ctx = LocalContext.current
     val prefs = remember { ctx.settingsPrefs() }
+    val isPad = LocalConfiguration.current.smallestScreenWidthDp >= 600
 
     val scope = rememberCoroutineScope()
     // version 变化时强制重读 prefs 同步所有开关状态。
@@ -562,8 +632,8 @@ fun SettingsScreen(resumeRequest: Int = 0) {
 
     // 主开关: scope = null 作用于全部功能(首页), 否则只作用于该分类的设置项。
     val onMasterChange: (String?, Boolean) -> Unit = { targetScope, target ->
-        val items = targetScope?.let { id -> CATEGORIES.first { it.id == id }.items.masterItems }
-            ?: CATEGORIES.flatMap { it.items.masterItems }
+        val items = (targetScope?.let { id -> CATEGORIES.first { it.id == id }.items.masterItems }
+            ?: CATEGORIES.flatMap { it.items.masterItems }).map { it.forDevice(isPad) }
         masterOverride = MasterOverride(targetScope, target)
         version++
         scope.launch {
@@ -586,6 +656,8 @@ fun SettingsScreen(resumeRequest: Int = 0) {
                             } else {
                                 setBool(ctx, item.key, target)
                                 if (!target) item.sliderKey?.let { setInt(ctx, it, item.sliderDefault) }
+                                // 一键启用“彻底隐藏应用”时, 默认补上电话本与 Gboard(若已安装)。
+                                if (target && item.key == HiddenLauncherApps.ENABLED) addDefaultHiddenApps(ctx)
                             }
                         }
                         is FolderBlockItem -> {
@@ -606,46 +678,152 @@ fun SettingsScreen(resumeRequest: Int = 0) {
         }
     }
 
-    AnimatedContent(
-        targetState = openCategoryId,
-        transitionSpec = {
-            // 按层级判断 push/pop，二级列表返回所属分类也使用 pop。
-            fun depth(id: String?) = when (id) {
-                null -> 0
-                HIDDEN_LAUNCHER_APPS_ID, NAVIGATION_APPS_ID -> 2
-                else -> 1
-            }
-            val enter = if (depth(targetState) < depth(initialState)) -1 else 1
-            val spec = tween<IntOffset>(durationMillis = PAGE_TRANSITION_MS, easing = PAGE_TRANSITION_EASING)
-            (fadeIn(animationSpec = tween(durationMillis = PAGE_TRANSITION_MS, easing = PAGE_TRANSITION_EASING)) +
-                slideInHorizontally(animationSpec = spec) { enter * it / 5 })
-                .togetherWith(
-                    fadeOut(animationSpec = tween(durationMillis = PAGE_TRANSITION_MS, easing = PAGE_TRANSITION_EASING)) +
-                        slideOutHorizontally(animationSpec = spec) { -enter * it / 5 }
-                )
-        },
-        label = "settings_pages",
-    ) { targetId ->
-        val category = CATEGORIES.firstOrNull { it.id == targetId }
-        if (targetId == HIDDEN_LAUNCHER_APPS_ID) {
-            HiddenAppsScreen(context = ctx, onBack = { openCategoryId = "hidden_apps" })
-        } else if (targetId == NAVIGATION_APPS_ID) {
-            HiddenAppsScreen(context = ctx, onBack = { openCategoryId = "navigation" }, navigationApplications = true)
-        } else if (targetId == DISABLED_APPS_ID) {
-            // 只读列表页, 不走开关列表的 CategoryScreen。
-            DisabledAppsScreen(ctx = ctx, onBack = { openCategoryId = null })
-        } else if (category == null) {
+    val isTablet = LocalConfiguration.current.screenWidthDp > TABLET_MIN_WIDTH_DP
+    val navigate: (String?) -> Unit = { openCategoryId = it }
+
+    if (isTablet) {
+        val cutout = ComposeWindowInsets.displayCutout
+        val cutoutPadding = cutout.exclude(
+            ComposeWindowInsets(left = COUIX_GROUP_HMARGIN, right = COUIX_GROUP_HMARGIN),
+        )
+        // 平板两栏: 左栏较窄显示首页, 右栏显示分类/子页面, 默认打开桌面设置。
+        Row(
+            Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(cutoutPadding)
+                .consumeWindowInsets(cutout),
+        ) {
             val anyEnabled = remember(version) {
                 CATEGORIES.any { c -> c.items.masterItems.any { it.isEnabledInMaster(prefs) } }
             }
-            HomeScreen(
-                cardStyle = prefs.getInt("about_device_card_style", 0),
-                missingScopes = missingScopes,
-                masterChecked = masterOverride.valueFor(null) ?: anyEnabled,
-                onMasterChange = { onMasterChange(null, it) },
-                onOpenCategory = { openCategoryId = it },
+            Column(
+                Modifier
+                    .weight(TABLET_LEFT_PANE_WEIGHT)
+                    .fillMaxHeight(),
+            ) {
+                HomeScreen(
+                    cardStyle = prefs.getInt("about_device_card_style", 0),
+                    missingScopes = missingScopes,
+                    masterChecked = masterOverride.valueFor(null) ?: anyEnabled,
+                    onMasterChange = { onMasterChange(null, it) },
+                    // 桌面设置是右栏默认页, 点击它回到 null 以保持返回键能退出。
+                    onOpenCategory = { id -> navigate(if (id == "desktop") null else id) },
+                    selectedCategoryId = when (openCategoryId) {
+                        HIDDEN_LAUNCHER_APPS_ID -> "hidden_apps"
+                        NAVIGATION_APPS_ID -> "navigation"
+                        else -> openCategoryId ?: "desktop"
+                    },
+                    showRestartMenu = false,
+                )
+            }
+            Box(
+                Modifier
+                    .width(1.dp)
+                    .fillMaxHeight()
+                    .background(MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.16f)),
             )
-        } else {
+            Column(Modifier.weight(TABLET_RIGHT_PANE_WEIGHT).fillMaxHeight()) {
+                AnimatedContent(
+                    targetState = openCategoryId ?: "desktop",
+                    transitionSpec = {
+                        // 二级页(隐藏/导航应用)层级更深, 返回所属分类使用 pop。
+                        fun depth(id: String) = when (id) {
+                            HIDDEN_LAUNCHER_APPS_ID, NAVIGATION_APPS_ID -> 2
+                            else -> 1
+                        }
+                        val enter = if (depth(targetState) < depth(initialState)) -1 else 1
+                        val spec = tween<IntOffset>(durationMillis = PAGE_TRANSITION_MS, easing = PAGE_TRANSITION_EASING)
+                        (fadeIn(animationSpec = tween(durationMillis = PAGE_TRANSITION_MS, easing = PAGE_TRANSITION_EASING)) +
+                            slideInHorizontally(animationSpec = spec) { enter * it / 5 })
+                            .togetherWith(
+                                fadeOut(animationSpec = tween(durationMillis = PAGE_TRANSITION_MS, easing = PAGE_TRANSITION_EASING)) +
+                                    slideOutHorizontally(animationSpec = spec) { -enter * it / 5 }
+                            )
+                    },
+                    label = "tablet_detail",
+                ) { targetId ->
+                    DetailPane(
+                        targetId = targetId,
+                        ctx = ctx,
+                        prefs = prefs,
+                        version = version,
+                        masterOverride = masterOverride,
+                        onMasterChange = onMasterChange,
+                        onItemChanged = { version++ },
+                        navigate = navigate,
+                        showBack = false,
+                    )
+                }
+            }
+        }
+    } else {
+        AnimatedContent(
+            targetState = openCategoryId,
+            transitionSpec = {
+                // 按层级判断 push/pop，二级列表返回所属分类也使用 pop。
+                fun depth(id: String?) = when (id) {
+                    null -> 0
+                    HIDDEN_LAUNCHER_APPS_ID, NAVIGATION_APPS_ID -> 2
+                    else -> 1
+                }
+                val enter = if (depth(targetState) < depth(initialState)) -1 else 1
+                val spec = tween<IntOffset>(durationMillis = PAGE_TRANSITION_MS, easing = PAGE_TRANSITION_EASING)
+                (fadeIn(animationSpec = tween(durationMillis = PAGE_TRANSITION_MS, easing = PAGE_TRANSITION_EASING)) +
+                    slideInHorizontally(animationSpec = spec) { enter * it / 5 })
+                    .togetherWith(
+                        fadeOut(animationSpec = tween(durationMillis = PAGE_TRANSITION_MS, easing = PAGE_TRANSITION_EASING)) +
+                            slideOutHorizontally(animationSpec = spec) { -enter * it / 5 }
+                    )
+            },
+            label = "settings_pages",
+        ) { targetId ->
+            if (targetId == null) {
+                val anyEnabled = remember(version) {
+                    CATEGORIES.any { c -> c.items.masterItems.any { it.isEnabledInMaster(prefs) } }
+                }
+                HomeScreen(
+                    cardStyle = prefs.getInt("about_device_card_style", 0),
+                    missingScopes = missingScopes,
+                    masterChecked = masterOverride.valueFor(null) ?: anyEnabled,
+                    onMasterChange = { onMasterChange(null, it) },
+                    onOpenCategory = navigate,
+                )
+            } else {
+                DetailPane(
+                    targetId = targetId,
+                    ctx = ctx,
+                    prefs = prefs,
+                    version = version,
+                    masterOverride = masterOverride,
+                    onMasterChange = onMasterChange,
+                    onItemChanged = { version++ },
+                    navigate = navigate,
+                )
+            }
+        }
+    }
+}
+
+// 二级/更内层页面路由: 分类、隐藏应用、停用应用列表。
+@Composable
+private fun DetailPane(
+    targetId: String,
+    ctx: Context,
+    prefs: SharedPreferences,
+    version: Int,
+    masterOverride: MasterOverride?,
+    onMasterChange: (String?, Boolean) -> Unit,
+    onItemChanged: () -> Unit,
+    navigate: (String?) -> Unit,
+    showBack: Boolean = true,
+) {
+    when (targetId) {
+        HIDDEN_LAUNCHER_APPS_ID -> HiddenAppsScreen(context = ctx, onBack = { navigate("hidden_apps") })
+        NAVIGATION_APPS_ID -> HiddenAppsScreen(context = ctx, onBack = { navigate("navigation") }, navigationApplications = true)
+        DISABLED_APPS_ID -> DisabledAppsScreen(ctx = ctx, onBack = { navigate(null) }, showBack = showBack)
+        HIDDEN_NOTIFICATIONS_ID -> HiddenNotificationsScreen(ctx = ctx, onBack = { navigate(null) }, showBack = showBack)
+        else -> {
+            val category = CATEGORIES.firstOrNull { it.id == targetId } ?: return
             val override = masterOverride.valueFor(category.id)
             val anyEnabled = remember(version) { category.items.masterItems.any { it.isEnabledInMaster(prefs) } }
             CategoryScreen(
@@ -656,10 +834,11 @@ fun SettingsScreen(resumeRequest: Int = 0) {
                 overrideValue = override,
                 masterChecked = override ?: anyEnabled,
                 onMasterChange = { onMasterChange(category.id, it) },
-                onItemChanged = { version++ },
-                onBack = { openCategoryId = null },
-                onOpenHiddenApps = { openCategoryId = HIDDEN_LAUNCHER_APPS_ID },
-                onOpenNavigationApps = { openCategoryId = NAVIGATION_APPS_ID },
+                onItemChanged = onItemChanged,
+                onBack = { navigate(null) },
+                onOpenHiddenApps = { navigate(HIDDEN_LAUNCHER_APPS_ID) },
+                onOpenNavigationApps = { navigate(NAVIGATION_APPS_ID) },
+                showBack = showBack,
             )
         }
     }
@@ -672,6 +851,8 @@ private fun HomeScreen(
     masterChecked: Boolean,
     onMasterChange: (Boolean) -> Unit,
     onOpenCategory: (String) -> Unit,
+    selectedCategoryId: String? = null,
+    showRestartMenu: Boolean = true,
 ) {
     val ctx = LocalContext.current
     val listState = rememberLazyListState()
@@ -701,7 +882,7 @@ private fun HomeScreen(
             CouixLargeTitle(
                 title = "ColorOS Mod",
                 dividerProgress = couixTopBarDividerProgress(listState, overscrollOffset),
-                actions = { RestartMenu(ctx) },
+                actions = { if (showRestartMenu) RestartMenu(ctx) },
             )
         },
     ) { padding ->
@@ -751,6 +932,7 @@ private fun HomeScreen(
                                 title = ctx.getString(category.title),
                                 subtitle = category.subtitle?.let(ctx::getString),
                                 onClick = { onOpenCategory(category.id) },
+                                selected = selectedCategoryId?.let { it == category.id },
                             )
                         }
                     }
@@ -786,11 +968,13 @@ private fun CategoryScreen(
     onBack: () -> Unit,
     onOpenHiddenApps: () -> Unit,
     onOpenNavigationApps: () -> Unit,
+    showBack: Boolean = true,
 ) {
     val listState = rememberLazyListState()
+    val isPad = LocalConfiguration.current.smallestScreenWidthDp >= 600
     // 按 GroupTitleItem 切分: 每段一张卡片, 段与段之间自然留出 group 间距。
-    val groups = remember(category, version, overrideValue) {
-        category.items.filterNot {
+    val groups = remember(category, version, overrideValue, isPad) {
+        category.items.map { it.forDevice(isPad) }.filterNot {
             it is SwitchItem && it.key == "drawer_letter_scroll_enabled"
                     && prefs.getBoolean("drawer_install_time_sort_enabled", false)
         }.splitByDivider()
@@ -802,15 +986,19 @@ private fun CategoryScreen(
             CouixTopAppBar(
                 title = ctx.getString(category.title),
                 dividerProgress = couixTopBarDividerProgress(listState, overscrollOffset),
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = MiuixIcons.Back,
-                            contentDescription = ctx.getString(R.string.ui_back),
-                            tint = MiuixTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(COUIX_BACK_ICON),
-                        )
+                navigationIcon = if (showBack) {
+                    {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                imageVector = MiuixIcons.Back,
+                                contentDescription = ctx.getString(R.string.ui_back),
+                                tint = MiuixTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(COUIX_BACK_ICON),
+                            )
+                        }
                     }
+                } else {
+                    null
                 },
                 actions = { RestartMenu(ctx) },
             )
@@ -1369,15 +1557,18 @@ internal fun setBool(ctx: Context, key: String, value: Boolean) {
     val editor = prefs.edit().putBoolean(key, value)
     if (key == "qs_merged_hollow" && !value) editor.putBoolean("qs_merged_radiant", false)
     editor.commit()
-    if (key == "system_font_disable_replacement") SystemFontStore.syncReplacementSettings(ctx)
+    if (key == "system_font_disable_replacement") {
+        val context = ctx.applicationContext
+        SystemFontStore.enqueue { SystemFontStore.syncReplacementSettings(context) }
+    }
     if (key == "system_font_mount_enabled") {
         val context = ctx.applicationContext
-        Thread {
-            if (value) MainActivity.xposedServices.firstOrNull()?.let { service ->
-                runCatching { SystemFontStore.sync(context, service) }
-                    .onFailure { AppLog.log("font mount preference sync failed: $it") }
-            } else SystemFontMounts.resume(context)
-        }.start()
+        SystemFontStore.enqueue {
+            if (value) {
+                val service = MainActivity.xposedServices.firstOrNull() ?: error("Xposed service unavailable")
+                SystemFontStore.sync(context, service)
+            } else SystemFontMounts.scheduleRestore(context)
+        }
     }
     if (key == HomeControlsTileSettings.KEY) HomeControlsTileSettings.sync(ctx)
     SettingsProvider.notifySettingsChanged(ctx)
@@ -1386,6 +1577,27 @@ internal fun setBool(ctx: Context, key: String, value: Boolean) {
 internal fun setInt(ctx: Context, key: String, value: Int) {
     ctx.settingsPrefs().edit().putInt(key, value).commit()
     SettingsProvider.notifySettingsChanged(ctx)
+}
+
+// 一键启用“彻底隐藏应用”时默认隐藏的内置组件(电话本、Gboard), 仅在已安装且存在桌面入口时添加。
+private fun addDefaultHiddenApps(context: Context) {
+    val installed = HiddenLauncherApps.queryActivities(context)
+        .mapNotNull { it.activityInfo?.let { ai -> ComponentName(ai.packageName, ai.name).flattenToString() } }
+        .toSet()
+    val defaults = listOf(
+        "com.android.contacts/com.android.contacts.PeopleActivityAlias",
+        "com.google.android.inputmethod.latin/com.google.android.libraries.inputmethod.launcher.LauncherActivity",
+    )
+    val prefs = context.settingsPrefs()
+    val current = prefs.getStringSet(HiddenLauncherApps.COMPONENTS, emptySet()).orEmpty().toMutableSet()
+    var changed = false
+    for (component in defaults) {
+        if (component in installed) changed = current.add(component) || changed
+    }
+    if (changed) {
+        prefs.edit().putStringSet(HiddenLauncherApps.COMPONENTS, current).commit()
+        SettingsProvider.notifySettingsChanged(context)
+    }
 }
 
 internal fun applySystemSetting(key: String, enabled: Boolean, value: Int) {
@@ -1471,18 +1683,36 @@ private fun restartScope(ctx: Context) {
     }
 }
 
+private val zygoteRestartPending = AtomicBoolean(false)
+
 private fun softRebootSystem(ctx: Context) {
-    runCatching {
-        Runtime.getRuntime().exec("su").also { p ->
-            val os = DataOutputStream(p.outputStream)
-            os.writeBytes("setprop ctl.restart zygote\n")
-            os.writeBytes("exit\n")
-            os.flush()
-            p.waitFor()
-        }
-    }.onFailure {
-        android.widget.Toast.makeText(ctx, ctx.getString(R.string.ui_root_denied), android.widget.Toast.LENGTH_SHORT).show()
+    if (!zygoteRestartPending.compareAndSet(false, true)) return
+    val app = ctx.applicationContext
+    val handler = Handler(app.mainLooper)
+    val preparing = AtomicBoolean(true)
+    val waitingHint = Runnable {
+        if (preparing.get()) Toast.makeText(app, R.string.ui_font_restart_preparing, Toast.LENGTH_SHORT).show()
     }
+    handler.postDelayed(waitingHint, 500)
+    SystemFontStore.whenReady(app, action = {
+        preparing.set(false)
+        handler.removeCallbacks(waitingHint)
+        try {
+            val process = ProcessBuilder("su", "-c", "setprop ctl.restart zygote").start()
+            check(process.waitFor() == 0) { "Zygote restart command failed" }
+        } catch (error: Exception) {
+            AppLog.log("Zygote restart failed: $error")
+            handler.post { Toast.makeText(app, R.string.ui_root_denied, Toast.LENGTH_SHORT).show() }
+        } finally {
+            zygoteRestartPending.set(false)
+        }
+    }, onFailure = { error ->
+        preparing.set(false)
+        handler.removeCallbacks(waitingHint)
+        zygoteRestartPending.set(false)
+        AppLog.log("Zygote restart cancelled: font settings are not ready: $error")
+        handler.post { Toast.makeText(app, R.string.ui_font_restart_failed, Toast.LENGTH_LONG).show() }
+    })
 }
 
 internal fun colorOSAccentColor(context: Context, fallback: Long): Color {

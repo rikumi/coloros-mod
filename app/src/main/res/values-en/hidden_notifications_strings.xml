@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_category_hidden_notifications">Hide notifications</string>
+    <string name="hidden_notifications_hidden">Hidden notifications</string>
+    <string name="hidden_notifications_visible">Visible notifications</string>
+    <string name="hidden_notifications_no_hidden">No hidden notifications</string>
+    <string name="hidden_notifications_no_visible">No visible notifications</string>
+    <string name="hidden_notifications_hide">Hide</string>
+    <string name="hidden_notifications_restore">Unhide</string>
+    <string name="hidden_notifications_processing">Processing…</string>
+    <string name="hidden_notifications_refresh">Refresh notifications</string>
+    <string name="hidden_notifications_permission">Grant notification access</string>
+    <string name="hidden_notifications_permission_hint">Notification access is required to read and hide notifications. Their content is only displayed on this device, never uploaded or saved to files.</string>
+    <string name="hidden_notifications_connecting">Waiting for the notification service. Tap refresh at the top right; if it still cannot connect, check notification access.</string>
+    <string name="hidden_notifications_connect_failed">Could not connect to the notification service. Check access and try again.</string>
+    <string name="hidden_notifications_read_failed">Could not read notifications. Refresh to try again.</string>
+    <string name="hidden_notifications_action_failed">The system has not confirmed the change. Refresh and try again later.</string>
+    <string name="hidden_notifications_settings_failed">Could not open notification access settings.</string>
+</resources>

@@ -80,7 +80,7 @@ private fun buildExportScript(ctx: Context, apps: List<ManagedAppEntry>): String
 }
 
 @Composable
-internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
+internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit, showBack: Boolean = true) {
     val listState = rememberLazyListState()
     val overscrollOffset = remember { mutableFloatStateOf(0f) }
     val scope = rememberCoroutineScope()
@@ -172,15 +172,19 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit) {
             CouixTopAppBar(
                 title = ctx.getString(if (picking) R.string.app_management_select_system else R.string.ui_category_disabled),
                 dividerProgress = couixTopBarDividerProgress(currentListState, overscrollOffset),
-                navigationIcon = {
-                    IconButton(onClick = { if (!busy) { if (picking) picking = false else onBack() } }) {
-                        Icon(
-                            imageVector = MiuixIcons.Back,
-                            contentDescription = ctx.getString(R.string.ui_back),
-                            tint = MiuixTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(COUIX_BACK_ICON),
-                        )
+                navigationIcon = if (showBack || picking) {
+                    {
+                        IconButton(onClick = { if (!busy) { if (picking) picking = false else onBack() } }) {
+                            Icon(
+                                imageVector = MiuixIcons.Back,
+                                contentDescription = ctx.getString(R.string.ui_back),
+                                tint = MiuixTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(COUIX_BACK_ICON),
+                            )
+                        }
                     }
+                } else {
+                    null
                 },
                 actions = {
                     if (!picking && !busy) {

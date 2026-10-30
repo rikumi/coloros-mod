@@ -5,17 +5,20 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -35,7 +38,7 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
-/** Shared bottom confirmation dialog with styled content and rounded text actions. */
+/** Shared adaptive confirmation dialog with styled content and rounded text actions. */
 @Composable
 internal fun CouixConfirmDialog(
     title: String,
@@ -53,15 +56,24 @@ internal fun CouixConfirmDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
         val window = (LocalView.current.parent as DialogWindowProvider).window
-        SideEffect {
-            window.setGravity(Gravity.BOTTOM)
-            window.setWindowAnimations(R.style.CouixBottomDialogAnimation)
-        }
-        Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 12.dp)) {
+        BoxWithConstraints(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            val centered = maxWidth >= CONTENT_MAX_WIDTH_DP
+            SideEffect {
+                window.setGravity(if (centered) Gravity.CENTER else Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+                window.setWindowAnimations(if (centered) 0 else R.style.CouixBottomDialogAnimation)
+            }
             Card(
                 cornerRadius = 20.dp,
                 colors = CardDefaults.defaultColors(),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .widthIn(max = CONTENT_MAX_WIDTH_DP)
+                    .fillMaxWidth(),
             ) {
                 Column(Modifier.padding(bottom = 8.dp)) {
                     Column(Modifier.padding(24.dp)) {

@@ -10,7 +10,10 @@ import android.util.Log;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.text.TextUtils;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.widget.TextView;
 import android.widget.TextSwitcher;
 
@@ -273,7 +276,205 @@ public final class GestureHooks {
         }
     }
 
+    private static final int FLAG_SLIPPERY = 1 << 29;
+    private static final java.util.Map<View, GestureTouchWindowState> GESTURE_TOUCH_WINDOWS =
+            new java.util.WeakHashMap<>();
+    private static boolean sGestureTouchHooksActive;
+    private static final android.os.Handler GESTURE_TOUCH_MAIN =
+            new android.os.Handler(android.os.Looper.getMainLooper());
+    private static final Runnable REFRESH_GESTURE_TOUCH = () -> {
+        if (!sGestureTouchHooksActive) return;
+        for (View root : new java.util.ArrayList<>(GESTURE_TOUCH_WINDOWS.keySet())) {
+            syncGestureTouchWindow(root);
+            root.requestApplyInsets();
+            root.requestLayout();
+        }
+    };
+
+    public static void onGestureTouchSettingsChanged() {
+        GESTURE_TOUCH_MAIN.removeCallbacks(REFRESH_GESTURE_TOUCH);
+        GESTURE_TOUCH_MAIN.post(REFRESH_GESTURE_TOUCH);
+    }
+
+    private static boolean isNavigationFrame(View view) {
+        String name = view.getClass().getName();
+        return name.equals("com.android.systemui.navigationbar.views.NavigationBarFrame")
+                || name.equals("com.android.systemui.navigationbar.NavigationBarFrame");
+    }
+
+    private static View findNavigationFrame(View view) {
+        while (view != null) {
+            if (isNavigationFrame(view)) return view;
+            view = view.getParent() instanceof View ? (View) view.getParent() : null;
+        }
+        return null;
+    }
+
+    private static boolean isPhoneGestureBlockActive(View root) {
+        if (!sGestureTouchHooksActive || !root.isAttachedToWindow()) return false;
+        View handle = findHandleInTree(root);
+        return handle != null && handle.isShown() && handle.getAlpha() > 0f
+                && isGestureBlockActive(handle);
+    }
+
+    private static void syncGestureTouchWindow(View view) {
+        View root = findNavigationFrame(view);
+        if (root == null) return;
+        GestureTouchWindowState state = GESTURE_TOUCH_WINDOWS.get(root);
+        if (state == null) {
+            if (!sGestureTouchHooksActive) return;
+            state = new GestureTouchWindowState();
+            GESTURE_TOUCH_WINDOWS.put(root, state);
+        }
+        if (!root.isAttachedToWindow()) state.touchActive = false;
+        if (!(root.getLayoutParams() instanceof WindowManager.LayoutParams)) return;
+        WindowManager.LayoutParams params = (WindowManager.LayoutParams) root.getLayoutParams();
+        try {
+            boolean protect = sGestureTouchHooksActive
+                    && (state.touchActive || isPhoneGestureBlockActive(root));
+            if (state.updateFlags(params, protect) && root.isAttachedToWindow()) {
+                root.getContext().getSystemService(WindowManager.class).updateViewLayout(root, params);
+            }
+        } catch (Throwable t) { log("gesture touch window sync failed: " + t); }
+    }
+
+    private static void hookGestureTouchWindow(ClassLoader loader) {
+        XC_MethodHook windowHook = new XC_MethodHook() {
+            @Override protected void beforeHookedMethod(MethodHookParam param) {
+                if (!(param.args[0] instanceof View)
+                        || !(param.args[1] instanceof WindowManager.LayoutParams)) return;
+                View root = (View) param.args[0];
+                if (!isNavigationFrame(root)) return;
+                GestureTouchWindowState state = GESTURE_TOUCH_WINDOWS.get(root);
+                if (state == null) {
+                    if (!sGestureTouchHooksActive) return;
+                    state = new GestureTouchWindowState();
+                    GESTURE_TOUCH_WINDOWS.put(root, state);
+                }
+                try {
+                    state.updateFlags((WindowManager.LayoutParams) param.args[1],
+                            sGestureTouchHooksActive && (state.touchActive || isPhoneGestureBlockActive(root)));
+                } catch (Throwable t) { log("gesture touch window flags failed: " + t); }
+            }
+        };
+        try {
+            XposedHelpers.findAndHookMethod("android.view.WindowManagerImpl", null,
+                    "addView", View.class, ViewGroup.LayoutParams.class, windowHook);
+        } catch (Throwable t) { log("gesture touch window add hook failed: " + t); }
+        try {
+            XposedHelpers.findAndHookMethod("android.view.WindowManagerGlobal", null,
+                    "updateViewLayout", View.class, ViewGroup.LayoutParams.class, windowHook);
+        } catch (Throwable t) { log("gesture touch window update hook failed: " + t); }
+        for (String prefix : new String[] {
+                "com.android.systemui.navigationbar.views.", "com.android.systemui.navigationbar."}) {
+            Class<?> frame = XposedHelpers.findClassIfExists(prefix + "NavigationBarFrame", loader);
+            if (frame != null) {
+                try {
+                    XposedHelpers.findAndHookDeclaredMethod(frame, "dispatchTouchEvent", MotionEvent.class,
+                            new XC_MethodHook() {
+                                @Override protected void beforeHookedMethod(MethodHookParam param) {
+                                    View root = (View) param.thisObject;
+                                    MotionEvent event = (MotionEvent) param.args[0];
+                                    if (event == null) return;
+                                    syncGestureTouchWindow(root);
+                                    GestureTouchWindowState state = GESTURE_TOUCH_WINDOWS.get(root);
+                                    if (state == null) return;
+                                    boolean blockDown = event.getActionMasked() == MotionEvent.ACTION_DOWN
+                                            && isPhoneGestureBlockActive(root)
+                                            && event.getX() >= 0 && event.getX() < root.getWidth()
+                                            && event.getY() >= computeGestureBandTop(root, getGestureBarHeightPx(root))
+                                            && event.getY() < root.getHeight();
+                                    if (state.onTouch(event.getActionMasked(), event.getDownTime(), blockDown)) {
+                                        param.setObjectExtra("gesture_touch_consumed", Boolean.TRUE);
+                                    }
+                                }
+
+                                @Override protected void afterHookedMethod(MethodHookParam param) {
+                                    if (!Boolean.TRUE.equals(param.getObjectExtra("gesture_touch_consumed"))) return;
+                                    if (!param.hasThrowable()) param.setResult(true);
+                                    syncGestureTouchWindow((View) param.thisObject);
+                                }
+                            });
+                } catch (Throwable t) { log("gesture touch frame hook failed: " + t); }
+            }
+            Class<?> navView = XposedHelpers.findClassIfExists(prefix + "NavigationBarView", loader);
+            if (navView != null) {
+                try {
+                    XposedHelpers.findAndHookDeclaredMethod(navView, "setSlippery", boolean.class,
+                            new XC_MethodHook() {
+                                @Override protected void beforeHookedMethod(MethodHookParam param) {
+                                    View root = findNavigationFrame((View) param.thisObject);
+                                    GestureTouchWindowState state = GESTURE_TOUCH_WINDOWS.get(root);
+                                    if (state != null && root.getLayoutParams() instanceof WindowManager.LayoutParams) {
+                                        state.onNativeSlipperyRequest((WindowManager.LayoutParams) root.getLayoutParams(),
+                                                (Boolean) param.args[0]);
+                                    }
+                                }
+
+                                @Override protected void afterHookedMethod(MethodHookParam param) {
+                                    syncGestureTouchWindow((View) param.thisObject);
+                                }
+                            });
+                } catch (Throwable t) { log("gesture touch slippery hook failed: " + t); }
+            }
+        }
+    }
+
+    private static final class GestureTouchWindowState {
+        private final java.util.Set<WindowManager.LayoutParams> modified =
+                java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        long downTime = -1;
+        boolean touchActive;
+
+        boolean onTouch(int action, long eventDownTime, boolean blockDown) {
+            if (action == MotionEvent.ACTION_DOWN) {
+                downTime = blockDown ? eventDownTime : -1;
+                touchActive = blockDown;
+            }
+            boolean consume = downTime != -1 && downTime == eventDownTime;
+            if (consume && (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL)) {
+                touchActive = false;
+            }
+            return consume;
+        }
+
+        void onNativeSlipperyRequest(WindowManager.LayoutParams params, boolean slippery) {
+            if (!slippery) modified.remove(params);
+        }
+
+        boolean updateFlag(WindowManager.LayoutParams params, boolean protect) {
+            int before = params.flags;
+            if (protect) {
+                if ((before & FLAG_SLIPPERY) != 0) modified.add(params);
+                params.flags &= ~FLAG_SLIPPERY;
+            } else if (modified.remove(params)) {
+                params.flags |= FLAG_SLIPPERY;
+            }
+            return params.flags != before;
+        }
+
+        boolean updateFlags(WindowManager.LayoutParams params, boolean protect) {
+            boolean changed = updateFlag(params, protect);
+            Object rotations = XposedHelpers.getObjectField(params, "paramsForRotation");
+            if (rotations instanceof Object[]) for (Object rotated : (Object[]) rotations) {
+                if (rotated instanceof WindowManager.LayoutParams) {
+                    changed |= updateFlag((WindowManager.LayoutParams) rotated, protect);
+                }
+            }
+            return changed;
+        }
+
+        void restore() {
+            touchActive = false;
+            downTime = -1;
+            for (WindowManager.LayoutParams params : modified) params.flags |= FLAG_SLIPPERY;
+            modified.clear();
+        }
+    }
+
     public static void hookGestureTouchThrough(final XC_LoadPackage.LoadPackageParam lpparam) {
+        sGestureTouchHooksActive = true;
+        hookGestureTouchWindow(lpparam.classLoader);
         try {
             Class<?> navigationBarClass = findNavigationBarClass(lpparam.classLoader);
             boolean legacyNavigationBar = navigationBarClass.getName().equals(
@@ -300,8 +501,9 @@ public final class GestureHooks {
                                     sImeVisible = XposedHelpers.getBooleanField(
                                             param.thisObject, "mImeVisible");
                                 }
-                                if (navView instanceof android.view.View && sImeVisible) {
-                                    removeGestureBlockSurfaces((android.view.View) navView);
+                                if (navView instanceof android.view.View) {
+                                    syncGestureTouchWindow((View) navView);
+                                    if (sImeVisible) removeGestureBlockSurfaces((View) navView);
                                 }
                             } catch (Throwable ignored) { }
                         }
@@ -651,6 +853,7 @@ public final class GestureHooks {
     }
 
     static void syncGestureBlockSurface(android.view.View handle) {
+        syncGestureTouchWindow(handle);
         if (isGestureBlockActive(handle)) {
             ensureGestureBlockSurface(handle);
         } else if (XposedHelpers.getAdditionalInstanceField(
@@ -671,6 +874,7 @@ public final class GestureHooks {
     }
 
     static void removeGestureBlockSurfaces(android.view.View view) {
+        syncGestureTouchWindow(view);
         android.view.View current = view;
         while (current != null) {
             removeGestureBlockSurface(current);
@@ -864,6 +1068,13 @@ public final class GestureHooks {
     }
 
     public static void cleanupForHotReload() {
+        sGestureTouchHooksActive = false;
+        GESTURE_TOUCH_MAIN.removeCallbacks(REFRESH_GESTURE_TOUCH);
+        for (View root : new java.util.ArrayList<>(GESTURE_TOUCH_WINDOWS.keySet())) {
+            syncGestureTouchWindow(root);
+        }
+        for (GestureTouchWindowState state : GESTURE_TOUCH_WINDOWS.values()) state.restore();
+        GESTURE_TOUCH_WINDOWS.clear();
         // Snapshot first: removeMBackSurface also removes entries from MBACK_GESTURES.
         java.util.List<MBackGesture> gestures =
                 new java.util.ArrayList<MBackGesture>(MBACK_GESTURES.values());
@@ -901,6 +1112,7 @@ public final class GestureHooks {
     }
 
     static void triggerNavigation(android.view.View handle, boolean home) {
+        if (TaskbarGestureHooks.dispatchNavigation(handle, home)) return;
         android.view.View navView = null;
         try {
             android.view.View parent = handle;
@@ -1034,6 +1246,23 @@ public final class GestureHooks {
 
         void update() {
             if (getParent() != host) return;
+            android.graphics.RectF taskbarBounds = TaskbarGestureHooks.getHandleBounds(source, host);
+            if (taskbarBounds != null) {
+                int padding = Math.round(getMBackBandPaddingDp()
+                        * source.getResources().getDisplayMetrics().density);
+                int width = Math.round(taskbarBounds.width()) + padding * 2;
+                int height = Math.round(taskbarBounds.height()) + padding * 2;
+                android.widget.FrameLayout.LayoutParams lp =
+                        (android.widget.FrameLayout.LayoutParams) getLayoutParams();
+                if (lp.width != width || lp.height != height) {
+                    lp.width = width;
+                    lp.height = height;
+                    setLayoutParams(lp);
+                }
+                setX(taskbarBounds.centerX() - width / 2f);
+                setY(taskbarBounds.centerY() - height / 2f);
+                return;
+            }
             int barHeight = getSourceInt("mHeight", source.getHeight());
             int handleBottom = getSourceInt("mHandleBottom", 0);
             float density = readDensity();

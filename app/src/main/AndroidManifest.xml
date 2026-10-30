@@ -78,6 +78,17 @@
             </intent-filter>
         </service>
 
+        <service
+            android:name=".HiddenNotificationsService"
+            android:label="@string/ui_category_hidden_notifications"
+            android:directBootAware="false"
+            android:exported="false"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".SystemFontBootReceiver"
             android:directBootAware="true"

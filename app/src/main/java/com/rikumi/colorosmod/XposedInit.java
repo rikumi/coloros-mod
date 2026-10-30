@@ -173,6 +173,8 @@ public class XposedInit extends XposedModule {
     public static final String KEY_QS_MERGED_FOUR_COLUMNS = "qs_merged_four_columns";
     public static final String KEY_QS_MERGED_GAP_ENABLED = "qs_merged_gap_enabled";
     public static final String KEY_QS_MERGED_CARD_RATIO = "qs_merged_card_ratio";
+    public static final String KEY_QS_MERGED_MEDIA_TILES_ON_TOP = "qs_merged_media_tiles_on_top";
+    public static final String KEY_QS_MERGED_LANDSCAPE_SWAP = "qs_merged_landscape_swap";
     public static final String KEY_QS_FILL_EMPTY = "qs_fill_empty";
     public static final String KEY_SEPARATE_NETWORK_TYPE = "separate_network_type";
     public static final String KEY_HIDE_ROAMING_ICON = "hide_roaming_icon";
@@ -527,6 +529,7 @@ public class XposedInit extends XposedModule {
             LauncherHooks.onSettingsSnapshotPublished(all);
         }
         if ("com.android.systemui".equals(sHookedPackageName)) {
+            GestureHooks.onGestureTouchSettingsChanged();
             com.rikumi.colorosmod.hooks.AppNavigationHooks.onSettingsChanged();
             com.rikumi.colorosmod.hooks.LegacyNotificationLayoutHooks.onSettingsSnapshotPublished();
             QsHooks.onCornerRadiusSettingsChanged();

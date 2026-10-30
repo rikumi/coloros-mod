@@ -224,6 +224,12 @@ final class RelaxedNotificationHooks {
 
     static void anchorIcon(Object object) { anchorIcon(object, -1, -1); }
 
+    static int iconMargin(View view) {
+        int id = view.getResources().getIdentifier("notification_2025_margin", "dimen", "android");
+        return id == 0 ? Math.round(16 * view.getResources().getDisplayMetrics().density)
+                : view.getResources().getDimensionPixelSize(id);
+    }
+
     private static void anchorIcon(Object object, int requestedStart, int requestedTop) {
         if (!enabled() || !(object instanceof View icon)) return;
 
@@ -247,9 +253,7 @@ final class RelaxedNotificationHooks {
             if (icon.getParent() instanceof RelativeLayout parent) saved.parentGravity = parent.getGravity();
             anchors.put(icon, saved);
         }
-        int marginId = icon.getResources().getIdentifier("notification_2025_margin", "dimen", "android");
-        int top = marginId == 0 ? Math.round(16 * icon.getResources().getDisplayMetrics().density)
-                : icon.getResources().getDimensionPixelSize(marginId);
+        int top = iconMargin(icon);
         int start = requestedStart < 0 ? top : requestedStart;
         if (requestedTop >= 0) top = requestedTop;
         boolean changed = margins.topMargin != top || margins.getMarginStart() != start;

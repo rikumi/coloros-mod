@@ -8,6 +8,7 @@
     <string name="ui_font_source_han">思源黑体</string>
     <string name="ui_font_custom">自定义</string>
     <string name="ui_font_import_failed">字体导入或保存失败</string>
+    <string name="ui_font_importing">正在导入自定义字体…</string>
     <string name="ui_font_maple">Maple Mono</string>
     <string name="ui_font_jetbrains">JetBrains Mono</string>
     <string name="ui_font_fira">Fira Code</string>
@@ -26,4 +27,6 @@
     <string name="ui_system_font_mount_hint">使设置的字体对网页渲染进程生效</string>
     <string name="ui_font_emoji_downloading">正在下载 Emoji 字体…</string>
     <string name="ui_font_emoji_ready">字体已就绪，可重启 Zygote 应用</string>
+    <string name="ui_font_restart_preparing">正在等待字体保存和挂载完成…</string>
+    <string name="ui_font_restart_failed">字体尚未就绪，已取消重启。请重新应用字体设置并查看模块日志</string>
 </resources>

@@ -10,6 +10,7 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicLong
 
 /** Publishes the same font snapshot to filesystem consumers which never enter Xposed. */
@@ -26,12 +27,35 @@ internal object SystemFontMounts {
         Thread(task, "font-mount-sync").also { it.isDaemon = true }
     }
 
+    @Volatile private var pending: Future<*>? = null
+
     // Saving a font selection finishes independently of the optional root transaction.
     fun schedule(context: Context, service: XposedService, manifest: String) {
         val app = context.applicationContext
+        schedule { sync(app, service, manifest) }
+    }
+
+    fun scheduleRestore(context: Context) {
+        val app = context.applicationContext
+        schedule { resume(app, waitForCompletion = true) }
+    }
+
+    private fun schedule(operation: () -> Unit) {
         val request = requests.incrementAndGet()
-        worker.execute {
-            if (request == requests.get()) sync(app, service, manifest)
+        pending = worker.submit {
+            if (request == requests.get()) operation()
+        }
+    }
+
+    fun awaitPending(context: Context) {
+        while (true) {
+            val task = pending
+            if (task == null) {
+                resume(context, waitForCompletion = true)
+                return
+            }
+            task.get(120, TimeUnit.SECONDS)
+            if (task === pending) return
         }
     }
 
@@ -39,7 +63,7 @@ internal object SystemFontMounts {
     private fun sync(context: Context, service: XposedService, manifest: String) {
         val app = context.applicationContext
         val prefs = app.settingsPrefs()
-        if (!prefs.getBoolean(ENABLED, false)) { resume(app); return }
+        if (!prefs.getBoolean(ENABLED, false)) { resume(app, waitForCompletion = true); return }
         runCatching {
             val de = app.createDeviceProtectedStorageContext()
             val directory = File(de.filesDir, "font_mounts").also { check(it.isDirectory || it.mkdirs()) }
@@ -92,23 +116,30 @@ internal object SystemFontMounts {
             Handler(Looper.getMainLooper()).post {
                 Toast.makeText(app, R.string.ui_font_mount_failed, Toast.LENGTH_LONG).show()
             }
-        }
+        }.getOrThrow()
     }
 
     /** Boot recovery replays the root-owned snapshot and does not need a live Xposed service. */
+    @JvmOverloads
     @Synchronized
-    fun resume(context: Context) {
-        runCatching {
+    fun resume(context: Context, waitForCompletion: Boolean = false) {
+        val result = runCatching {
             val prefs = context.settingsPrefs()
             if (!prefs.getBoolean(CONFIGURED, false) && !prefs.getBoolean(REQUESTED, false)) return
             if (!prefs.getBoolean(ENABLED, false)) {
                 restore(context)
                 return
             }
-            // The detached, root-owned worker can finish even after the broadcast receiver exits.
-            execute(installBackend(backendInstaller(context)) +
-                "( (" + loggedWorker("/system/bin/sh $ROOT/backend.sh resume", "boot") + ") >/dev/null 2>&1 </dev/null &)", 7)
+            if (waitForCompletion) {
+                execute(installBackend(backendInstaller(context)) +
+                    "(" + loggedWorker("/system/bin/sh $ROOT/backend.sh resume", "boot") + ")", 90)
+            } else {
+                // The detached, root-owned worker can finish even after the broadcast receiver exits.
+                execute(installBackend(backendInstaller(context)) +
+                    "( (" + loggedWorker("/system/bin/sh $ROOT/backend.sh resume", "boot") + ") >/dev/null 2>&1 </dev/null &)", 7)
+            }
         }.onFailure { AppLog.log("WebView font mount recovery failed: $it") }
+        if (waitForCompletion) result.getOrThrow()
     }
 
     /** Used when retiring the filesystem backend; only mounts owned by this backend are detached. */

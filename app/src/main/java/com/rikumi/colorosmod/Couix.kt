@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.LocalOverscrollFactory
 
@@ -171,7 +172,7 @@ private const val BANNER_VIBRATE_AMPLITUDE = 100
 internal val COUIX_CARD_CORNER = 12.dp
 
 // 分组左右外边距（相对屏幕边缘）。
-private val COUIX_GROUP_HMARGIN = 16.dp
+internal val COUIX_GROUP_HMARGIN = 16.dp
 
 // 卡片下方留白 = 相邻 section 之间的间距（首页卡片→卡片、子页面卡片→下一节小标题）。
 private val COUIX_CARD_BOTTOM_GAP = 16.dp
@@ -182,6 +183,7 @@ private val COUIX_DIVIDER_INSET = 16.dp
 // 列表项内部水平/垂直内边距。
 private val COUIX_ROW_HPADDING = 16.dp
 private val COUIX_ROW_VPADDING = 13.dp
+private val COUIX_GROUP_TEXT_INSET = COUIX_GROUP_HMARGIN + COUIX_ROW_HPADDING
 
 // 下拉菜单宽度。
 private val COUIX_DROPDOWN_WIDTH = 160.dp
@@ -269,7 +271,7 @@ fun CouixSmallTitle(
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
         ),
-        modifier = modifier.padding(start = 32.dp, end = 32.dp, top = 12.dp, bottom = 6.dp),
+        modifier = modifier.padding(start = COUIX_GROUP_TEXT_INSET, end = COUIX_GROUP_TEXT_INSET, top = 12.dp, bottom = 6.dp),
     )
 }
 
@@ -516,21 +518,21 @@ fun CouixTopAppBar(
     title: String,
     modifier: Modifier = Modifier,
     dividerProgress: Float = 0f,
-    navigationIcon: @Composable () -> Unit = {},
+    navigationIcon: (@Composable () -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     CouixTopBarFrame(
-        startPadding = COUIX_TOP_BAR_START,
+        startPadding = if (navigationIcon == null) COUIX_GROUP_TEXT_INSET else COUIX_TOP_BAR_START,
         modifier = modifier,
         dividerProgress = dividerProgress,
     ) {
-        navigationIcon()
+        navigationIcon?.invoke()
         BasicText(
             text = title,
             style = couixTopBarTitleStyle(),
             modifier = Modifier
                 .weight(1f)
-                .padding(start = COUIX_TOP_BAR_TITLE_GAP),
+                .padding(start = if (navigationIcon == null) 0.dp else COUIX_TOP_BAR_TITLE_GAP),
         )
         actions()
     }
@@ -605,13 +607,17 @@ internal fun CouixCategoryRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    selected: Boolean? = null,
 ) {
-    val onSurface = MiuixTheme.colorScheme.onSurface
-    val summary = MiuixTheme.colorScheme.onSurfaceVariantSummary
+    val primary = MiuixTheme.colorScheme.primary
+    val onSurface = if (selected == true) primary else MiuixTheme.colorScheme.onSurface
+    val summary = if (selected == true) primary else MiuixTheme.colorScheme.onSurfaceVariantSummary
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clickable { onClick() }
+            .background(if (selected == true) primary.copy(alpha = 0.12f) else Color.Transparent)
+            .then(if (selected != null) Modifier.selectable(selected = selected, onClick = onClick)
+                else Modifier.clickable(onClick = onClick))
             .padding(horizontal = COUIX_ROW_HPADDING, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1246,9 +1252,10 @@ private fun CouixSelectRow(
             importing = true
             val custom = SystemFontStore.customIndex(item.key)
             pendingSelection = item.optionValues?.indexOf(custom) ?: custom
+            val operation = SystemFontStore.enqueue { SystemFontStore.import(ctx.applicationContext, item.key, uri) }
             scope.launch {
                 try {
-                    withContext(Dispatchers.IO) { SystemFontStore.import(ctx, item.key, uri) }
+                    operation.await()
                     val custom = SystemFontStore.customIndex(item.key)
                     selected = item.optionValues?.indexOf(custom) ?: custom
                     onItemChanged()
@@ -1356,9 +1363,10 @@ private fun CouixSelectRow(
                                 } else if (!importing && index != selected) {
                                     importing = true
                                     pendingSelection = index
+                                    val operation = SystemFontStore.enqueue { SystemFontStore.select(ctx.applicationContext, item.key, value) }
                                     scope.launch {
                                         try {
-                                            withContext(Dispatchers.IO) { SystemFontStore.select(ctx, item.key, value) }
+                                            operation.await()
                                             selected = index
                                             onItemChanged()
                                         } catch (error: kotlinx.coroutines.CancellationException) {
