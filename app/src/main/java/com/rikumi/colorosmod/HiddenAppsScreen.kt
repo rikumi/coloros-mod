@@ -12,7 +12,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,12 +27,12 @@ import androidx.compose.ui.unit.dp
 import java.text.Collator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.Back
-import top.yukonga.miuix.kmp.theme.MiuixTheme
+import io.github.suqi8.coui.kmp.basic.Icon
+import io.github.suqi8.coui.kmp.basic.IconButton
+import io.github.suqi8.coui.kmp.basic.Scaffold
+import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.Back
+import io.github.suqi8.coui.kmp.theme.COUITheme
 
 private data class HiddenAppEntry(val component: String, val name: String, val icon: Bitmap?, val safeHidden: Boolean = false)
 
@@ -95,7 +94,7 @@ internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit, navigationAp
     var choices by remember { mutableStateOf<List<HiddenAppEntry>?>(null) }
     var entries by remember { mutableStateOf<List<HiddenAppEntry>>(emptyList()) }
     val listState = rememberLazyListState()
-    val overscroll = remember { mutableFloatStateOf(0f) }
+    val listScroll = rememberSettingsListScroll(listState)
     fun save(components: Set<String>) {
         val editor = preferences.edit().putStringSet(packagesKey, components)
         if (!navigationApplications && !fontApplications) editor.putBoolean(HiddenLauncherApps.ENABLED, true)
@@ -119,35 +118,35 @@ internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit, navigationAp
         }
     }
     Scaffold(topBar = {
-        CouixTopAppBar(
+        SettingsTopAppBar(
             title = if (picking) context.getString(R.string.ui_select_apps) else context.getString(if (fontApplications) R.string.ui_system_font_mount_apps else if (navigationApplications) R.string.ui_navigation_apps else R.string.ui_fully_hidden_apps),
-            dividerProgress = couixTopBarDividerProgress(listState, overscroll),
+            scrollBehavior = listScroll.appBar,
             navigationIcon = {
                 IconButton(onClick = { if (picking) picking = false else onBack() }) {
-                    Icon(MiuixIcons.Back, context.getString(R.string.ui_back), tint = MiuixTheme.colorScheme.onSurface, modifier = Modifier.size(COUIX_BACK_ICON))
+                    Icon(COUIIcons.Back, context.getString(R.string.ui_back), tint = COUITheme.colorScheme.onSurface, modifier = Modifier.size(SETTINGS_BACK_ICON))
                 }
             },
             actions = {
-                if (!picking) BasicText(context.getString(R.string.ui_add), style = MiuixTheme.textStyles.body1.copy(color = MiuixTheme.colorScheme.primary),
+                if (!picking) BasicText(context.getString(R.string.ui_add), style = COUITheme.textStyles.body1.copy(color = COUITheme.colorScheme.primary),
                     modifier = Modifier.clickable { picking = true }.padding(horizontal = 12.dp, vertical = 10.dp))
                 if (picking && fontApplications) {
                     BasicText(context.getString(if (showSystemApplications) R.string.ui_font_hide_system else R.string.ui_font_show_system),
-                        style = MiuixTheme.textStyles.body1.copy(color = MiuixTheme.colorScheme.primary),
+                        style = COUITheme.textStyles.body1.copy(color = COUITheme.colorScheme.primary),
                         modifier = Modifier.clickable { showSystemApplications = !showSystemApplications }
                             .padding(horizontal = 12.dp, vertical = 10.dp))
                 } else RestartMenu(context)
             },
         )
     }) { padding ->
-        LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding).couixOverscroll(listState, overscroll)) {
+        SettingsLazyColumn(scroll = listScroll, modifier = Modifier.fillMaxSize().padding(padding)) {
             item { Spacer(Modifier.height(12.dp)) }
-            if (fontApplications) item { CouixSmallTitle(context.getString(if (!picking) R.string.ui_system_font_mount_apps
+            if (fontApplications) item { SettingsSmallTitle(context.getString(if (!picking) R.string.ui_system_font_mount_apps
                 else if (showSystemApplications) R.string.ui_font_all_apps else R.string.ui_non_system_apps)) }
-            if (navigationApplications) item { CouixSmallTitle(context.getString(if (picking) R.string.ui_non_system_apps else R.string.ui_navigation_apps)) }
+            if (navigationApplications) item { SettingsSmallTitle(context.getString(if (picking) R.string.ui_non_system_apps else R.string.ui_navigation_apps)) }
             val current = if (picking) choices?.filter { it.component !in hidden } else entries
             when {
-                current == null -> item { CouixSmallTitle(context.getString(R.string.ui_loading)) }
-                current.isEmpty() -> item { CouixSmallTitle(context.getString(R.string.ui_no_apps)) }
+                current == null -> item { SettingsSmallTitle(context.getString(R.string.ui_loading)) }
+                current.isEmpty() -> item { SettingsSmallTitle(context.getString(R.string.ui_no_apps)) }
                 else -> {
                     val groups = if (picking) listOf(
                         null to current.filter { !it.safeHidden },
@@ -155,10 +154,10 @@ internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit, navigationAp
                     ) else listOf(null to current)
                     groups.forEach { (title, apps) ->
                         if (apps.isNotEmpty()) {
-                            if (title != null) item { CouixSmallTitle(title) }
+                            if (title != null) item { SettingsSmallTitle(title) }
                             itemsIndexed(apps, key = { _, app -> app.component }) { index, app ->
-                                CouixCardRow(first = index == 0, last = index == apps.lastIndex) {
-                                    if (index > 0) CouixItemDivider()
+                                SettingsCardRow(first = index == 0, last = index == apps.lastIndex) {
+                                    if (index > 0) SettingsItemDivider()
                                     HiddenAppRow(app, picking,
                                         removeLabel = context.getString(if (navigationApplications || fontApplications) R.string.ui_remove_app else R.string.ui_unhide),
                                         onAdd = { save(hidden + app.component); picking = false },
@@ -187,20 +186,19 @@ internal fun HiddenAppsScreen(context: Context, onBack: () -> Unit, navigationAp
 @Composable
 private fun HiddenAppRow(app: HiddenAppEntry, picking: Boolean, removeLabel: String, onAdd: () -> Unit, onRemove: () -> Unit, onOpen: () -> Unit, packageName: String?) {
     var expanded by remember { mutableStateOf(false) }
-    var anchorHeight by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
-    Box(Modifier.onSizeChanged { anchorHeight = it.height }) {
+    Box {
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
             .clickable { if (picking) onAdd() else expanded = true }
             .padding(horizontal = 16.dp, vertical = 13.dp),
             verticalAlignment = Alignment.CenterVertically) {
             app.icon?.let { Image(it.asImageBitmap(), null, Modifier.size(32.dp).clip(RoundedCornerShape(8.dp))) }
-                ?: Box(Modifier.size(32.dp).background(MiuixTheme.colorScheme.onSurfaceVariantSummary, RoundedCornerShape(8.dp)))
+                ?: Box(Modifier.size(32.dp).background(COUITheme.colorScheme.onSurfaceVariantSummary, RoundedCornerShape(8.dp)))
             BasicText(app.name,
-                style = MiuixTheme.textStyles.body1.copy(color = MiuixTheme.colorScheme.onSurface),
+                style = COUITheme.textStyles.body1.copy(color = COUITheme.colorScheme.onSurface),
                 modifier = Modifier.padding(start = 12.dp).weight(1f))
         }
-        CouixRowActionMenu(expanded = expanded, onDismiss = { expanded = false }, anchorHeight = anchorHeight,
+        SettingsRowActionMenu(expanded = expanded, onDismiss = { expanded = false },
             items = listOf(
                 ActionMenuItem(context.getString(R.string.ui_open), onOpen),
                 ActionMenuItem(context.getString(R.string.ui_app_info)) {

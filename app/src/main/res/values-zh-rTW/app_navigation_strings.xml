@@ -4,5 +4,4 @@
     <string name="ui_navigation_apps">強制沉浸應用程式列表</string>
     <string name="ui_non_system_apps">非系統應用程式</string>
     <string name="ui_remove_app">移除</string>
-    <string name="ui_navigation_apps_count">應用程式清單（%1$d 個應用程式）</string>
 </resources>

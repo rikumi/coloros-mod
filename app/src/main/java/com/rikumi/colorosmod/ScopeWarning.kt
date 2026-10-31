@@ -56,8 +56,8 @@ internal fun ScopeWarningCard() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var opening by remember { mutableStateOf(false) }
-    CouixCard(backgroundColor = Color(0xFFFFBE0A).copy(alpha = 0.18f)) {
-        CouixCategoryRow(
+    SettingsCard(backgroundColor = Color(0xFFFFBE0A).copy(alpha = 0.18f)) {
+        SettingsCategoryRow(
             icon = null,
             title = context.getString(R.string.ui_scope_missing),
             onClick = {

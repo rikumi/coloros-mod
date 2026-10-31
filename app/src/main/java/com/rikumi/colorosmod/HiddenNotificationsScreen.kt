@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,20 +39,20 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.Back
-import top.yukonga.miuix.kmp.icon.extended.Refresh
-import top.yukonga.miuix.kmp.theme.MiuixTheme
+import io.github.suqi8.coui.kmp.basic.Icon
+import io.github.suqi8.coui.kmp.basic.IconButton
+import io.github.suqi8.coui.kmp.basic.Scaffold
+import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.Back
+import io.github.suqi8.coui.kmp.icon.extended.Refresh
+import io.github.suqi8.coui.kmp.theme.COUITheme
 
 @Composable
 internal fun HiddenNotificationsScreen(ctx: Context, onBack: () -> Unit, showBack: Boolean = true) {
     val state by HiddenNotificationsService.state.collectAsState()
     var hasAccess by remember { mutableStateOf(HiddenNotificationsService.hasAccess(ctx)) }
     val listState = rememberLazyListState()
-    val overscroll = remember { mutableFloatStateOf(0f) }
+    val listScroll = rememberSettingsListScroll(listState)
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle, ctx) {
         fun refresh() {
@@ -68,14 +67,14 @@ internal fun HiddenNotificationsScreen(ctx: Context, onBack: () -> Unit, showBac
     val hidden = remember(state.entries) { state.entries.filter { it.hidden } }
     val visible = remember(state.entries) { state.entries.filterNot { it.hidden } }
     Scaffold(topBar = {
-        CouixTopAppBar(
+        SettingsTopAppBar(
             title = ctx.getString(R.string.ui_category_hidden_notifications),
-            dividerProgress = couixTopBarDividerProgress(listState, overscroll),
+            scrollBehavior = listScroll.appBar,
             navigationIcon = if (showBack) {
                 {
                     IconButton(onClick = onBack) {
-                        Icon(MiuixIcons.Back, ctx.getString(R.string.ui_back),
-                            tint = MiuixTheme.colorScheme.onSurface, modifier = Modifier.size(COUIX_BACK_ICON))
+                        Icon(COUIIcons.Back, ctx.getString(R.string.ui_back),
+                            tint = COUITheme.colorScheme.onSurface, modifier = Modifier.size(SETTINGS_BACK_ICON))
                     }
                 }
             } else null,
@@ -84,41 +83,41 @@ internal fun HiddenNotificationsScreen(ctx: Context, onBack: () -> Unit, showBac
                     hasAccess = HiddenNotificationsService.hasAccess(ctx)
                     HiddenNotificationsService.refresh(ctx)
                 }) {
-                    Icon(MiuixIcons.Refresh, ctx.getString(R.string.hidden_notifications_refresh),
-                        tint = MiuixTheme.colorScheme.onSurface)
+                    Icon(COUIIcons.Refresh, ctx.getString(R.string.hidden_notifications_refresh),
+                        tint = COUITheme.colorScheme.onSurface)
                 }
             },
         )
     }) { padding ->
-        LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding)
-            .couixOverscroll(listState, overscroll)) {
+        SettingsLazyColumn(scroll = listScroll, modifier = Modifier.fillMaxSize().padding(padding)
+            ) {
             if (!hasAccess || !state.connected) {
                 item {
-                    CouixSmallTitle(ctx.getString(if (hasAccess) R.string.hidden_notifications_connecting
+                    SettingsSmallTitle(ctx.getString(if (hasAccess) R.string.hidden_notifications_connecting
                         else R.string.hidden_notifications_permission_hint))
                 }
                 item {
-                    CouixCard {
-                        CouixCategoryRow(null, ctx.getString(R.string.hidden_notifications_permission),
+                    SettingsCard {
+                        SettingsCategoryRow(null, ctx.getString(R.string.hidden_notifications_permission),
                             onClick = { openNotificationAccess(ctx) })
                     }
                 }
             }
             state.error?.let { message ->
-                item { CouixSmallTitle(ctx.getString(message)) }
+                item { SettingsSmallTitle(ctx.getString(message)) }
             }
             if (hasAccess && state.connected) {
                 listOf(
                     Triple(R.string.hidden_notifications_hidden, R.string.hidden_notifications_no_hidden, hidden),
                     Triple(R.string.hidden_notifications_visible, R.string.hidden_notifications_no_visible, visible),
                 ).forEach { (title, empty, entries) ->
-                    item(key = title) { CouixSmallTitle(ctx.getString(title)) }
+                    item(key = title) { SettingsSmallTitle(ctx.getString(title)) }
                     when {
-                        !state.loaded -> item { CouixSmallTitle(ctx.getString(R.string.ui_loading)) }
-                        entries.isEmpty() -> item { CouixSmallTitle(ctx.getString(empty)) }
+                        !state.loaded -> item { SettingsSmallTitle(ctx.getString(R.string.ui_loading)) }
+                        entries.isEmpty() -> item { SettingsSmallTitle(ctx.getString(empty)) }
                         else -> itemsIndexed(entries, key = { _, entry -> entry.key }) { index, entry ->
-                            CouixCardRow(first = index == 0, last = index == entries.lastIndex) {
-                                if (index > 0) CouixItemDivider()
+                            SettingsCardRow(first = index == 0, last = index == entries.lastIndex) {
+                                if (index > 0) SettingsItemDivider()
                                 HiddenNotificationRow(ctx, entry, enabled = state.busyKey == null,
                                     busy = state.busyKey == entry.key,
                                     onClick = { HiddenNotificationsService.toggle(entry) })
@@ -141,8 +140,8 @@ private fun HiddenNotificationRow(
     onClick: () -> Unit,
 ) {
     val action = ctx.getString(if (entry.hidden) R.string.hidden_notifications_restore else R.string.hidden_notifications_hide)
-    val detailStyle = MiuixTheme.textStyles.body2.copy(fontSize = 12.sp, lineHeight = 16.sp,
-        color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+    val detailStyle = COUITheme.textStyles.body2.copy(fontSize = 12.sp, lineHeight = 16.sp,
+        color = settingsSummaryTextColor())
     Row(modifier = Modifier.fillMaxWidth().clickable(enabled = enabled, onClickLabel = action, onClick = onClick)
         .padding(horizontal = 16.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
         entry.icon?.let {
@@ -152,7 +151,7 @@ private fun HiddenNotificationRow(
         }
         Column(Modifier.weight(1f)) {
             BasicText(entry.title.ifBlank { entry.appName },
-                style = MiuixTheme.textStyles.body1.copy(color = MiuixTheme.colorScheme.onSurface),
+                style = COUITheme.textStyles.body1.copy(color = COUITheme.colorScheme.onSurface),
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
             BasicText(if (entry.appName == entry.packageName) entry.packageName
                 else "${entry.appName} · ${entry.packageName}", style = detailStyle,

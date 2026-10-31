@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicText
@@ -51,12 +50,12 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.Back
-import top.yukonga.miuix.kmp.theme.MiuixTheme
+import io.github.suqi8.coui.kmp.basic.Icon
+import io.github.suqi8.coui.kmp.basic.IconButton
+import io.github.suqi8.coui.kmp.basic.Scaffold
+import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.Back
+import io.github.suqi8.coui.kmp.theme.COUITheme
 
 import com.rikumi.colorosmod.XposedInit.KEY_DISABLE_APPS_NOVERIFY_ENABLED
 import com.rikumi.colorosmod.XposedInit.KEY_HIDE_DISABLED_APPS_ENABLED
@@ -82,7 +81,6 @@ private fun buildExportScript(ctx: Context, apps: List<ManagedAppEntry>): String
 @Composable
 internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit, showBack: Boolean = true) {
     val listState = rememberLazyListState()
-    val overscrollOffset = remember { mutableFloatStateOf(0f) }
     val scope = rememberCoroutineScope()
     var picking by remember { mutableStateOf(false) }
     var choices by remember { mutableStateOf<List<ManagedAppEntry>?>(null) }
@@ -91,6 +89,7 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit, showBack: Bool
     var loadGeneration by remember { mutableStateOf(0) }
     val pickerState = rememberLazyListState()
     val currentListState = if (picking) pickerState else listState
+    val listScroll = rememberSettingsListScroll(currentListState)
     BackHandler(enabled = picking || busy) { if (!busy) picking = false }
     var apps by remember { mutableStateOf<List<ManagedAppEntry>?>(null) }
     LaunchedEffect(Unit) {
@@ -107,7 +106,6 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit, showBack: Bool
         }
     }
     LaunchedEffect(picking) {
-        overscrollOffset.floatValue = 0f
         if (picking) {
             choices = null
             pickerState.scrollToItem(0)
@@ -169,17 +167,17 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit, showBack: Bool
     }
     Scaffold(
         topBar = {
-            CouixTopAppBar(
+            SettingsTopAppBar(
                 title = ctx.getString(if (picking) R.string.app_management_select_system else R.string.ui_category_disabled),
-                dividerProgress = couixTopBarDividerProgress(currentListState, overscrollOffset),
+                scrollBehavior = listScroll.appBar,
                 navigationIcon = if (showBack || picking) {
                     {
                         IconButton(onClick = { if (!busy) { if (picking) picking = false else onBack() } }) {
                             Icon(
-                                imageVector = MiuixIcons.Back,
+                                imageVector = COUIIcons.Back,
                                 contentDescription = ctx.getString(R.string.ui_back),
-                                tint = MiuixTheme.colorScheme.onSurface,
-                                modifier = Modifier.size(COUIX_BACK_ICON),
+                                tint = COUITheme.colorScheme.onSurface,
+                                modifier = Modifier.size(SETTINGS_BACK_ICON),
                             )
                         }
                     }
@@ -194,22 +192,22 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit, showBack: Bool
             )
         },
     ) { padding ->
-        LazyColumn(
-            state = currentListState,
+        SettingsLazyColumn(
+            scroll = listScroll,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .couixOverscroll(currentListState, overscrollOffset),
+                ,
         ) {
             if (picking) {
-                item { CouixSmallTitle(ctx.getString(R.string.app_management_system_apps)) }
+                item { SettingsSmallTitle(ctx.getString(R.string.app_management_system_apps)) }
                 val current = choices
                 when {
-                    current == null -> item { CouixSmallTitle(ctx.getString(R.string.ui_loading)) }
-                    current.isEmpty() -> item { CouixSmallTitle(ctx.getString(R.string.ui_no_apps)) }
+                    current == null -> item { SettingsSmallTitle(ctx.getString(R.string.ui_loading)) }
+                    current.isEmpty() -> item { SettingsSmallTitle(ctx.getString(R.string.ui_no_apps)) }
                     else -> itemsIndexed(current, key = { _, app -> app.pkg }) { index, app ->
-                        CouixCardRow(first = index == 0, last = index == current.lastIndex) {
-                            if (index > 0) CouixItemDivider()
+                        SettingsCardRow(first = index == 0, last = index == current.lastIndex) {
+                            if (index > 0) SettingsItemDivider()
                             ManagedAppActionsRow(app, busy, picking = true,
                                 onAction = { perform(app, it) })
                         }
@@ -217,33 +215,33 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit, showBack: Bool
                 }
             } else {
                 item {
-                    CouixCard {
+                    SettingsCard {
                         DisabledAppsActionRow(R.string.ui_disabled_apps_add_title, enabled = !busy) {
                             warningAction = DisabledAppsWarningAction.ADD
                         }
-                        CouixItemDivider()
+                        SettingsItemDivider()
                         DisabledAppsActionRow(R.string.ui_disabled_apps_export_title, enabled = !busy) {
                             warningAction = DisabledAppsWarningAction.EXPORT
                         }
                     }
                 }
-                item { CouixSmallTitle(text = ctx.getString(R.string.ui_disabled_settings)) }
+                item { SettingsSmallTitle(text = ctx.getString(R.string.ui_disabled_settings)) }
                 item {
-                    CouixCard {
+                    SettingsCard {
                         DisableAppsNoVerifyRow(ctx)
-                        CouixItemDivider()
+                        SettingsItemDivider()
                         HideDisabledAppsRow(ctx)
                     }
                 }
-                item { CouixSmallTitle(text = ctx.getString(R.string.ui_disabled_apps)) }
+                item { SettingsSmallTitle(text = ctx.getString(R.string.ui_disabled_apps)) }
                 val current = apps
                 when {
-                    current == null -> item { CouixSmallTitle(text = ctx.getString(R.string.ui_loading)) }
-                    current.isEmpty() -> item { CouixSmallTitle(text = ctx.getString(R.string.ui_no_disabled_apps)) }
-                    // 每行一个独立的惰性 item: 行数上百时不能共用一个容器(见 CouixCardRow 注释)。
+                    current == null -> item { SettingsSmallTitle(text = ctx.getString(R.string.ui_loading)) }
+                    current.isEmpty() -> item { SettingsSmallTitle(text = ctx.getString(R.string.ui_no_disabled_apps)) }
+                    // 每行一个独立的惰性 item: 行数上百时不能共用一个容器(见 SettingsCardRow 注释)。
                     else -> itemsIndexed(current, key = { _, entry -> entry.pkg }) { index, entry ->
-                        CouixCardRow(first = index == 0, last = index == current.lastIndex) {
-                            if (index > 0) CouixItemDivider()
+                        SettingsCardRow(first = index == 0, last = index == current.lastIndex) {
+                            if (index > 0) SettingsItemDivider()
                             ManagedAppActionsRow(entry, busy,
                                 onInfo = { openAppDetails(ctx, entry.pkg) },
                                 onAction = { perform(entry, it) })
@@ -255,7 +253,7 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit, showBack: Bool
         }
     }
     warningAction?.let { action ->
-        CouixConfirmDialog(
+        SettingsConfirmDialog(
             title = ctx.getString(if (action == DisabledAppsWarningAction.ADD)
                 R.string.ui_disabled_apps_add_title else R.string.ui_disabled_apps_export_title),
             text = disabledAppsWarningText(if (action == DisabledAppsWarningAction.ADD)
@@ -283,7 +281,7 @@ private fun DisableAppsNoVerifyRow(ctx: Context) {
     var checked by remember {
         mutableStateOf(ctx.settingsPrefs().getBoolean(KEY_DISABLE_APPS_NOVERIFY_ENABLED, false))
     }
-    CouixSwitchPreference(
+    SettingsSwitchPreference(
         checked = checked,
         onCheckedChange = {
             checked = it
@@ -298,7 +296,7 @@ private fun HideDisabledAppsRow(ctx: Context) {
     var checked by remember {
         mutableStateOf(ctx.settingsPrefs().getBoolean(KEY_HIDE_DISABLED_APPS_ENABLED, false))
     }
-    CouixSwitchPreference(
+    SettingsSwitchPreference(
         checked = checked,
         onCheckedChange = {
             checked = it
@@ -316,7 +314,7 @@ private fun DisabledAppsActionRow(
 ) {
     BasicText(
         text = androidx.compose.ui.res.stringResource(titleRes),
-        style = MiuixTheme.textStyles.body1.copy(color = MiuixTheme.colorScheme.onSurface),
+        style = COUITheme.textStyles.body1.copy(color = COUITheme.colorScheme.onSurface),
         modifier = Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 13.dp),
     )
@@ -354,9 +352,9 @@ private fun openAppDetails(ctx: Context, pkg: String) {
 
 @Composable
 private fun DisabledAppRow(entry: ManagedAppEntry, showState: Boolean = true, onClick: () -> Unit) {
-    val onSurface = MiuixTheme.colorScheme.onSurface
-    val summary = MiuixTheme.colorScheme.onSurfaceVariantSummary
-    val detailStyle = MiuixTheme.textStyles.body2.copy(
+    val onSurface = COUITheme.colorScheme.onSurface
+    val summary = settingsSummaryTextColor()
+    val detailStyle = COUITheme.textStyles.body2.copy(
         fontSize = 12.sp,
         lineHeight = 16.sp,
         color = summary,
@@ -377,7 +375,7 @@ private fun DisabledAppRow(entry: ManagedAppEntry, showState: Boolean = true, on
             val appName = entry.label?.takeIf { it.isNotBlank() && it != entry.pkg }
             BasicText(
                 text = appName ?: entry.pkg,
-                style = MiuixTheme.textStyles.body1.copy(color = onSurface),
+                style = COUITheme.textStyles.body1.copy(color = onSurface),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -391,7 +389,7 @@ private fun DisabledAppRow(entry: ManagedAppEntry, showState: Boolean = true, on
             val recommendation = SystemAppDescriptions.recommendationRes(
                 entry.pkg, showState || entry.disabled || entry.uninstalled,
             )
-            val dark = MiuixTheme.colorScheme.surface.luminance() < 0.5f
+            val dark = COUITheme.colorScheme.surface.luminance() < 0.5f
             val prefixColor = when (recommendation) {
                 R.string.system_app_recommendation_uninstallable -> if (dark) Color(0xFFFFAA62) else Color(0xFFC15C00)
                 R.string.system_app_recommendation_remove -> if (dark) Color(0xFF65CE86) else Color(0xFF208447)
@@ -442,8 +440,7 @@ private fun ManagedAppActionsRow(app: ManagedAppEntry, busy: Boolean, picking: B
     onInfo: () -> Unit = {}, onAction: (ManagedAppOperation) -> Unit) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var expanded by remember { mutableStateOf(false) }
-    var anchorHeight by remember { mutableStateOf(0) }
-    Box(Modifier.onSizeChanged { anchorHeight = it.height }) {
+    Box {
         DisabledAppRow(app, showState = !picking) { if (!busy) expanded = true }
         val actions = if (picking) listOf(
             ActionMenuItem(ctx.getString(R.string.app_management_disable)) { onAction(ManagedAppOperation.DISABLE) },
@@ -454,7 +451,7 @@ private fun ManagedAppActionsRow(app: ManagedAppEntry, busy: Boolean, picking: B
                 onAction(if (app.uninstalled) ManagedAppOperation.INSTALL_EXISTING else ManagedAppOperation.ENABLE)
             },
         )
-        CouixRowActionMenu(expanded = expanded && !busy, onDismiss = { expanded = false },
-            anchorHeight = anchorHeight, items = actions)
+        SettingsRowActionMenu(expanded = expanded && !busy, onDismiss = { expanded = false },
+            items = actions)
     }
 }

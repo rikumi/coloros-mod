@@ -297,3 +297,7 @@ AI 产生的代码可能无法完全符合开发者预期，请在使用前自�
 ## APK 签名与构建
 
 Debug 和 Release 均使用固定签名；本机和 GitHub Actions 的配置及历史版本升级说明见 [签名文档](docs/signing.md)。
+
+## 界面组件
+
+设置界面使用 [COUI](https://github.com/suqi8/coui) 1.1.0（Apache-2.0），替代原有 Couix 实现。

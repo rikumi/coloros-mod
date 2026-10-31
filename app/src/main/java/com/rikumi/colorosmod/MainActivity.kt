@@ -17,17 +17,7 @@ import android.view.WindowManager
 import android.widget.Toast
 import android.provider.Settings
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.Easing
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,7 +34,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -61,31 +50,30 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
-import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.Back
-import top.yukonga.miuix.kmp.icon.extended.Backup
-import top.yukonga.miuix.kmp.icon.extended.Blocklist
-import top.yukonga.miuix.kmp.icon.extended.Community
-import top.yukonga.miuix.kmp.icon.extended.Copy
-import top.yukonga.miuix.kmp.icon.extended.GridView
-import top.yukonga.miuix.kmp.icon.extended.Folder
-import top.yukonga.miuix.kmp.icon.extended.Hide
-import top.yukonga.miuix.kmp.icon.extended.Lock
-import top.yukonga.miuix.kmp.icon.extended.Refresh
-import top.yukonga.miuix.kmp.icon.extended.Update
-import top.yukonga.miuix.kmp.icon.extended.Translate
-import top.yukonga.miuix.kmp.icon.extended.Tune
-import top.yukonga.miuix.kmp.theme.ColorSchemeMode
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.theme.ThemeController
-import top.yukonga.miuix.kmp.theme.darkColorScheme
-import top.yukonga.miuix.kmp.theme.lightColorScheme
+import io.github.suqi8.coui.kmp.basic.Icon
+import io.github.suqi8.coui.kmp.basic.IconButton
+import io.github.suqi8.coui.kmp.basic.Scaffold
+import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.Back
+import io.github.suqi8.coui.kmp.icon.extended.Backup
+import io.github.suqi8.coui.kmp.icon.extended.Blocklist
+import io.github.suqi8.coui.kmp.icon.extended.Community
+import io.github.suqi8.coui.kmp.icon.extended.Copy
+import io.github.suqi8.coui.kmp.icon.extended.GridView
+import io.github.suqi8.coui.kmp.icon.extended.Folder
+import io.github.suqi8.coui.kmp.icon.extended.Hide
+import io.github.suqi8.coui.kmp.icon.extended.Lock
+import io.github.suqi8.coui.kmp.icon.extended.Refresh
+import io.github.suqi8.coui.kmp.icon.extended.Update
+import io.github.suqi8.coui.kmp.icon.extended.Translate
+import io.github.suqi8.coui.kmp.icon.extended.Tune
+import io.github.suqi8.coui.kmp.theme.ColorSchemeMode
+import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.theme.ThemeController
+import io.github.suqi8.coui.kmp.theme.darkColorScheme
+import io.github.suqi8.coui.kmp.theme.lightColorScheme
 import java.io.DataOutputStream
 import java.io.File
 import java.util.Locale
@@ -108,7 +96,7 @@ import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
 internal val CONTENT_MAX_WIDTH_DP = 480.dp
 
 // 平板两栏布局: 屏幕宽度超过 480dp 时启用; 左右栏按系统设置的 4:7 比例分配宽度。
-private const val TABLET_MIN_WIDTH_DP = 480
+private const val TABLET_MIN_WIDTH_DP = 640
 private const val TABLET_LEFT_PANE_WEIGHT = 4f
 private const val TABLET_RIGHT_PANE_WEIGHT = 7f
 
@@ -184,7 +172,7 @@ class MainActivity : ComponentActivity() {
             CompositionLocalProvider(
                 LocalNavigationEventDispatcherOwner provides navigationEventOwner,
             ) {
-                MiuixTheme(
+                COUITheme(
                     controller = remember {
                         ThemeController(
                             colorSchemeMode = ColorSchemeMode.System,
@@ -196,16 +184,15 @@ class MainActivity : ComponentActivity() {
                             ),
                         )
                     },
-                    textStyles = couixTextStyles(),
                 ) {
-                    CouixStatusBar()
+                    SettingsStatusBar()
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(MiuixTheme.colorScheme.surface),
+                            .background(COUITheme.colorScheme.surface),
                     ) {
                         // 两栏布局(平板)在 SettingsScreen 内部根据屏幕宽度决定。
-                        CouixOverscrollHost { SettingsScreen(resumeRequest) }
+                        SettingsScreen(resumeRequest)
                     }
                 }
             }
@@ -509,22 +496,22 @@ private data class Category(
 // 首页分组: 每组一张卡片。锁屏紧随通知中心, 其余三个另开一组。
 private val CATEGORY_GROUPS: List<List<Category>> = listOf(
     listOf(
-        Category("desktop", R.string.ui_category_desktop, MiuixIcons.GridView, DESKTOP),
-        Category("quick_settings", R.string.ui_category_qs, MiuixIcons.Tune, QS),
-        Category("notification", R.string.ui_category_notif, MiuixIcons.Community, NOTIF),
-        Category("lockscreen", R.string.ui_category_lock, MiuixIcons.Lock, LOCKSCREEN),
+        Category("desktop", R.string.ui_category_desktop, COUIIcons.GridView, DESKTOP),
+        Category("quick_settings", R.string.ui_category_qs, COUIIcons.Tune, QS),
+        Category("notification", R.string.ui_category_notif, COUIIcons.Community, NOTIF),
+        Category("lockscreen", R.string.ui_category_lock, COUIIcons.Lock, LOCKSCREEN),
     ),
     listOf(
-        Category("hidden_apps", R.string.ui_category_hidden, MiuixIcons.Hide, HIDDEN),
-        Category("float_window", R.string.ui_category_float, MiuixIcons.Copy, FLOATWINDOW, hint = R.string.ui_float_zygote_hint),
-        Category("navigation", R.string.ui_category_navigation, MiuixIcons.Backup, NAV),
-        Category("system_fonts", R.string.ui_category_system_fonts, MiuixIcons.Translate, SYSTEM_FONTS, hint = R.string.ui_system_font_zygote_hint),
+        Category("hidden_apps", R.string.ui_category_hidden, COUIIcons.Hide, HIDDEN),
+        Category("float_window", R.string.ui_category_float, COUIIcons.Copy, FLOATWINDOW, hint = R.string.ui_float_zygote_hint),
+        Category("navigation", R.string.ui_category_navigation, COUIIcons.Backup, NAV),
+        Category("system_fonts", R.string.ui_category_system_fonts, COUIIcons.Translate, SYSTEM_FONTS, hint = R.string.ui_system_font_zygote_hint),
     ),
     listOf(
-        Category("purification", R.string.weather_category_purification, MiuixIcons.Tune, PURIFICATION),
-        Category("storage", R.string.ui_category_storage, MiuixIcons.Folder, STORAGE),
-        Category(DISABLED_APPS_ID, R.string.ui_category_disabled, MiuixIcons.Blocklist, emptyList()),
-        Category(HIDDEN_NOTIFICATIONS_ID, R.string.ui_category_hidden_notifications, MiuixIcons.Hide, emptyList()),
+        Category("purification", R.string.weather_category_purification, COUIIcons.Tune, PURIFICATION),
+        Category("storage", R.string.ui_category_storage, COUIIcons.Folder, STORAGE),
+        Category(DISABLED_APPS_ID, R.string.ui_category_disabled, COUIIcons.Blocklist, emptyList()),
+        Category(HIDDEN_NOTIFICATIONS_ID, R.string.ui_category_hidden_notifications, COUIIcons.Hide, emptyList()),
     ),
 )
 private val CATEGORIES = CATEGORY_GROUPS.flatten()
@@ -608,9 +595,12 @@ private val SLIDER_GROUP_HINT = R.string.ui_slider_hint
 // 主开关"启用模块"切换动画的时长(ms): 先更新 UI 播放动画, 动画结束后才落盘设置。
 private const val MASTER_TOGGLE_ANIM_MS = 350L
 
-// 首页/子页面切换动画: ease 曲线(CSS ease: cubic-bezier(0.25, 0.1, 0.25, 1)), 300ms。
-private const val PAGE_TRANSITION_MS = 300
-private val PAGE_TRANSITION_EASING: Easing = CubicBezierEasing(0.25f, 0.1f, 0.25f, 1f)
+internal fun parentSettingsPage(id: String?): String? = when (id) {
+    HIDDEN_LAUNCHER_APPS_ID -> "hidden_apps"
+    NAVIGATION_APPS_ID -> "navigation"
+    FONT_APPS_ID -> "system_fonts"
+    else -> null
+}
 
 @Composable
 fun SettingsScreen(resumeRequest: Int = 0) {
@@ -622,19 +612,29 @@ fun SettingsScreen(resumeRequest: Int = 0) {
     val scope = rememberCoroutineScope()
     // version 变化时强制重读 prefs 同步所有开关状态。
     var version by remember { mutableStateOf(0) }
+    val cardStyle = prefs.getInt("about_device_card_style", 0)
+    val bannerCache = remember(cardStyle) { HomeBannerCache() }
+    LaunchedEffect(bannerCache) {
+        bannerCache.info = withContext(Dispatchers.IO) {
+            val properties = runRoot("getprop").orEmpty().lineSequence().mapNotNull { line ->
+                val match = Regex("^\\[([^]]+)]: \\[(.*)]$").matchEntire(line)
+                match?.let { it.groupValues[1] to it.groupValues[2] }
+            }.toMap()
+            val resolvedStyle = AboutCardStyleResolver.resolve(
+                properties["ro.oplus.image.system_ext.area"],
+                properties["ro.oplus.image.system_ext.brand"],
+                properties["ro.build.version.ota"],
+                properties["ro.build.version.oplusrom.display"],
+                properties["ro.build.version.oplusrom"], Build.DISPLAY,
+            )
+            HomeBannerInfo(resolvedStyle, deviceName(ctx), systemLabel())
+        }
+    }
 
     var masterOverride by remember { mutableStateOf<MasterOverride?>(null) }
 
     // 当前打开的分类 id; null 表示停在首页。
     var openCategoryId by remember { mutableStateOf<String?>(null) }
-    BackHandler(enabled = openCategoryId != null) {
-        openCategoryId = when (openCategoryId) {
-            HIDDEN_LAUNCHER_APPS_ID -> "hidden_apps"
-            NAVIGATION_APPS_ID -> "navigation"
-            FONT_APPS_ID -> "system_fonts"
-            else -> null
-        }
-    }
 
     // 主开关: scope = null 作用于全部功能(首页), 否则只作用于该分类的设置项。
     val onMasterChange: (String?, Boolean) -> Unit = { targetScope, target ->
@@ -684,13 +684,13 @@ fun SettingsScreen(resumeRequest: Int = 0) {
         }
     }
 
-    val isTablet = LocalConfiguration.current.screenWidthDp > TABLET_MIN_WIDTH_DP
+    val isTablet = LocalConfiguration.current.screenWidthDp >= TABLET_MIN_WIDTH_DP
     val navigate: (String?) -> Unit = { openCategoryId = it }
 
     if (isTablet) {
         val cutout = ComposeWindowInsets.displayCutout
         val cutoutPadding = cutout.exclude(
-            ComposeWindowInsets(left = COUIX_GROUP_HMARGIN, right = COUIX_GROUP_HMARGIN),
+            ComposeWindowInsets(left = SETTINGS_GROUP_HMARGIN, right = SETTINGS_GROUP_HMARGIN),
         )
         // 平板两栏: 左栏较窄显示首页, 右栏显示分类/子页面, 默认打开桌面设置。
         Row(
@@ -708,7 +708,8 @@ fun SettingsScreen(resumeRequest: Int = 0) {
                     .fillMaxHeight(),
             ) {
                 HomeScreen(
-                    cardStyle = prefs.getInt("about_device_card_style", 0),
+                    cardStyle = cardStyle,
+                    bannerCache = bannerCache,
                     missingScopes = missingScopes,
                     masterChecked = masterOverride.valueFor(null) ?: anyEnabled,
                     onMasterChange = { onMasterChange(null, it) },
@@ -727,30 +728,12 @@ fun SettingsScreen(resumeRequest: Int = 0) {
                 Modifier
                     .width(1.dp)
                     .fillMaxHeight()
-                    .background(MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.16f)),
+                    .background(COUITheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.16f)),
             )
             Column(Modifier.weight(TABLET_RIGHT_PANE_WEIGHT).fillMaxHeight()) {
-                AnimatedContent(
-                    targetState = openCategoryId ?: "desktop",
-                    transitionSpec = {
-                        // 二级页(隐藏/导航应用)层级更深, 返回所属分类使用 pop。
-                        fun depth(id: String) = when (id) {
-                            HIDDEN_LAUNCHER_APPS_ID, NAVIGATION_APPS_ID, FONT_APPS_ID -> 2
-                            else -> 1
-                        }
-                        val enter = if (depth(targetState) < depth(initialState)) -1 else 1
-                        val spec = tween<IntOffset>(durationMillis = PAGE_TRANSITION_MS, easing = PAGE_TRANSITION_EASING)
-                        (fadeIn(animationSpec = tween(durationMillis = PAGE_TRANSITION_MS, easing = PAGE_TRANSITION_EASING)) +
-                            slideInHorizontally(animationSpec = spec) { enter * it / 5 })
-                            .togetherWith(
-                                fadeOut(animationSpec = tween(durationMillis = PAGE_TRANSITION_MS, easing = PAGE_TRANSITION_EASING)) +
-                                    slideOutHorizontally(animationSpec = spec) { -enter * it / 5 }
-                            )
-                    },
-                    label = "tablet_detail",
-                ) { targetId ->
+                SettingsPageHost(openCategoryId, onBackCompleted = { openCategoryId = it }) { targetId ->
                     DetailPane(
-                        targetId = targetId,
+                        targetId = targetId ?: "desktop",
                         ctx = ctx,
                         prefs = prefs,
                         version = version,
@@ -764,32 +747,14 @@ fun SettingsScreen(resumeRequest: Int = 0) {
             }
         }
     } else {
-        AnimatedContent(
-            targetState = openCategoryId,
-            transitionSpec = {
-                // 按层级判断 push/pop，二级列表返回所属分类也使用 pop。
-                fun depth(id: String?) = when (id) {
-                    null -> 0
-                    HIDDEN_LAUNCHER_APPS_ID, NAVIGATION_APPS_ID, FONT_APPS_ID -> 2
-                    else -> 1
-                }
-                val enter = if (depth(targetState) < depth(initialState)) -1 else 1
-                val spec = tween<IntOffset>(durationMillis = PAGE_TRANSITION_MS, easing = PAGE_TRANSITION_EASING)
-                (fadeIn(animationSpec = tween(durationMillis = PAGE_TRANSITION_MS, easing = PAGE_TRANSITION_EASING)) +
-                    slideInHorizontally(animationSpec = spec) { enter * it / 5 })
-                    .togetherWith(
-                        fadeOut(animationSpec = tween(durationMillis = PAGE_TRANSITION_MS, easing = PAGE_TRANSITION_EASING)) +
-                            slideOutHorizontally(animationSpec = spec) { -enter * it / 5 }
-                    )
-            },
-            label = "settings_pages",
-        ) { targetId ->
+        SettingsPageHost(openCategoryId, onBackCompleted = { openCategoryId = it }) { targetId ->
             if (targetId == null) {
                 val anyEnabled = remember(version) {
                     CATEGORIES.any { c -> c.items.masterItems.any { it.isEnabledInMaster(prefs) } }
                 }
                 HomeScreen(
-                    cardStyle = prefs.getInt("about_device_card_style", 0),
+                    cardStyle = cardStyle,
+                    bannerCache = bannerCache,
                     missingScopes = missingScopes,
                     masterChecked = masterOverride.valueFor(null) ?: anyEnabled,
                     onMasterChange = { onMasterChange(null, it) },
@@ -856,6 +821,7 @@ private fun DetailPane(
 @Composable
 private fun HomeScreen(
     cardStyle: Int,
+    bannerCache: HomeBannerCache,
     missingScopes: Boolean,
     masterChecked: Boolean,
     onMasterChange: (Boolean) -> Unit,
@@ -865,48 +831,30 @@ private fun HomeScreen(
 ) {
     val ctx = LocalContext.current
     val listState = rememberLazyListState()
-    // 回弹位移: 共享给标题栏分割线, 让不可滚动页面上滑回弹时分割线也出现。
-    val overscrollOffset = remember { mutableFloatStateOf(0f) }
-    // 系统信息与背景样式一起发布，避免先显示占位背景再切换。
-    var headerInfo by remember { mutableStateOf<Pair<Int, String?>?>(null) }
-    LaunchedEffect(Unit) {
-        headerInfo = withContext(Dispatchers.IO) {
-            val properties = runRoot("getprop").orEmpty().lineSequence().mapNotNull { line ->
-                val match = Regex("^\\[([^]]+)]: \\[(.*)]$").matchEntire(line)
-                match?.let { it.groupValues[1] to it.groupValues[2] }
-            }.toMap()
-            val resolvedStyle = AboutCardStyleResolver.resolve(
-                properties["ro.oplus.image.system_ext.area"],
-                properties["ro.oplus.image.system_ext.brand"],
-                properties["ro.build.version.ota"],
-                properties["ro.build.version.oplusrom.display"],
-                properties["ro.build.version.oplusrom"], Build.DISPLAY,
-            )
-            resolvedStyle to systemLabel()
-        }
-    }
-    val headerStyle = if (cardStyle in listOf(1, 2, 3, 5, 6, 7, 8, 9)) cardStyle else headerInfo?.first
+    val listScroll = rememberSettingsListScroll(listState)
+    val headerInfo = bannerCache.info
+    val headerStyle = if (cardStyle in listOf(1, 2, 3, 5, 6, 7, 8, 9)) cardStyle else headerInfo?.style
     Scaffold(
         topBar = {
-            CouixLargeTitle(
+            SettingsLargeTitle(
                 title = "ColorOS Mod",
-                dividerProgress = couixTopBarDividerProgress(listState, overscrollOffset),
+                scrollBehavior = listScroll.appBar,
                 actions = { if (showRestartMenu) RestartMenu(ctx) },
             )
         },
     ) { padding ->
-        LazyColumn(
-            state = listState,
+        SettingsLazyColumn(
+            scroll = listScroll,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .couixOverscroll(listState, overscrollOffset),
+                ,
         ) {
             if (missingScopes) {
                 item(key = "scope_warning") { ScopeWarningCard() }
             }
             item {
-                CouixMasterToggle(
+                SettingsMasterToggle(
                     checked = masterChecked,
                     title = ctx.getString(if (masterChecked) HOME_MASTER_TITLE_ON else MASTER_TITLE_OFF),
                     // 启用后无需再解释, 仅未启用时提示。
@@ -914,14 +862,15 @@ private fun HomeScreen(
                     onCheckedChange = onMasterChange,
                     // 机型横幅作为第一张卡片的首项, 只裁顶部两角(下方与开关行相接)。
                     aboveContent = {
-                        CouixDeviceHeader(
+                        SettingsDeviceHeader(
                             backgroundStyle = headerStyle,
-                            model = deviceName(ctx),
-                            system = headerInfo?.second,
+                            model = headerInfo?.model.orEmpty(),
+                            system = headerInfo?.system,
+                            cache = bannerCache,
                             contentReady = headerInfo != null,
                             shape = RoundedCornerShape(
-                                topStart = COUIX_CARD_CORNER,
-                                topEnd = COUIX_CARD_CORNER,
+                                topStart = SETTINGS_CARD_CORNER,
+                                topEnd = SETTINGS_CARD_CORNER,
                             ),
                         )
                     },
@@ -933,10 +882,10 @@ private fun HomeScreen(
             }
             CATEGORY_GROUPS.forEach { group ->
                 item {
-                    CouixCard {
+                    SettingsCard {
                         group.forEachIndexed { index, category ->
-                            if (index > 0) CouixItemDivider(startInset = COUIX_CATEGORY_TEXT_START)
-                            CouixCategoryRow(
+                            if (index > 0) SettingsItemDivider(startInset = SETTINGS_CATEGORY_TEXT_START)
+                            SettingsCategoryRow(
                                 icon = category.icon,
                                 title = ctx.getString(category.title),
                                 subtitle = category.subtitle?.let(ctx::getString),
@@ -957,7 +906,7 @@ private fun CategoryMasterToggle(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    CouixMasterToggle(
+    SettingsMasterToggle(
         checked = checked,
         title = androidx.compose.ui.res.stringResource(if (checked) CATEGORY_MASTER_TITLE_ON else MASTER_TITLE_OFF),
         onCheckedChange = onCheckedChange,
@@ -981,6 +930,7 @@ private fun CategoryScreen(
     showBack: Boolean = true,
 ) {
     val listState = rememberLazyListState()
+    val listScroll = rememberSettingsListScroll(listState)
     val isPad = LocalConfiguration.current.smallestScreenWidthDp >= 600
     // 按 GroupTitleItem 切分: 每段一张卡片, 段与段之间自然留出 group 间距。
     val groups = remember(category, version, overrideValue, isPad) {
@@ -990,20 +940,19 @@ private fun CategoryScreen(
         }.splitByDivider()
     }
     // 回弹位移: 共享给标题栏分割线, 让不可滚动页面上滑回弹时分割线也出现。
-    val overscrollOffset = remember { mutableFloatStateOf(0f) }
     Scaffold(
         topBar = {
-            CouixTopAppBar(
+            SettingsTopAppBar(
                 title = ctx.getString(category.title),
-                dividerProgress = couixTopBarDividerProgress(listState, overscrollOffset),
+                scrollBehavior = listScroll.appBar,
                 navigationIcon = if (showBack) {
                     {
                         IconButton(onClick = onBack) {
                             Icon(
-                                imageVector = MiuixIcons.Back,
+                                imageVector = COUIIcons.Back,
                                 contentDescription = ctx.getString(R.string.ui_back),
-                                tint = MiuixTheme.colorScheme.onSurface,
-                                modifier = Modifier.size(COUIX_BACK_ICON),
+                                tint = COUITheme.colorScheme.onSurface,
+                                modifier = Modifier.size(SETTINGS_BACK_ICON),
                             )
                         }
                     }
@@ -1014,16 +963,16 @@ private fun CategoryScreen(
             )
         },
     ) { padding ->
-        LazyColumn(
-            state = listState,
+        SettingsLazyColumn(
+            scroll = listScroll,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .couixOverscroll(listState, overscrollOffset),
+                ,
         ) {
             // 第一个 group 的 header: 说明滑块两端值的含义。
             if (category.id != "system_fonts") {
-                item { CouixSmallTitle(text = ctx.getString(SLIDER_GROUP_HINT)) }
+                item { SettingsSmallTitle(text = ctx.getString(SLIDER_GROUP_HINT)) }
             }
             if (category.items.masterItems.isNotEmpty()) {
                 item {
@@ -1036,16 +985,16 @@ private fun CategoryScreen(
             // 该分类专属说明: 作为设置项 group 的 header 显示(仅配置了 hint 的分类)。
             val hint = category.hint
             if (hint != null) {
-                item { CouixSmallTitle(text = ctx.getString(hint)) }
+                item { SettingsSmallTitle(text = ctx.getString(hint)) }
             }
             groups.forEach { group ->
                 // 分组小标题: GroupTitleItem 的 title 资源 ID 非 0时在卡片上方显示。
                 val desc = group.desc
                 if (desc != null && desc != 0) {
-                    item { CouixSmallTitle(text = androidx.compose.ui.res.stringResource(desc)) }
+                    item { SettingsSmallTitle(text = androidx.compose.ui.res.stringResource(desc)) }
                 }
                 item {
-                    CouixGroup(
+                    SettingsGroup(
                         items = group.items,
                         prefs = prefs,
                         ctx = ctx,
@@ -1055,7 +1004,7 @@ private fun CategoryScreen(
                         onOpenNavigationApps = onOpenNavigationApps,
                         onOpenFontApps = onOpenFontApps,
                         footerContent = if (group.items.any { it is SwitchItem && it.key == "hidden_launcher_apps_enabled" }) {
-                            { CouixCategoryRow(null, ctx.getString(R.string.ui_hidden_apps_list), onOpenHiddenApps) }
+                            { SettingsCategoryRow(null, ctx.getString(R.string.ui_hidden_apps_list), onOpenHiddenApps) }
                         } else null,
                     )
                 }
@@ -1088,7 +1037,7 @@ private fun setLauncherIconHidden(ctx: Context, hidden: Boolean) {
 @Composable
 private fun HideLauncherIconRow(ctx: Context) {
     var hidden by remember { mutableStateOf(isLauncherIconHidden(ctx)) }
-    CouixSwitchPreference(
+    SettingsSwitchPreference(
         checked = hidden,
         onCheckedChange = {
             hidden = it
@@ -1151,8 +1100,8 @@ private fun regionLabel(name: String): String? {
 private fun LaunchAppsRows(ctx: Context) {
     // root shell 启动会阻塞到命令结束(冷启动管理器可达秒级), 放到 IO 线程避免卡住 UI。
     val scope = rememberCoroutineScope()
-    CouixItemDivider()
-    CouixActionPairRow(
+    SettingsItemDivider()
+    SettingsActionPairRow(
         leftTitle = ctx.getString(R.string.ui_launch_kernelsu),
         onLeftClick = { scope.launch(Dispatchers.IO) { launchApp(ctx, KERNELSU_LAUNCH) } },
         rightTitle = ctx.getString(R.string.ui_launch_lsposed),
@@ -1440,10 +1389,10 @@ private fun showHotReloadToast(ctx: Context, text: String) {
 
 @Composable
 internal fun RestartMenu(ctx: Context) {
-    CouixActionMenu(
+    SettingsActionMenu(
         icon = {
             Icon(
-                painter = rememberVectorPainter(MiuixIcons.Refresh),
+                painter = rememberVectorPainter(COUIIcons.Refresh),
                 contentDescription = ctx.getString(R.string.ui_restart),
             )
         },

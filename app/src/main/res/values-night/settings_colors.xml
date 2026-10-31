@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="settings_summary_text">#8AFFFFFF</color>
+    <color name="settings_summary_text_disabled">#4DFFFFFF</color>
+</resources>

@@ -63,7 +63,7 @@ internal fun InstallerRestoreRow(ctx: Context, onChanged: () -> Unit) {
             Toast.makeText(ctx, ctx.getString(R.string.installer_action_failed), Toast.LENGTH_LONG).show()
         }
     }
-    CouixSwitchPreference(
+    SettingsSwitchPreference(
         title = ctx.getString(R.string.installer_restore_legacy),
         checked = checked,
         enabled = loaded && !busy,

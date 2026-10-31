@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ColorOS Settings: coui_preference_secondary_text_color -> couiColorSecondNeutral. -->
+    <color name="settings_summary_text">#8A000000</color>
+    <!-- Disabled selector uses couiColorLabelTertiary. -->
+    <color name="settings_summary_text_disabled">#42000000</color>
+</resources>

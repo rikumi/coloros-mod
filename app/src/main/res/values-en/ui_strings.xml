@@ -152,14 +152,12 @@
     <string name="ui_exported">"Exported"</string>
     <string name="ui_export_failed">"Export failed"</string>
     <string name="ui_no_apps_to_export">"No apps to export"</string>
-    <string name="ui_export">"Export"</string>
     <string name="ui_disabled_settings">"Disabled app settings"</string>
     <string name="ui_disabled_apps">"Disabled apps"</string>
     <string name="ui_loading">"Loading…"</string>
     <string name="ui_no_disabled_apps">"No disabled apps or apps uninstalled for this user"</string>
     <string name="ui_disable_no_password">"Disable apps without password entry"</string>
     <string name="ui_hide_in_app_management">"Hide in app management"</string>
-    <string name="ui_feature_info">"About this feature"</string>
     <string name="ui_cannot_open_app_settings">"Cannot open settings for this app"</string>
     <string name="ui_user_uninstalled">"Uninstalled for this user"</string>
     <string name="ui_disabled_state">"Disabled"</string>

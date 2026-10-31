@@ -153,14 +153,12 @@
     <string name="ui_exported">"已導出"</string>
     <string name="ui_export_failed">"導出失敗"</string>
     <string name="ui_no_apps_to_export">"暫無可導出的應用程式"</string>
-    <string name="ui_export">"導出"</string>
     <string name="ui_disabled_settings">"停用應用程式設定"</string>
     <string name="ui_disabled_apps">"已停用的應用程式"</string>
     <string name="ui_loading">"載入中…"</string>
     <string name="ui_no_disabled_apps">"無已停用或用戶級卸載的應用程式"</string>
     <string name="ui_disable_no_password">"停用應用程式無需輸入密碼"</string>
     <string name="ui_hide_in_app_management">"在應用程式管理中隱藏"</string>
-    <string name="ui_feature_info">"功能說明"</string>
     <string name="ui_cannot_open_app_settings">"無法打開該應用程式的設定頁"</string>
     <string name="ui_user_uninstalled">"用戶級卸載"</string>
     <string name="ui_disabled_state">"停用"</string>

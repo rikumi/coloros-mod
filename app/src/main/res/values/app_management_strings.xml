@@ -2,7 +2,6 @@
 <resources>
     <string name="app_management_select_system">选择系统应用</string>
     <string name="app_management_system_apps">系统应用</string>
-    <string name="app_management_ignore_warning">忽略警告并新增停用应用</string>
     <string name="app_management_disable">停用</string>
     <string name="app_management_uninstall">用户级卸载</string>
     <string name="app_management_restore">取消停用</string>
