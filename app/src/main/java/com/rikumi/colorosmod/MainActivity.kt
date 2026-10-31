@@ -352,7 +352,7 @@ private val FLOATWINDOW: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_float_behavior),
     SwitchItem("float_window_count_enabled", R.string.ui_float_count, sliderKey = "float_window_count", sliderMin = 1, sliderMax = 10, sliderDefault = 3, sliderUnit = ""),
     SwitchItem("recents_hide_freeform_enabled", R.string.ui_recents_hide_freeform),
-    SwitchItem("recents_hide_closed_freeform_enabled", R.string.ui_recents_hide_closed_freeform),
+    SwitchItem("recents_hide_closed_freeform_enabled", R.string.ui_recents_hide_closed_freeform, masterManaged = false),
     SwitchItem("float_window_edge_hang_enabled", R.string.ui_float_edge_hang),
     SwitchItem("float_window_edge_hang_mute_enabled", R.string.ui_float_edge_mute),
     GroupTitleItem(R.string.ui_float_visual),

@@ -28,6 +28,8 @@ import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.WeakHashMap;
 import java.lang.reflect.Field;
@@ -247,7 +249,8 @@ public final class SignalHooks {
         boolean network = networkMode == 1;
         if (network) observeNetwork(container.getContext());
         List<Mobile> visible = new ArrayList<>();
-        List<?> ignored = (List<?>) XposedHelpers.getObjectField(container, "mIgnoredSlots");
+        Object ignoredSlots = XposedHelpers.getObjectField(container, "mIgnoredSlots");
+        Collection<?> ignored = ignoredSlots instanceof Collection<?> slots ? slots : Collections.emptySet();
         for (int i = 0; i < container.getChildCount(); i++) {
             View child = container.getChildAt(i);
             if (!MOBILE.equals(child.getClass().getName())) continue;

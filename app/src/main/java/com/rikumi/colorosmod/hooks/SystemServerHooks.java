@@ -47,6 +47,7 @@ import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
 public final class SystemServerHooks {
     public static void hookFloatWindowCount(XC_LoadPackage.LoadPackageParam lp) {
+        FloatWindowCascadeHooks.hook(lp);
         try {
             XposedHelpers.findAndHookMethod(
                     "com.android.server.wm.FlexibleWindowManagerService", lp.classLoader,

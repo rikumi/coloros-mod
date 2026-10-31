@@ -10,6 +10,8 @@ import android.service.notification.NotificationListenerService.Ranking;
 import android.service.notification.NotificationListenerService.RankingMap;
 import android.service.notification.StatusBarNotification;
 import java.lang.ref.WeakReference;
+import java.lang.reflect.Method;
+import com.rikumi.colorosmod.xposed.XposedBridge;
 import java.util.*;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
@@ -23,6 +25,7 @@ final class SystemNotificationGroupHooks {
     private static final Map<Integer, Object> summaries = new HashMap<>();
     private static final Map<Integer, Object> visibleSummaries = new HashMap<>();
     private static boolean active = true, syncing;
+    private static Method dispatch;
     private static StatusBarNotification sbn(Object entry) {
         return (StatusBarNotification) XposedHelpers.callMethod(entry, "getSbn");
     }
@@ -36,10 +39,10 @@ final class SystemNotificationGroupHooks {
         return false;
     }
     static boolean androidSummary(StatusBarNotification sbn) {
-        return active && NotificationAppNameHooks.enabled() && "android".equals(sbn.getPackageName())
+        return dispatch != null && active && NotificationAppNameHooks.enabled() && "android".equals(sbn.getPackageName())
                 && (sbn.getNotification().flags & Notification.FLAG_GROUP_SUMMARY) != 0;
     }
-    private static boolean enabled() { return active && NotificationAppNameHooks.enabled(); }
+    private static boolean enabled() { return dispatch != null && active && NotificationAppNameHooks.enabled(); }
     private static String group(int user) { return user + "|android|g:" + TAG; }
     private static boolean leaf(Object entry) {
         StatusBarNotification sbn = sbn(entry);
@@ -54,7 +57,14 @@ final class SystemNotificationGroupHooks {
     static void hook(XC_LoadPackage.LoadPackageParam lp) {
         try {
             Class<?> type = XposedHelpers.findClass("com.android.systemui.statusbar.notification.collection.NotifCollection", lp.classLoader);
-            XposedHelpers.findAndHookMethod(type, "dispatchEventsAndRebuildList", String.class, new XC_MethodHook() {
+            // 先检查必要接口；不兼容时不安装分组 hook，也不在异步 refresh 中调用缺失的方法。
+            Method rebuild;
+            try { rebuild = type.getDeclaredMethod("dispatchEventsAndRebuildList", String.class); }
+            catch (NoSuchMethodException missingReason) {
+                rebuild = type.getDeclaredMethod("dispatchEventsAndRebuildList");
+            }
+            rebuild.setAccessible(true);
+            XposedBridge.hookMethod(rebuild, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     collection = new WeakReference<>(p.thisObject);
                     sync(p.thisObject);
@@ -146,7 +156,8 @@ final class SystemNotificationGroupHooks {
                     p.args[0] = new ArrayList<>(output.values());
                 }
             });
-        } catch (Throwable error) { log("system notification grouping hook failed: " + error); }
+            dispatch = rebuild;
+        } catch (Throwable error) { log("system notification grouping unavailable: " + error); }
     }
 
     private static void sync(Object owner) {
@@ -209,6 +220,7 @@ final class SystemNotificationGroupHooks {
 
     static void refresh() {
         main.post(() -> {
+            if (dispatch == null || !active || (!NotificationAppNameHooks.enabled() && summaries.isEmpty())) return;
             Object owner = collection.get();
             if (owner == null && active) {
                 try {
@@ -219,7 +231,7 @@ final class SystemNotificationGroupHooks {
                     if (owner != null) collection = new WeakReference<>(owner);
                 } catch (Throwable error) { log("system notification collection lookup failed: " + error); }
             }
-            if (owner != null) XposedHelpers.callMethod(owner, "dispatchEventsAndRebuildList", "systemNotificationGroupingSetting");
+            if (owner != null) rebuild(owner, "systemNotificationGroupingSetting");
         });
     }
     static void cleanup() {
@@ -228,9 +240,19 @@ final class SystemNotificationGroupHooks {
         if (owner != null) {
             sync(owner);
             visibleSummaries.clear();
-            XposedHelpers.callMethod(owner, "dispatchEventsAndRebuildList", "systemNotificationGroupingCleanup");
+            rebuild(owner, "systemNotificationGroupingCleanup");
         }
         SystemNotificationGroupIconHooks.cleanup();
         summaries.clear(); collection.clear();
+        dispatch = null;
+    }
+
+    private static void rebuild(Object owner, String reason) {
+        Method method = dispatch;
+        if (method == null) return;
+        try {
+            if (method.getParameterCount() == 0) method.invoke(owner);
+            else method.invoke(owner, reason);
+        } catch (Throwable error) { log("system notification grouping rebuild failed: " + error); }
     }
 }

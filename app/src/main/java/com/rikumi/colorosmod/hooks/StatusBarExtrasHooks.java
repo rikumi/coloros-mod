@@ -46,10 +46,15 @@ public final class StatusBarExtrasHooks {
             XposedBridge.hookAllMethods(controller, "onInit", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     // carrierContainer 实际是 clockContainer，不能整体隐藏。
-                    Object entrance = XposedHelpers.getObjectField(p.thisObject, "quickEntranceContainerViewController");
-                    trackCarrier((View) XposedHelpers.callMethod(entrance, "getCarrierView"));
-                    trackCarrier((View) XposedHelpers.getObjectField(p.thisObject, "fakeCarrierContainer"));
-                    trackCarrier((View) XposedHelpers.getObjectField(p.thisObject, "fakeKeyguardCarrierContainer"));
+                    try {
+                        Object entrance = XposedHelpers.getObjectField(p.thisObject, "quickEntranceContainerViewController");
+                        if (entrance != null) trackCarrier((View) XposedHelpers.callMethod(entrance, "getCarrierView"));
+                    } catch (NoSuchMethodError | NoSuchFieldError ignored) { }
+                    // 不同版本的入口组件不一定提供 carrier getter；其余运营商视图独立处理。
+                    for (String name : new String[]{"fakeCarrierContainer", "fakeKeyguardCarrierContainer"}) {
+                        try { trackCarrier((View) XposedHelpers.getObjectField(p.thisObject, name)); }
+                        catch (NoSuchFieldError ignored) { }
+                    }
                 }
             });
         } catch (Throwable t) { log("separate QS carrier hook failed: " + t); }

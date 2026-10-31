@@ -31,6 +31,7 @@ public final class MergedRadiantHooks {
     private static Class<?> volumeIconClass, colorfulUtil;
     private static int activeAttr, inactiveAttr, inoperableAttr, unavailableAttr;
     private static boolean restoring, settingTint;
+    private static boolean activeBlurAvailable;
     private static final WeakHashMap<View, Card> cards = new WeakHashMap<>();
     private static final WeakHashMap<View, WeakReference<Object>> icons = new WeakHashMap<>();
     private static final WeakHashMap<Object, ColorStateList> nativeTints = new WeakHashMap<>();
@@ -44,7 +45,12 @@ public final class MergedRadiantHooks {
             highlightClass = XposedHelpers.findClass("com.oplus.systemui.qs.base.tile.OplusQSHighlightTileView", pkg.classLoader);
             normalClass = XposedHelpers.findClass("com.oplus.systemui.qs.base.tile.OplusQSTileBaseView", pkg.classLoader);
             blurProvider = XposedHelpers.findClass("com.oplusos.systemui.common.util.QSBlurConfigProvider", pkg.classLoader);
-            seekBarBlurManager = XposedHelpers.findClass("com.oplus.systemui.qs.base.util.QsSeekBarBlurManager", pkg.classLoader);
+            activeBlurAvailable = false;
+            try {
+                seekBarBlurManager = XposedHelpers.findClass("com.oplus.systemui.qs.base.util.QsSeekBarBlurManager", pkg.classLoader);
+                XposedHelpers.findMethodBestMatch(seekBarBlurManager, "getSeekBarActiveDrawable", View.class);
+                activeBlurAvailable = true;
+            } catch (Throwable t) { log("radiant active blur unavailable; using solid circle: " + t); }
             colorUtil = XposedHelpers.findClass("com.oplus.systemui.qs.base.util.QsColorUtil", pkg.classLoader);
             qsHelper = XposedHelpers.findClass("com.oplus.systemui.qs.helper.QSFragmentHelper", pkg.classLoader);
             iconColorState = XposedHelpers.findClass("com.oplus.systemui.qs.base.res.model.TileIconColorState", pkg.classLoader);
@@ -336,26 +342,33 @@ public final class MergedRadiantHooks {
             Drawable leafBackground = backgroundLeaf(tile);
             boolean mix = leafBackground != null && leafBackground.getClass().getSimpleName().equals("MixColorTileDrawable");
             Drawable fill = card.shape;
-            if (state == 2 && mix && enabled(tile)) {
-                boolean night = tile.getResources().getConfiguration().isNightModeActive();
-                Drawable activeShape = card.activeShape == null ? null : card.activeShape.get();
-                if (activeShape == null || card.activeNight != night) {
-                    activeShape = (Drawable) XposedHelpers.callMethod(
-                            XposedHelpers.getStaticObjectField(seekBarBlurManager, "INSTANCE"), "getSeekBarActiveDrawable", circle);
-                    card.activeShape = new WeakReference<>(activeShape);
-                    card.activeNight = night;
-                    card.activeSize = 0;
-                }
-                if (card.activeSize != size) {
-                    Object proxy = XposedHelpers.callMethod(activeShape, "getViewBlurProxy");
-                    Object config = XposedHelpers.callMethod(proxy, "getBlurConfig");
-                    XposedHelpers.callMethod(config, "setCornerRadius", size / 2f);
+            if (state == 2 && mix && enabled(tile) && activeBlurAvailable) {
+                try {
+                    boolean night = tile.getResources().getConfiguration().isNightModeActive();
+                    Drawable activeShape = card.activeShape == null ? null : card.activeShape.get();
+                    if (activeShape == null || card.activeNight != night) {
+                        activeShape = (Drawable) XposedHelpers.callMethod(
+                                XposedHelpers.getStaticObjectField(seekBarBlurManager, "INSTANCE"), "getSeekBarActiveDrawable", circle);
+                        card.activeShape = new WeakReference<>(activeShape);
+                        card.activeNight = night;
+                        card.activeSize = 0;
+                    }
+                    if (card.activeSize != size) {
+                        Object proxy = XposedHelpers.callMethod(activeShape, "getViewBlurProxy");
+                        Object config = XposedHelpers.callMethod(proxy, "getBlurConfig");
+                        XposedHelpers.callMethod(config, "setCornerRadius", size / 2f);
 
-                    XposedHelpers.callMethod(config, "setEnableStaticBlurCorner", true);
-                    XposedHelpers.callMethod(proxy, "applyBlurConfig");
-                    card.activeSize = size;
+                        XposedHelpers.callMethod(config, "setEnableStaticBlurCorner", true);
+                        XposedHelpers.callMethod(proxy, "applyBlurConfig");
+                        card.activeSize = size;
+                    }
+                    fill = activeShape;
+                } catch (Throwable t) {
+                    // 固件更换或移除模糊接口时，保留实色圆形，避免布局回调反复导致 SystemUI 崩溃。
+                    activeBlurAvailable = false;
+                    card.activeShape = null;
+                    log("radiant active blur failed; using solid circle: " + t);
                 }
-                fill = activeShape;
             }
             if (circle.getBackground() != fill) circle.setBackground(fill);
             int inset = Math.round(12f * unit);
