@@ -10,6 +10,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 
@@ -18,17 +19,25 @@ internal object SystemFontStore {
         Thread(task, "font-settings-sync").also { it.isDaemon = true }
     }
     private var changeFailure: Throwable? = null
+    private val userRevision = AtomicLong()
+    @Volatile private var preparedRevision = 0L
 
     // Enqueue from the UI callback, before launching a cancellable UI coroutine.
-    fun enqueue(change: () -> Unit): Deferred<Unit> {
+    fun enqueue(change: () -> Unit): Deferred<Unit> = enqueueOperation(userChange = true, change)
+
+    // 服务连接/模块更新后的同步不属于用户修改，不应阻塞 Zygote 重启。
+    fun enqueueSync(change: () -> Unit): Deferred<Unit> = enqueueOperation(userChange = false, change)
+
+    private fun enqueueOperation(userChange: Boolean, change: () -> Unit): Deferred<Unit> {
+        if (userChange) userRevision.incrementAndGet()
         val result = CompletableDeferred<Unit>()
         changes.execute {
             try {
                 change()
-                changeFailure = null
+                if (userChange) changeFailure = null
                 result.complete(Unit)
             } catch (error: Throwable) {
-                changeFailure = error
+                if (userChange) changeFailure = error
                 FontFailureLog.record("font settings operation failed", error)
                 result.completeExceptionally(error)
             }
@@ -38,10 +47,17 @@ internal object SystemFontStore {
 
     fun whenReady(context: Context, action: () -> Unit, onFailure: (Throwable) -> Unit) {
         val app = context.applicationContext
+        val revision = userRevision.get()
+        if (revision == preparedRevision) {
+            // 不排在自动字体同步后面，也不主动重放已有挂载。
+            Thread(action, "zygote-restart").start()
+            return
+        }
         changes.execute {
             try {
                 changeFailure?.let { throw IllegalStateException("Previous font change failed", it) }
                 SystemFontMounts.awaitPending(app)
+                preparedRevision = revision
             } catch (error: Throwable) {
                 onFailure(error)
                 return@execute

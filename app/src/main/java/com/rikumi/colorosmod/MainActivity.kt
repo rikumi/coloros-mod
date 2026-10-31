@@ -152,7 +152,7 @@ class MainActivity : ComponentActivity() {
                 override fun onServiceBind(service: XposedService) {
                     xposedServices.add(service)
                     val context = applicationContext
-                    SystemFontStore.enqueue { SystemFontStore.sync(context, service) }
+                    SystemFontStore.enqueueSync { SystemFontStore.sync(context, service) }
                     scopeObservers.forEach { it.run() }
                 }
                 override fun onServiceDied(service: XposedService) {
