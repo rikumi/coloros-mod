@@ -259,7 +259,6 @@ internal fun DisabledAppsScreen(ctx: Context, onBack: () -> Unit, showBack: Bool
             text = disabledAppsWarningText(if (action == DisabledAppsWarningAction.ADD)
                 R.string.ui_disabled_apps_add_hint else R.string.ui_disabled_apps_export_hint),
             confirmLabel = ctx.getString(R.string.ui_disabled_apps_continue),
-            confirmColor = Color(0xFFE5484D),
             onDismiss = { warningAction = null },
             onConfirm = {
                 warningAction = null
