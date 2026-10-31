@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -47,20 +48,22 @@ import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Back
 import io.github.suqi8.coui.kmp.icon.extended.Refresh
-import io.github.suqi8.coui.kmp.icon.extended.ExpandLess
-import io.github.suqi8.coui.kmp.icon.extended.ExpandMore
+import io.github.suqi8.coui.kmp.icon.extended.ChevronForward
 import io.github.suqi8.coui.kmp.theme.COUITheme
 
 @Composable
 internal fun HiddenNotificationsScreen(ctx: Context, onBack: () -> Unit, showBack: Boolean = true) {
     val state by HiddenNotificationsService.state.collectAsState()
     var hasAccess by remember { mutableStateOf(HiddenNotificationsService.hasAccess(ctx)) }
+    var hasSavedHiddenNotifications by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val listScroll = rememberSettingsListScroll(listState)
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle, ctx) {
         fun refresh() {
             hasAccess = HiddenNotificationsService.hasAccess(ctx)
+            hasSavedHiddenNotifications = ctx.getSharedPreferences("hidden_notification_history", Context.MODE_PRIVATE)
+                .getString("entries", "[]").orEmpty().let { it.isNotBlank() && it != "[]" }
             HiddenNotificationsService.refresh(ctx)
         }
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) refresh() }
@@ -70,6 +73,7 @@ internal fun HiddenNotificationsScreen(ctx: Context, onBack: () -> Unit, showBac
     }
     val hidden = remember(state.entries) { state.entries.filter { it.hidden && it.posted } }
     val history = remember(state.entries) { state.entries.filter { it.hidden && !it.posted } }
+    var hiddenExpanded by rememberSaveable { mutableStateOf(true) }
     var historyExpanded by rememberSaveable { mutableStateOf(false) }
     val visible = remember(state.entries) { state.entries.filterNot { it.hidden } }
     Scaffold(topBar = {
@@ -99,8 +103,9 @@ internal fun HiddenNotificationsScreen(ctx: Context, onBack: () -> Unit, showBac
             ) {
             if (!hasAccess || !state.connected) {
                 item {
-                    SettingsSmallTitle(ctx.getString(if (hasAccess) R.string.hidden_notifications_connecting
-                        else R.string.hidden_notifications_permission_hint))
+                    SettingsSmallTitle(ctx.getString(if (!state.connected &&
+                        (hasAccess || hasSavedHiddenNotifications || state.entries.any { it.hidden }))
+                        R.string.hidden_notifications_reader_missing else R.string.hidden_notifications_permission_hint))
                 }
                 item {
                     SettingsCard {
@@ -117,10 +122,30 @@ internal fun HiddenNotificationsScreen(ctx: Context, onBack: () -> Unit, showBac
                     Triple(R.string.hidden_notifications_hidden, R.string.hidden_notifications_no_hidden, hidden),
                     Triple(R.string.hidden_notifications_visible, R.string.hidden_notifications_no_visible, visible),
                 ).forEach { (title, empty, entries) ->
-                    item(key = title) { SettingsSmallTitle(ctx.getString(title)) }
+                    val isHidden = title == R.string.hidden_notifications_hidden
+                    if (!isHidden || entries.isEmpty()) {
+                        item(key = title) { SettingsSmallTitle(ctx.getString(title)) }
+                    }
                     when {
                         !state.loaded -> item { SettingsSmallTitle(ctx.getString(R.string.ui_loading)) }
                         entries.isEmpty() && (title != R.string.hidden_notifications_hidden || history.isEmpty()) -> item { SettingsSmallTitle(ctx.getString(empty)) }
+                        isHidden -> {
+                            if (entries.isNotEmpty()) {
+                                item(key = "hidden_notifications_group") {
+                                    HiddenNotificationGroupHeader(ctx.getString(title), entries.size, hiddenExpanded) {
+                                        hiddenExpanded = !hiddenExpanded
+                                    }
+                                }
+                                if (hiddenExpanded) itemsIndexed(entries, key = { _, entry -> entry.key }) { index, entry ->
+                                    SettingsCardRow(first = false, last = index == entries.lastIndex) {
+                                        SettingsItemDivider()
+                                        HiddenNotificationRow(ctx, entry, enabled = state.busyKey == null,
+                                            busy = state.busyKey == entry.key,
+                                            onClick = { HiddenNotificationsService.toggle(entry) })
+                                    }
+                                }
+                            }
+                        }
                         else -> itemsIndexed(entries, key = { _, entry -> entry.key }) { index, entry ->
                             SettingsCardRow(first = index == 0, last = index == entries.lastIndex) {
                                 if (index > 0) SettingsItemDivider()
@@ -132,18 +157,8 @@ internal fun HiddenNotificationsScreen(ctx: Context, onBack: () -> Unit, showBac
                     }
                     if (title == R.string.hidden_notifications_hidden && history.isNotEmpty()) {
                         item(key = "hidden_notification_history") {
-                            SettingsCardRow(first = true, last = !historyExpanded) {
-                                BasicComponent(
-                                    title = ctx.getString(R.string.hidden_notifications_history),
-                                    onClick = { historyExpanded = !historyExpanded },
-                                    endActions = {
-                                        BasicText(history.size.toString(), style = COUITheme.textStyles.body2.copy(
-                                            color = settingsSummaryTextColor()), modifier = Modifier.padding(end = 8.dp))
-                                        Icon(if (historyExpanded) COUIIcons.ExpandLess else COUIIcons.ExpandMore,
-                                            contentDescription = null, tint = settingsSummaryTextColor())
-                                    },
-                                )
-                            }
+                            HiddenNotificationGroupHeader(ctx.getString(R.string.hidden_notifications_history),
+                                history.size, historyExpanded) { historyExpanded = !historyExpanded }
                         }
                         if (historyExpanded) itemsIndexed(history, key = { _, entry -> "history:${entry.key}" }) { index, entry ->
                             SettingsCardRow(first = false, last = index == history.lastIndex) {
@@ -162,6 +177,23 @@ internal fun HiddenNotificationsScreen(ctx: Context, onBack: () -> Unit, showBac
 }
 
 @Composable
+private fun HiddenNotificationGroupHeader(title: String, count: Int, expanded: Boolean, onClick: () -> Unit) {
+    SettingsCardRow(first = true, last = !expanded) {
+        BasicComponent(
+            title = title,
+            onClick = onClick,
+            endActions = {
+                BasicText(count.toString(), style = COUITheme.textStyles.body2.copy(
+                    color = settingsSummaryTextColor()), modifier = Modifier.padding(end = 8.dp))
+                Icon(COUIIcons.ChevronForward,
+                    contentDescription = null, tint = settingsSummaryTextColor(),
+                    modifier = Modifier.size(16.dp).rotate(if (expanded) -90f else 90f))
+            },
+        )
+    }
+}
+
+@Composable
 private fun HiddenNotificationRow(
     ctx: Context,
     entry: HiddenNotificationEntry,
@@ -170,6 +202,13 @@ private fun HiddenNotificationRow(
     onClick: () -> Unit,
 ) {
     val action = ctx.getString(if (entry.hidden) R.string.hidden_notifications_restore else R.string.hidden_notifications_hide)
+    val fallbackTitle = remember(ctx, entry.key, entry.channelId, entry.channelName) {
+        hiddenNotificationFallbackTitle(ctx, entry)
+    }
+    val channelName = entry.channelName.ifBlank { fallbackTitle }
+        .ifBlank { ctx.getString(R.string.hidden_notifications_unknown_channel) }
+    val channelIdLabel = ctx.getString(R.string.hidden_notifications_channel, "", entry.notificationId)
+    val appName = entry.appName.takeUnless { it == entry.packageName }.orEmpty()
     val detailStyle = COUITheme.textStyles.body2.copy(fontSize = 12.sp, lineHeight = 16.sp,
         color = settingsSummaryTextColor())
     Row(modifier = Modifier.fillMaxWidth().clickable(enabled = enabled, onClickLabel = action, onClick = onClick)
@@ -180,14 +219,23 @@ private fun HiddenNotificationRow(
             Box(Modifier.width(12.dp))
         }
         Column(Modifier.weight(1f)) {
-            BasicText(entry.title.ifBlank { entry.appName },
+            val title = entry.title.ifBlank { fallbackTitle }.ifBlank {
+                if (!entry.posted && entry.text.isBlank())
+                    ctx.getString(R.string.hidden_notifications_content_unrecorded)
+                else appName.ifBlank { channelName }
+            }
+            BasicText(title,
                 style = COUITheme.textStyles.body1.copy(color = COUITheme.colorScheme.onSurface),
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
-            BasicText(if (entry.appName == entry.packageName) entry.packageName
-                else "${entry.appName} · ${entry.packageName}", style = detailStyle,
-                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
-            if (entry.text.isNotBlank()) BasicText(entry.text, style = detailStyle,
-                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (entry.text.isNotBlank()) {
+                BasicText(entry.text, style = detailStyle, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                BasicText(if (appName.isBlank()) channelName else "$appName · $channelName", style = detailStyle,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                BasicText(channelIdLabel, style = detailStyle, maxLines = 1, softWrap = false)
+            }
         }
         BasicText(ctx.getString(when {
             busy -> R.string.hidden_notifications_processing

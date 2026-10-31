@@ -1,6 +1,5 @@
 package com.rikumi.colorosmod
 
-import android.app.Notification
 import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.Context
@@ -39,7 +38,12 @@ internal data class HiddenNotificationEntry(
     val ongoing: Boolean,
     val postTime: Long,
     val posted: Boolean = true,
-)
+    val channelId: String = "",
+    val channelName: String = "",
+) {
+    val notificationId: String
+        get() = key.split('|', limit = 4).getOrNull(2)?.takeIf { it.toIntOrNull() != null } ?: "—"
+}
 
 /** 当前通知优先，历史记录只补充系统中已不存在的隐藏项。 */
 internal fun mergeHiddenNotificationEntries(
@@ -68,6 +72,10 @@ class HiddenNotificationsService : NotificationListenerService() {
     private var refreshJob: Job? = null
     private val hiddenSystemKeys = mutableSetOf<String>()
     private var history: List<HiddenNotificationEntry>? = null
+    private var systemHistory: List<PersistedHiddenNotification>? = null
+    private var systemChannels: Map<Triple<String, Int, String>, String>? = null
+    private val contentStore = lazy { HiddenNotificationContents(applicationContext) }
+    private val contents by contentStore
 
     companion object {
         internal const val HIDE_DURATION_MS = 31_536_000_000L
@@ -89,7 +97,7 @@ class HiddenNotificationsService : NotificationListenerService() {
         internal fun refresh(context: Context) {
             mutableState.value = mutableState.value.copy(error = null)
             val service = instance
-            if (service != null) service.scheduleRefresh() else if (hasAccess(context)) {
+            if (service != null) service.scheduleRefresh(refreshSystemHistory = true) else if (hasAccess(context)) {
                 try {
                     requestRebind(component(context))
                 } catch (_: RuntimeException) {
@@ -132,6 +140,7 @@ class HiddenNotificationsService : NotificationListenerService() {
     override fun onDestroy() {
         disconnect()
         work.cancel()
+        if (contentStore.isInitialized()) contents.close()
         super.onDestroy()
     }
 
@@ -145,6 +154,7 @@ class HiddenNotificationsService : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        contents.record(sbn.key, HiddenNotificationContents.extract(sbn.notification, sbn.postTime))
         if (sbn.packageName == "android" && sbn.isOngoing && sbn.key in hiddenSystemKeys) {
             work.launch {
                 operations.withLock {
@@ -163,16 +173,22 @@ class HiddenNotificationsService : NotificationListenerService() {
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
+        // 同时捕获短时间内发送后撤回的通知，不依赖延迟刷新时仍能查询到它。
+        contents.record(sbn.key, HiddenNotificationContents.extract(sbn.notification, sbn.postTime))
         scheduleRefresh()
     }
 
-    private fun scheduleRefresh() {
+    private fun scheduleRefresh(refreshSystemHistory: Boolean = false) {
+        if (refreshSystemHistory) {
+            systemHistory = null
+            systemChannels = null
+        }
         refreshJob?.cancel()
         refreshJob = work.launch {
             delay(120)
             operations.withLock {
                 try {
-                    readEntries()
+                    readEntries(refreshSystemHistory = refreshSystemHistory)
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
                     mutableState.value = mutableState.value.copy(error = R.string.hidden_notifications_read_failed)
@@ -181,7 +197,10 @@ class HiddenNotificationsService : NotificationListenerService() {
         }
     }
 
-    private suspend fun readEntries(forgetKey: String? = null): List<HiddenNotificationEntry> {
+    private suspend fun readEntries(
+        forgetKey: String? = null,
+        refreshSystemHistory: Boolean = false,
+    ): List<HiddenNotificationEntry> {
         check(instance === this)
         val entries = withContext(Dispatchers.IO) {
             val active = getActiveNotifications() ?: error("Notification listener unavailable")
@@ -201,15 +220,18 @@ class HiddenNotificationsService : NotificationListenerService() {
                     }.getOrNull()
                     label to bitmap
                 }
+            val rankings = currentRanking
             fun entry(sbn: StatusBarNotification, isHidden: Boolean): HiddenNotificationEntry {
                 val (name, icon) = application(sbn.packageName, sbn.uid)
-                val extras = sbn.notification.extras
-                fun text(key: String) = runCatching { extras.getCharSequence(key)?.toString().orEmpty() }
-                    .getOrDefault("").take(2000)
+                val content = HiddenNotificationContents.extract(sbn.notification, sbn.postTime)
+                contents.remember(sbn.key, content)
+                val ranking = Ranking()
+                val channel = if (rankings.getRanking(sbn.key, ranking)) ranking.channel else null
                 return HiddenNotificationEntry(
-                    sbn.key, sbn.packageName, name, text(Notification.EXTRA_TITLE),
-                    text(Notification.EXTRA_TEXT).ifBlank { text(Notification.EXTRA_BIG_TEXT) },
+                    sbn.key, sbn.packageName, name, content.title, content.text,
                     icon, isHidden, sbn.isOngoing, sbn.postTime,
+                    channelId = channel?.id ?: sbn.notification.channelId.orEmpty(),
+                    channelName = channel?.name?.toString().orEmpty(),
                 )
             }
             val all = LinkedHashMap<String, HiddenNotificationEntry>()
@@ -224,20 +246,57 @@ class HiddenNotificationsService : NotificationListenerService() {
                     val packageName = item.optString("package")
                     if (key.isBlank() || packageName.isBlank()) return@mapNotNull null
                     val (name, icon) = application(packageName, -1)
-                    HiddenNotificationEntry(key, packageName, name, item.optString("title"), "", icon,
-                        hidden = true, ongoing = item.optBoolean("ongoing"), postTime = item.optLong("time"), posted = false)
+                    HiddenNotificationEntry(key, packageName, name,
+                        item.optString("title").takeUnless { item.optLong("time") == 0L }.orEmpty(), "", icon,
+                        hidden = true, ongoing = item.optBoolean("ongoing"), postTime = item.optLong("time"), posted = false,
+                        channelId = item.optString("channelId"), channelName = item.optString("channelName"))
                 }
             }.getOrElse {
                 AppLog.log("hidden notification history read failed: $it")
                 emptyList()
             }
-            val merged = mergeHiddenNotificationEntries(all.values.toList(), previous, forgetKey)
+            if (refreshSystemHistory || systemHistory == null) {
+                runCatching { HiddenNotificationSnoozes.read(android.os.Process.myUid() / 100000) }
+                    .onSuccess { systemHistory = it }
+                    .onFailure { AppLog.log("system hidden notification rules read failed: $it") }
+            }
+            val remembered = previous.associateBy { it.key }
+            val missing = systemHistory.orEmpty().map { rule ->
+                remembered[rule.key] ?: run {
+                    val (name, icon) = application(rule.packageName, -1)
+                    HiddenNotificationEntry(rule.key, rule.packageName, name,
+                        "", "", icon,
+                        hidden = true, ongoing = false, postTime = 0, posted = false)
+                }
+            }
+            // 普通监听器不能枚举其它应用的通道；历史通知从系统通道设置只读快照补充名称。
+            if (systemChannels == null) {
+                systemChannels = runCatching { HiddenNotificationChannels.read() }
+                    .onFailure { AppLog.log("notification channel read failed: $it") }.getOrDefault(emptyMap())
+            }
+            val merged = mergeHiddenNotificationEntries(all.values.toList(), previous + missing, forgetKey).map { item ->
+                val last = contents.lookup(item.key)
+                val content = if (last == null) item else item.copy(
+                    title = last.title.ifBlank { item.title }, text = last.text.ifBlank { item.text })
+                val user = item.key.substringBefore('|').toIntOrNull()?.takeIf { it >= 0 }
+                    ?: (android.os.Process.myUid() / 100000)
+                // 有真实通道 ID 时不跨通道猜测；只为旧记录按已核实的系统发送路径补充 ID。
+                val ids = if (item.channelId.isNotBlank()) listOf(item.channelId)
+                    else hiddenNotificationChannelIds(item)
+                val channel = ids.firstNotNullOfOrNull { id ->
+                    systemChannels?.get(Triple(item.packageName, user, id))?.let { id to it }
+                }
+                content.copy(channelId = channel?.first ?: item.channelId.ifBlank { ids.firstOrNull().orEmpty() },
+                    channelName = if (item.posted) item.channelName.ifBlank { channel?.second.orEmpty() }
+                        else channel?.second ?: item.channelName)
+            }
             val retained = merged.filter { it.hidden && it.key != forgetKey }
                 .map { it.copy(text = "", posted = false) }
             val saved = JSONArray()
             retained.forEach { item ->
                 saved.put(JSONObject().put("key", item.key).put("package", item.packageName)
-                    .put("title", item.title).put("ongoing", item.ongoing).put("time", item.postTime))
+                    .put("title", item.title).put("ongoing", item.ongoing).put("time", item.postTime)
+                    .put("channelId", item.channelId).put("channelName", item.channelName))
             }
             val serialized = saved.toString()
             if (serialized != prefs.getString("entries", "[]")) {
@@ -259,9 +318,15 @@ class HiddenNotificationsService : NotificationListenerService() {
         if (!hidden) hiddenSystemKeys.remove(key)
         if (!current.posted) {
             check(!hidden)
+            withContext(Dispatchers.IO) {
+                if (systemHistory.orEmpty().any { it.key == key }) {
+                    systemHistory = HiddenNotificationSnoozes.restore(key, android.os.Process.myUid() / 100000)
+                }
+            }
             readEntries(forgetKey = key)
             return
         }
+        if (!hidden) systemHistory = systemHistory?.filterNot { it.key == key }
         withContext(Dispatchers.IO) {
             snoozeNotification(key, if (hidden) HIDE_DURATION_MS else RESTORE_DURATION_MS)
         }

@@ -10,7 +10,7 @@
     <string name="hidden_notifications_processing">處理中…</string>
     <string name="hidden_notifications_refresh">重新整理通知</string>
     <string name="hidden_notifications_permission">授予通知存取權</string>
-    <string name="hidden_notifications_permission_hint">讀取和隱藏通知需要通知存取權。隱藏記錄的識別碼和標題僅儲存於本機，不會上傳；通知內文不會儲存。</string>
+    <string name="hidden_notifications_permission_hint">讀取和隱藏通知需要通知存取權。通知識別碼、標題和最近一次內容僅儲存於本機，不會上傳。</string>
     <string name="hidden_notifications_connecting">正在等待通知服務連線，可點選右上角重新整理；若仍未連線，請檢查通知存取權。</string>
     <string name="hidden_notifications_connect_failed">通知服務連線失敗，請檢查權限後重試。</string>
     <string name="hidden_notifications_read_failed">讀取通知失敗，請重新整理後重試。</string>
@@ -19,4 +19,16 @@
     <string name="hidden_notifications_state_visible">未隱藏</string>
     <string name="hidden_notifications_state_hidden">已隱藏</string>
     <string name="hidden_notifications_history">已隱藏但未傳送的通知</string>
+    <string name="hidden_notifications_content_unrecorded">暫未記錄通知內容</string>
+    <string name="hidden_notifications_reader_missing">未找到通知讀取器，可能需要重新授權</string>
+    <string name="hidden_notifications_fallback_vpn">VPN</string>
+    <string name="hidden_notifications_fallback_overlay_generic">正在其他應用程式上層顯示</string>
+    <string name="hidden_notifications_fallback_dnd">「勿擾模式」開啟狀態提示</string>
+    <string name="hidden_notifications_fallback_developer">免安裝應用程式</string>
+    <string name="hidden_notifications_fallback_charge_status">電池</string>
+    <string name="hidden_notifications_fallback_flashlight">手電筒</string>
+    <string name="hidden_notifications_fallback_xposed_running">LSPosed 狀態</string>
+    <string name="hidden_notifications_fallback_xposed_updated">模組更新完成</string>
+    <string name="hidden_notifications_channel">%1$s（%2$s）</string>
+    <string name="hidden_notifications_unknown_channel">未知頻道</string>
 </resources>
