@@ -76,9 +76,12 @@ final class MergedShadeAlignmentHooks {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     View shared = (View) p.thisObject;
                     View stack = shared.findViewById(id(shared, "notification_stack_scroller"));
-                    if (!active(stack)) return;
+                    boolean split = MergedSplitShadeHooks.enabled(shared.getResources());
+                    if (!split && !active(stack)) return;
                     p.args[0] = edge;
                     p.args[2] = 0;
+                    // 分栏外层已限定通知宽度；锁屏及编辑切换都不能再次取右半栏或叠加边距。
+                    if (split) { p.args[1] = 0; p.args[3] = 0; }
                 }
             });
         } catch (Throwable error) { log("merged notification alignment hook failed: " + error); }
@@ -104,17 +107,32 @@ final class MergedShadeAlignmentHooks {
 
     private static Float targetPadding(View stack) {
         if (!active(stack) || !stack.isLaidOut()) return null;
-        View cardsView = stack.getRootView().findViewById(id(stack, "oplus_qs_tile_media_container"));
-        if (!(cardsView instanceof ViewGroup cards) || !cards.isShown() || !cards.isLaidOut()) return null;
-        float top = Float.POSITIVE_INFINITY;
+        View root = stack.getRootView();
+        View editor = root.findViewById(id(stack, "qs_customize"));
+        boolean editing = editor != null && (editor.isShown()
+                || Boolean.TRUE.equals(XposedHelpers.callMethod(editor, "isCustomizing")));
+        Alignment alignment = stacks.get(stack);
         int[] location = new int[2];
-        for (String field : new String[]{"mFirstTileContainer", "mSecondTileContainer", "mQsMediaPanelContainer", "mQsSeekBarContainer"}) {
-            View card = (View) XposedHelpers.getObjectField(cards, field);
-            if (card == null || card.getVisibility() != View.VISIBLE || card.getHeight() <= 0) continue;
-            card.getLocationInWindow(location);
-            top = Math.min(top, location[1]);
+        root.getLocationInWindow(location);
+        float rootTop = location[1];
+        float top = Float.POSITIVE_INFINITY;
+        if (editing && alignment != null && alignment.cardTop != null) {
+            // 编辑时卡片变成 INVISIBLE；继续使用进入编辑前的锚点，不跟随隐藏视图的动画。
+            top = rootTop + alignment.cardTop;
+        } else {
+            View cardsView = root.findViewById(id(stack, "oplus_qs_tile_media_container"));
+            if (!(cardsView instanceof ViewGroup cards) || (!editing && !cards.isShown())
+                    || !cards.isLaidOut()) return null;
+            for (String field : new String[]{"mFirstTileContainer", "mSecondTileContainer", "mQsMediaPanelContainer", "mQsSeekBarContainer"}) {
+                View card = (View) XposedHelpers.getObjectField(cards, field);
+                if (card == null || (editing ? card.getVisibility() == View.GONE
+                        : card.getVisibility() != View.VISIBLE) || card.getHeight() <= 0) continue;
+                card.getLocationInWindow(location);
+                top = Math.min(top, location[1]);
+            }
+            if (!Float.isFinite(top)) return null;
+            if (alignment != null) alignment.cardTop = top - rootTop;
         }
-        if (!Float.isFinite(top)) return null;
         stack.getLocationInWindow(location);
         WindowInsets insets = stack.getRootWindowInsets();
         if (insets != null) top = Math.max(top,
@@ -138,7 +156,7 @@ final class MergedShadeAlignmentHooks {
     private static final class Alignment implements ViewTreeObserver.OnPreDrawListener {
         final WeakReference<View> stackRef;
         final ViewTreeObserver observer;
-        Float applied, nativeTop;
+        Float applied, cardTop;
         Alignment(View stack) { stackRef = new WeakReference<>(stack); observer = stack.getViewTreeObserver(); }
         @Override public boolean onPreDraw() {
             View stack = stackRef.get();
@@ -147,10 +165,6 @@ final class MergedShadeAlignmentHooks {
                 Float top = targetPadding(stack);
                 if (top == null) { restore(stack); return true; }
                 if (applied != null && Math.abs(applied - top) < .5f) return true;
-                if (nativeTop == null) {
-                    Object ambient = XposedHelpers.getObjectField(stack, "mAmbientState");
-                    nativeTop = ((Number) XposedHelpers.callMethod(ambient, "getTopPadding")).floatValue();
-                }
                 applied = top;
                 XposedHelpers.callMethod(stack, "updateTopPadding", top, false);
                 XposedHelpers.callMethod(stack, "updateStackPosition", false);
@@ -161,10 +175,11 @@ final class MergedShadeAlignmentHooks {
             return true;
         }
         void restore(View stack) {
+            cardTop = null;
             if (applied == null) return;
             applied = null;
-            float top = nativeTop != null ? nativeTop : 0f;
-            nativeTop = null;
+            // 原生 getter 读取当前时钟/面板位置；不能把进入分栏前的旧 padding 写回锁屏。
+            float top = ((Number) XposedHelpers.callMethod(stack, "getTopPadding")).floatValue();
             XposedHelpers.callMethod(stack, "updateTopPadding", top, false);
             XposedHelpers.callMethod(stack, "updateStackPosition", false);
             XposedHelpers.callMethod(stack, "requestChildrenUpdate$1");

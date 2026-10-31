@@ -104,11 +104,8 @@ final class MergedSplitShadeHooks {
                     if (!enabled(root.getResources())) {
                         layouts.remove(root);
                         layout.restoreClearAllTranslation(root);
+                        layout.restoreStackConstraints(root);
                         applyLayoutOnly(layout.original, root);
-                        return;
-                    }
-                    if (onKeyguard(root)) {
-                        layout.suspend(root);
                         return;
                     }
                     int spec = (Integer) p.args[0];
@@ -136,10 +133,30 @@ final class MergedSplitShadeHooks {
                         }
                     });
         } catch (Throwable error) { log("merged split shade hook failed: " + error); }
+        hookKeyguardClock(pkg);
         hookPhoneCards(pkg);
         hookHeaderAndEditor(pkg);
         hookClearAllPosition(pkg);
         MergedShadeAlignmentHooks.hook(pkg);
+    }
+
+    private static void hookKeyguardClock(XC_LoadPackage.LoadPackageParam pkg) {
+        try {
+            XposedHelpers.findAndHookMethod(shadeClass, "updateClockAppearance", new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    View root = view(p.thisObject);
+                    if (!enabled(root.getResources())
+                            || !Boolean.TRUE.equals(XposedHelpers.callMethod(p.thisObject, "isKeyguardShowing"))) return;
+                    // 锁屏使用原生样式时钟底部位置，不能使用分栏固定顶部间距。
+                    p.setObjectExtra("mergedClockSplitShade", XposedHelpers.getBooleanField(p.thisObject, "mSplitShadeEnabled"));
+                    XposedHelpers.setBooleanField(p.thisObject, "mSplitShadeEnabled", false);
+                }
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    Object original = p.getObjectExtra("mergedClockSplitShade");
+                    if (original != null) XposedHelpers.setBooleanField(p.thisObject, "mSplitShadeEnabled", (Boolean) original);
+                }
+            });
+        } catch (Throwable error) { log("merged split keyguard clock hook failed: " + error); }
     }
 
     private static void hookClearAllPosition(XC_LoadPackage.LoadPackageParam pkg) {
@@ -355,7 +372,7 @@ final class MergedSplitShadeHooks {
         SplitLayout layout = new SplitLayout(original, qs, notifications, id(root, "split_shade_status_bar"),
                 Math.max(qsMargin, notificationMargin), qsMargin + notificationMargin);
         layouts.put(root, layout);
-        if (!onKeyguard(root)) layout.apply(root, root.getWidth());
+        layout.apply(root, root.getWidth());
         root.requestLayout();
     }
 
@@ -364,6 +381,8 @@ final class MergedSplitShadeHooks {
         final int qs, notifications, header, outerMargin, gap;
         MergedLandscapeGeometry.SplitPanels applied;
         Float clearAllTranslation;
+        Object originalStackConstraints;
+        boolean appliedKeyguard;
         int appliedTop = Integer.MIN_VALUE;
 
         SplitLayout(Object original, int qs, int notifications, int header, int outerMargin, int gap) {
@@ -392,42 +411,76 @@ final class MergedSplitShadeHooks {
             Object originalQs = XposedHelpers.callMethod(original, "getConstraint", qs);
             int nativeTop = XposedHelpers.getIntField(XposedHelpers.getObjectField(originalQs, "layout"), "topMargin");
             int top = Math.max(nativeTop, safe.top - location[1] - root.getPaddingTop());
+            boolean keyguard = onKeyguard(root);
+            int notificationLeft = keyguard ? MergedLandscapeGeometry.centeredNotificationLeft(
+                    available, panels.notificationWidth(), safeLeft, safeRight) : panels.notificationLeft();
+            View shared = root.findViewById(notifications);
+            applyStackConstraints(shared);
             View clearAll = root.findViewById(id(root, "clear_all"));
-            if (clearAll != null) {
+            if (keyguard) restoreClearAllTranslation(root);
+            else if (clearAll != null) {
                 if (clearAllTranslation == null) clearAllTranslation = clearAll.getTranslationX();
                 clearAll.setTranslationX(0f);
             }
-            if (panels.equals(applied) && top == appliedTop && clearAllCentered(clearAll, notifications)
-                    && placed(root.findViewById(notifications), panels.notificationLeft(), panels.notificationWidth())
-                    && placed(root.findViewById(qs), panels.notificationLeft(), panels.groupWidth())) return;
+            if (panels.equals(applied) && keyguard == appliedKeyguard && top == appliedTop
+                    && (keyguard || clearAllCentered(clearAll, notifications))
+                    && placed(shared, notificationLeft, panels.notificationWidth())
+                    && (keyguard || placed(root.findViewById(qs), panels.notificationLeft(), panels.groupWidth()))) return;
+            // 锁屏只接管通知列；QS 与头部恢复系统布局，显隐与动画仍由系统控制。
+            if (keyguard && (applied == null || !appliedKeyguard)) applyLayoutOnly(original, root);
             Object set = constraints(root);
-            place(set, notifications, panels.notificationLeft(), panels.notificationWidth());
-            // qs_frame hosts both the shared header and the right-column content.
-            // Its children use coordinates relative to the start of the combined group.
-            place(set, qs, panels.notificationLeft(), panels.groupWidth());
-            XposedHelpers.callMethod(set, "setMargin", qs, 3, top);
-            if (header != 0 && root.findViewById(header) != null)
-                place(set, header, panels.notificationLeft(), panels.groupWidth());
-            if (clearAll != null) {
-                int target = clearAll.getId();
-                for (int side : new int[]{1, 2, 6, 7}) XposedHelpers.callMethod(set, "clear", target, side);
-                XposedHelpers.callMethod(set, "connect", target, 1, notifications, 1, 0);
-                XposedHelpers.callMethod(set, "connect", target, 2, notifications, 2, 0);
-                // 当前 ROM 的 ConstraintSet 未保留 setHorizontalBias 方法。
-                Object constraint = XposedHelpers.callMethod(set, "getConstraint", target);
-                XposedHelpers.setFloatField(XposedHelpers.getObjectField(constraint, "layout"), "horizontalBias", .5f);
+            place(set, notifications, notificationLeft, panels.notificationWidth());
+            if (!keyguard) {
+                // qs_frame hosts both the shared header and the right-column content.
+                // Its children use coordinates relative to the start of the combined group.
+                place(set, qs, panels.notificationLeft(), panels.groupWidth());
+                XposedHelpers.callMethod(set, "setMargin", qs, 3, top);
+                if (header != 0 && root.findViewById(header) != null)
+                    place(set, header, panels.notificationLeft(), panels.groupWidth());
+                if (clearAll != null) {
+                    int target = clearAll.getId();
+                    for (int side : new int[]{1, 2, 6, 7}) XposedHelpers.callMethod(set, "clear", target, side);
+                    XposedHelpers.callMethod(set, "connect", target, 1, notifications, 1, 0);
+                    XposedHelpers.callMethod(set, "connect", target, 2, notifications, 2, 0);
+                    // 当前 ROM 的 ConstraintSet 未保留 setHorizontalBias 方法。
+                    Object constraint = XposedHelpers.callMethod(set, "getConstraint", target);
+                    XposedHelpers.setFloatField(XposedHelpers.getObjectField(constraint, "layout"), "horizontalBias", .5f);
+                }
             }
             applyLayoutOnly(set, root);
             applied = panels;
+            appliedKeyguard = keyguard;
             appliedTop = top;
         }
 
-        void suspend(View root) {
-            if (applied == null) return;
-            restoreClearAllTranslation(root);
-            applyLayoutOnly(original, root);
-            applied = null;
-            appliedTop = Integer.MIN_VALUE;
+        void applyStackConstraints(View shared) {
+            if (shared == null) return;
+            View stack = shared.findViewById(id(shared, "notification_stack_scroller"));
+            if (stack == null) return;
+            if (originalStackConstraints == null) originalStackConstraints = constraints(shared);
+            Object params = stack.getLayoutParams();
+            if (XposedHelpers.getIntField(params, "leftToLeft") == 0
+                    && XposedHelpers.getIntField(params, "rightToRight") == 0
+                    && XposedHelpers.getIntField(params, "startToStart") == -1
+                    && XposedHelpers.getIntField(params, "endToEnd") == -1
+                    && XposedHelpers.getIntField(params, "topToTop") == 0
+                    && params instanceof ViewGroup.MarginLayoutParams margins
+                    && margins.width == 0 && margins.leftMargin == 0 && margins.rightMargin == 0
+                    && margins.topMargin == 0) return;
+            Object set = constraints(shared);
+            int target = stack.getId();
+            for (int side : new int[]{1, 2, 6, 7}) XposedHelpers.callMethod(set, "clear", target, side);
+            XposedHelpers.callMethod(set, "constrainWidth", target, 0);
+            XposedHelpers.callMethod(set, "connect", target, 1, 0, 1, 0);
+            XposedHelpers.callMethod(set, "connect", target, 2, 0, 2, 0);
+            XposedHelpers.callMethod(set, "connect", target, 3, 0, 3, 0);
+            applyLayoutOnly(set, shared);
+        }
+
+        void restoreStackConstraints(View root) {
+            View shared = root.findViewById(notifications);
+            if (originalStackConstraints != null && shared != null) applyLayoutOnly(originalStackConstraints, shared);
+            originalStackConstraints = null;
         }
 
         void restoreClearAllTranslation(View root) {
@@ -464,7 +517,10 @@ final class MergedSplitShadeHooks {
     private static void restoreConstraints(Object controller) {
         View root = view(controller);
         SplitLayout layout = layouts.remove(root);
-        if (layout != null) layout.restoreClearAllTranslation(root);
+        if (layout != null) {
+            layout.restoreClearAllTranslation(root);
+            layout.restoreStackConstraints(root);
+        }
         Object original = nativeConstraints.remove(controller);
         if (original != null) applyLayoutOnly(original, root);
     }

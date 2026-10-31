@@ -37,6 +37,12 @@ final class MergedLandscapeGeometry {
         return (rounded - (tablet && !split ? 20 : 0)) / 1000f;
     }
 
+    static int centeredNotificationLeft(int available, int width, int safeLeft, int safeRight) {
+        int left = Math.min(Math.max(0, safeLeft), Math.max(0, available));
+        int right = Math.min(Math.max(0, safeRight), Math.max(0, available - left));
+        return left + Math.max(0, available - left - right - width) / 2;
+    }
+
     static float alignedTopPadding(float cardTop, float stackTop, float scrimPadding) {
         return cardTop - stackTop - scrimPadding;
     }
