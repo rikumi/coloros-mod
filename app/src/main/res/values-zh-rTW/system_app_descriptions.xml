@@ -382,7 +382,7 @@
     <string name="system_app_description_systemui">通知欄和鎖屏等系統界面異常</string>
     <string name="system_app_description_talkback">屏幕朗讀、無障礙操作</string>
     <string name="system_app_description_telecom">通話調度和音頻路由</string>
-    <string name="system_app_description_telephony_storage">簡訊和電話資料儲存</string>
+    <string name="system_app_description_telephony_storage">簡訊和電話資料儲存；IMS 服務依賴此元件，解除安裝可能導致服務反覆當機和系統卡頓</string>
     <string name="system_app_description_terminal_pending">Linux 終端、虛擬機管理</string>
     <string name="system_app_description_tethering">熱點、USB 及藍牙網路共享</string>
     <string name="system_app_description_theme_engine">主題和個性化效果</string>
@@ -468,4 +468,39 @@
     <string name="system_app_recommendation_uninstallable">無法解除安裝：%1$s</string>
     <string name="system_app_uninstall_restored">解除安裝後自動還原</string>
     <string name="system_app_uninstall_rejected">系統不允許解除安裝</string>
+
+    <!-- OPD2515 tablet and Qualcomm components -->
+    <string name="system_app_description_overlay_tablet_network">平板行動數據、簡訊、語音能力與網路類型配置</string>
+    <string name="system_app_description_overlay_geolocation_timezone">按地理位置自動偵測時區的開關配置</string>
+    <string name="system_app_description_overlay_tablet_framework">平板系統介面文字及跨裝置應用程式流轉提示</string>
+    <string name="system_app_description_overlay_qcom_hardware">裝置更新率、圓角、音訊介面及電源管理配置</string>
+    <string name="system_app_description_overlay_ncm_tethering">USB NCM 網路共享介面配置</string>
+    <string name="system_app_description_overlay_secure_element">安全元件硬體介面開關及存取規則配置</string>
+    <string name="system_app_description_overlay_tablet_systemui">平板通知分欄、快捷圖塊、音量面板和鍵盤快速鍵介面配置</string>
+    <string name="system_app_description_overlay_uwb_hardware">超寬頻測距能力、協定擴充及地區配置</string>
+    <string name="system_app_description_overlay_tablet_launcher">平板桌面圖示、應用程式抽屜、小工具及對話框配置資源</string>
+    <string name="system_app_description_overlay_display_cutout">裝置螢幕圓角和挖孔遮罩資源</string>
+    <string name="system_app_description_overlay_bluetooth_xpan">高通藍牙 XPAN 功能開關配置</string>
+    <string name="system_app_description_ai_paint">AI 繪畫、影像風格化、圖表產生及作品管理</string>
+    <string name="system_app_description_stylus_tools">觸控筆簡報指示、標註及快捷輪盤</string>
+    <string name="system_app_description_pad_accessories">平板觸控筆、鍵盤連線、設定及韌體更新</string>
+    <string name="system_app_description_pad_connect">平板跨裝置互聯、應用程式接續、資料傳輸及投放螢幕</string>
+    <string name="system_app_description_pc_engine">遠端桌面連線及影音傳輸引擎</string>
+    <string name="system_app_description_qcom_dcf_permissions">高通跨裝置內容分享權限定義</string>
+    <string name="system_app_description_qcom_dpm">高通資料網路連線與節能管理服務</string>
+    <string name="system_app_description_qcom_qcc">高通診斷資料收集、授權及意見回饋服務</string>
+    <string name="system_app_description_qcom_radio_tunnel">高通電話服務與無線介面層之間的訊息通道</string>
+    <string name="system_app_description_qcom_cne">高通網路連線引擎，處理 WLAN 和行動網路連線狀態</string>
+    <string name="system_app_description_qcom_gpu_driver">高通 Adreno GPU 圖形驅動程式</string>
+    <string name="system_app_description_qcom_power_mode">高通效能與功耗模式設定</string>
+    <string name="system_app_description_qcom_trustzone">高通 TrustZone 安全環境存取服務</string>
+    <string name="system_app_description_qcom_workload">高通應用程式負載分類與掃描服務</string>
+    <string name="system_app_description_qcom_xr_bridge">高通 XR 核心、相機、音訊及通訊服務橋接</string>
+    <string name="system_app_description_qcom_xr_display">高通 XR 虛擬顯示器管理和輸入事件轉送</string>
+    <string name="system_app_description_qcom_time">高通平台時間同步服務</string>
+    <string name="system_app_description_qcom_ims">高通 IMS 通話與簡訊服務，包括 VoLTE、Wi-Fi 通話；依賴電話儲存元件</string>
+    <string name="system_app_description_qcom_satellite">高通非地面網路衛星資料服務</string>
+    <string name="system_app_description_qcom_framework_permissions">高通衛星訊息、副卡勿擾及跨裝置介面權限定義</string>
+    <string name="system_app_description_qcom_ca_cert">向高通硬體服務提供 Android 受信任 CA 憑證查詢</string>
+    <string name="system_app_description_qcom_ims_datachannel">高通 IMS 通話資料通道服務</string>
 </resources>

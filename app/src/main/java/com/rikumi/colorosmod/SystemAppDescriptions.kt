@@ -4,7 +4,7 @@ import androidx.annotation.StringRes
 
 /**
  * Package descriptions shared by the disabled list and the system-app picker.
- * Covers PKT110 CN and CPH2797 EX01 inventories with exact package aliases.
+ * Covers PKT110 CN, CPH2797 EX01 and OPD2515 tablet inventories with exact package aliases.
  * Localized feature descriptions and recommendation prefixes are kept separate.
  * AppPlatform is a proven startup dependency; AIUnit supports Gallery AI editing.
  */
@@ -38,6 +38,7 @@ internal object SystemAppDescriptions {
 
     // User-reviewed classification overrides personal retention and temporary device state.
     private val recommendationOverrides = mapOf(
+        "com.android.providers.telephony" to R.string.system_app_recommendation_keep,
         "com.android.providers.media" to R.string.system_app_recommendation_removable,
         "com.coloros.regservice" to R.string.system_app_recommendation_removable,
         "com.android.virtualization.terminal" to R.string.system_app_recommendation_removable,
@@ -939,5 +940,58 @@ internal object SystemAppDescriptions {
         "net.fetnet.fetvod" to R.string.system_app_description_fet_video_pending,
         "oplus" to R.string.system_app_description_framework,
         "vendor.mediatek.iwlanservice" to R.string.system_app_description_iwlan,
+
+        // OPD2515: verified against package components, resources and implementation.
+        "android.auto_generated_characteristics_rro" to R.string.system_app_description_empty_overlay_recommended,
+        "android.frameworkres.overlay" to R.string.system_app_description_overlay_tablet_network,
+        "android.frameworkres.overlay.location.product" to R.string.system_app_description_overlay_geolocation_timezone,
+        "android.overlay.common" to R.string.system_app_description_overlay_framework_pending,
+        "android.overlay.oplus.tablet" to R.string.system_app_description_overlay_tablet_framework,
+        "android.overlay.target" to R.string.system_app_description_overlay_qcom_hardware,
+        "com.android.carrierconfig.overlay.common" to R.string.system_app_description_overlay_telephony,
+        "com.android.cellbroadcastreceiver.overlay.common" to R.string.system_app_description_overlay_telephony,
+        "com.android.companiondevicemanager.auto_generated_characteristics_rro" to R.string.system_app_description_empty_overlay_recommended,
+        "com.android.ncm.overlay.common" to R.string.system_app_description_overlay_ncm_tethering,
+        "com.android.phone.auto_generated_characteristics_rro" to R.string.system_app_description_empty_overlay_recommended,
+        "com.android.phone.overlay.common" to R.string.system_app_description_overlay_telephony,
+        "com.android.providers.telephony.auto_generated_characteristics_rro" to R.string.system_app_description_empty_overlay_recommended,
+        "com.android.se.overlay.target.odm" to R.string.system_app_description_overlay_secure_element,
+        "com.android.server.telecom.overlay.common" to R.string.system_app_description_overlay_telephony,
+        "com.android.settings.overlay.common" to R.string.system_app_description_overlay_settings,
+        "com.android.systemui.oplus.res.overlay" to R.string.system_app_description_overlay_tablet_systemui,
+        "com.android.systemui.overlay.common" to R.string.system_app_description_overlay_systemui_pending,
+        "com.android.uwb.resources.overlay.target" to R.string.system_app_description_overlay_uwb_hardware,
+        "com.android.wifi.resources.overlay.common" to R.string.system_app_description_overlay_wifi,
+        "com.android.wifi.resources.overlay.spf" to R.string.system_app_description_overlay_wifi,
+        "com.gms.android.ncm.overlay.common" to R.string.system_app_description_overlay_ncm_tethering,
+        "com.google.android.wifi.resources.overlay.common" to R.string.system_app_description_overlay_wifi,
+        "com.google.android.wifi.resources.overlay.spf" to R.string.system_app_description_overlay_wifi,
+        "com.oplus.aipaint" to R.string.system_app_description_ai_paint,
+        "com.oplus.android.launcher.overlay.tablet" to R.string.system_app_description_overlay_tablet_launcher,
+        "com.oplus.globalcollect" to R.string.system_app_description_stylus_tools,
+        "com.oplus.ipemanager" to R.string.system_app_description_pad_accessories,
+        "com.oplus.padconnect" to R.string.system_app_description_pad_connect,
+        "com.oplus.pcengine" to R.string.system_app_description_pc_engine,
+        "com.qti.dcf" to R.string.system_app_description_qcom_dcf_permissions,
+        "com.qti.dpmserviceapp" to R.string.system_app_description_qcom_dpm,
+        "com.qti.qcc" to R.string.system_app_description_qcom_qcc,
+        "com.qualcomm.qcrilmsgtunnel" to R.string.system_app_description_qcom_radio_tunnel,
+        "com.qualcomm.qti.cne" to R.string.system_app_description_qcom_cne,
+        "com.qualcomm.qti.gpudrivers.canoe.api36" to R.string.system_app_description_qcom_gpu_driver,
+        "com.qualcomm.qti.powersavemode" to R.string.system_app_description_qcom_power_mode,
+        "com.qualcomm.qti.qms.service.trustzoneaccess" to R.string.system_app_description_qcom_trustzone,
+        "com.qualcomm.qti.workloadclassifier" to R.string.system_app_description_qcom_workload,
+        "com.qualcomm.qti.xrcb" to R.string.system_app_description_qcom_xr_bridge,
+        "com.qualcomm.qti.xrvd.service" to R.string.system_app_description_qcom_xr_display,
+        "com.qualcomm.timeservice" to R.string.system_app_description_qcom_time,
+        "com.qualcomm.wfd.service" to R.string.system_app_description_cast,
+        "com.wapi.wapicertmanage" to R.string.system_app_description_wapi,
+        "oplus.frameworkres.overlay.display.product" to R.string.system_app_description_overlay_display_cutout,
+        "org.codeaurora.ims" to R.string.system_app_description_qcom_ims,
+        "vendor.qti.bluetooth.xpan.overlay.target" to R.string.system_app_description_overlay_bluetooth_xpan,
+        "vendor.qti.data.ntnsatapp" to R.string.system_app_description_qcom_satellite,
+        "vendor.qti.frameworks.utils" to R.string.system_app_description_qcom_framework_permissions,
+        "vendor.qti.hardware.cacert.server" to R.string.system_app_description_qcom_ca_cert,
+        "vendor.qti.imsdatachannel" to R.string.system_app_description_qcom_ims_datachannel,
     )
 }

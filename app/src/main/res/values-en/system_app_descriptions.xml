@@ -382,7 +382,7 @@
     <string name="system_app_description_systemui">notifications, the lock screen and system UI</string>
     <string name="system_app_description_talkback">Screen reading, accessible controls</string>
     <string name="system_app_description_telecom">call management and audio routing</string>
-    <string name="system_app_description_telephony_storage">SMS and telephony data storage</string>
+    <string name="system_app_description_telephony_storage">SMS and telephony data storage; required by IMS services. Removing it may cause repeated service crashes and system stuttering</string>
     <string name="system_app_description_terminal_pending">Linux terminal, virtual machine management</string>
     <string name="system_app_description_tethering">Wi-Fi hotspot, USB, and Bluetooth tethering</string>
     <string name="system_app_description_theme_engine">themes and personalization effects</string>
@@ -468,4 +468,39 @@
     <string name="system_app_recommendation_uninstallable">Cannot uninstall: %1$s</string>
     <string name="system_app_uninstall_restored">Automatically restored after uninstalling</string>
     <string name="system_app_uninstall_rejected">Uninstalling is blocked by the system</string>
+
+    <!-- OPD2515 tablet and Qualcomm components -->
+    <string name="system_app_description_overlay_tablet_network">Tablet cellular data, SMS, voice capability and network type configuration</string>
+    <string name="system_app_description_overlay_geolocation_timezone">Configuration for automatic time zone detection using location</string>
+    <string name="system_app_description_overlay_tablet_framework">Tablet system UI text and cross-device app streaming prompts</string>
+    <string name="system_app_description_overlay_qcom_hardware">Device refresh rate, rounded corners, audio jack and power management configuration</string>
+    <string name="system_app_description_overlay_ncm_tethering">USB NCM tethering interface configuration</string>
+    <string name="system_app_description_overlay_secure_element">Secure element hardware interface and access rule configuration</string>
+    <string name="system_app_description_overlay_tablet_systemui">Tablet split notifications, quick settings, volume panel and keyboard shortcut UI configuration</string>
+    <string name="system_app_description_overlay_uwb_hardware">Ultra-wideband ranging capabilities, protocol extensions and regional configuration</string>
+    <string name="system_app_description_overlay_tablet_launcher">Tablet launcher icons, app drawer, widgets and dialog layout resources</string>
+    <string name="system_app_description_overlay_display_cutout">Device screen corner and display cutout mask resources</string>
+    <string name="system_app_description_overlay_bluetooth_xpan">Qualcomm Bluetooth XPAN feature configuration</string>
+    <string name="system_app_description_ai_paint">AI painting, image stylization, chart generation and artwork management</string>
+    <string name="system_app_description_stylus_tools">Stylus presentation pointer, annotation and shortcut wheel</string>
+    <string name="system_app_description_pad_accessories">Tablet stylus and keyboard connections, settings and firmware updates</string>
+    <string name="system_app_description_pad_connect">Tablet cross-device connections, app continuity, data transfer and casting</string>
+    <string name="system_app_description_pc_engine">Remote desktop connection and audio/video streaming engine</string>
+    <string name="system_app_description_qcom_dcf_permissions">Permission definitions for Qualcomm cross-device content sharing</string>
+    <string name="system_app_description_qcom_dpm">Qualcomm data network connectivity and power management service</string>
+    <string name="system_app_description_qcom_qcc">Qualcomm diagnostic data collection, authorization and feedback services</string>
+    <string name="system_app_description_qcom_radio_tunnel">Message channel between Qualcomm telephony services and the radio interface layer</string>
+    <string name="system_app_description_qcom_cne">Qualcomm connectivity engine for WLAN and mobile network state</string>
+    <string name="system_app_description_qcom_gpu_driver">Qualcomm Adreno GPU graphics driver</string>
+    <string name="system_app_description_qcom_power_mode">Qualcomm performance and power mode settings</string>
+    <string name="system_app_description_qcom_trustzone">Qualcomm TrustZone secure environment access service</string>
+    <string name="system_app_description_qcom_workload">Qualcomm application workload classification and scanning service</string>
+    <string name="system_app_description_qcom_xr_bridge">Qualcomm XR core, camera, audio and communication service bridge</string>
+    <string name="system_app_description_qcom_xr_display">Qualcomm XR virtual display management and input event forwarding</string>
+    <string name="system_app_description_qcom_time">Qualcomm platform time synchronization service</string>
+    <string name="system_app_description_qcom_ims">Qualcomm IMS calling and messaging, including VoLTE and Wi-Fi calling; depends on telephony storage</string>
+    <string name="system_app_description_qcom_satellite">Qualcomm non-terrestrial network satellite data service</string>
+    <string name="system_app_description_qcom_framework_permissions">Qualcomm permission definitions for satellite messaging, secondary SIM do not disturb and cross-device interfaces</string>
+    <string name="system_app_description_qcom_ca_cert">Android trusted CA certificate lookup for Qualcomm hardware services</string>
+    <string name="system_app_description_qcom_ims_datachannel">Qualcomm IMS call data channel service</string>
 </resources>
