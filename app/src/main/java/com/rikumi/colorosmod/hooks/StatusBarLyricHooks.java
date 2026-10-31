@@ -13,6 +13,7 @@ import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
 import android.media.session.PlaybackState;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
@@ -114,6 +115,11 @@ public final class StatusBarLyricHooks {
 
     private static volatile Handler sMainHandler = null;
     private static boolean sThirdPartyMonitorStarted = false;
+    // Main-thread-owned request state; at most one remote window query is in flight.
+    private static HandlerThread sOverlayQueryThread;
+    private static Handler sOverlayQueryHandler;
+    private static boolean sOverlayQueryInFlight;
+    private static long sOverlayQueryVersion;
     private static volatile boolean sGenerationActive = true;
 
     private static final long THIRD_PARTY_MONITOR_INTERVAL_MS = 5000L;
@@ -422,6 +428,12 @@ public final class StatusBarLyricHooks {
 
     public static synchronized void cleanupForHotReload() {
         sGenerationActive = false;
+        sOverlayQueryVersion++;
+        if (sOverlayQueryHandler != null) sOverlayQueryHandler.removeCallbacksAndMessages(null);
+        if (sOverlayQueryThread != null) sOverlayQueryThread.quitSafely();
+        sOverlayQueryHandler = null;
+        sOverlayQueryThread = null;
+        sOverlayQueryInFlight = false;
         FluidCloudLyricHooks.clear();
         Handler handler = sMainHandler;
         try {
@@ -561,9 +573,41 @@ public final class StatusBarLyricHooks {
     }
 
     private static void checkThirdPartyOverlayNow() {
-        boolean hidden = readBool(KEY_STATUSBAR_LYRIC_AVOID_THIRD_PARTY_ENABLED, false)
-                && hasThirdPartyOverlayInStatusBar();
-        setThirdPartyClockHidden(hidden);
+        long version = ++sOverlayQueryVersion;
+        if (!sGenerationActive || sListenersPreparedForHotReload) return;
+        Rect bounds = readBool(KEY_STATUSBAR_LYRIC_AVOID_THIRD_PARTY_ENABLED, false)
+                ? statusBarBounds() : null;
+        if (bounds == null) {
+            setThirdPartyClockHidden(false);
+            return;
+        }
+        // Observer bursts invalidate the result but do not enqueue more Binder calls.
+        if (sOverlayQueryInFlight) return;
+        if (sOverlayQueryHandler == null) {
+            sOverlayQueryThread = new HandlerThread("coloros-lyric-windows", android.os.Process.THREAD_PRIORITY_BACKGROUND);
+            sOverlayQueryThread.start();
+            sOverlayQueryHandler = new Handler(sOverlayQueryThread.getLooper());
+        }
+        Handler worker = sOverlayQueryHandler;
+        Handler main = sMainHandler;
+        View root = sStatusBarRoot;
+        sOverlayQueryInFlight = true;
+        if (!worker.post(() -> {
+            boolean hidden = hasThirdPartyOverlayInStatusBar(bounds);
+            main.post(() -> {
+                // A completed query from an old hot-reload generation must never touch views.
+                if (worker != sOverlayQueryHandler || !sGenerationActive) return;
+                sOverlayQueryInFlight = false;
+                if (sListenersPreparedForHotReload) return;
+                if (version != sOverlayQueryVersion || root != sStatusBarRoot
+                        || !bounds.equals(statusBarBounds())
+                        || !readBool(KEY_STATUSBAR_LYRIC_AVOID_THIRD_PARTY_ENABLED, false)) {
+                    checkThirdPartyOverlayNow();
+                    return;
+                }
+                setThirdPartyClockHidden(hidden);
+            });
+        })) sOverlayQueryInFlight = false;
     }
 
     private static void setThirdPartyClockHidden(boolean hidden) {
@@ -578,10 +622,10 @@ public final class StatusBarLyricHooks {
         }
     }
 
-    private static boolean hasThirdPartyOverlayInStatusBar() {
+    private static Rect statusBarBounds() {
         View statusBar = sStatusBarRoot;
         if (statusBar == null || statusBar.getVisibility() != View.VISIBLE || !statusBar.isShown()) {
-            return false;
+            return null;
         }
         int[] statusLoc = new int[2];
         statusBar.getLocationOnScreen(statusLoc);
@@ -597,8 +641,11 @@ public final class StatusBarLyricHooks {
             } catch (Throwable ignored) {
             }
         }
-        if (statusHeight <= 0) return false;
-        int statusBottom = statusTop + statusHeight;
+        if (statusHeight <= 0) return null;
+        return new Rect(statusLeft, statusTop, statusRight, statusTop + statusHeight);
+    }
+
+    private static boolean hasThirdPartyOverlayInStatusBar(Rect bounds) {
 
         try {
             Object windowManager = getOplusWindowManager();
@@ -623,8 +670,8 @@ public final class StatusBarLyricHooks {
                 }
                 if (frame == null || frame.isEmpty()) continue;
                 // 只按左上角判断: 顶部边界在状态栏内即可, 符合第三方歌词悬浮窗的布局特征。
-                if (frame.left >= statusLeft && frame.left < statusRight
-                        && frame.top >= statusTop && frame.top < statusBottom) return true;
+                if (frame.left >= bounds.left && frame.left < bounds.right
+                        && frame.top >= bounds.top && frame.top < bounds.bottom) return true;
             }
         } catch (Throwable t) {
             log("statusbar_lyric inspect OplusWindowManager error: "
