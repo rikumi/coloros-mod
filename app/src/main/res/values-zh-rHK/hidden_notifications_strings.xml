@@ -10,7 +10,7 @@
     <string name="hidden_notifications_processing">處理中…</string>
     <string name="hidden_notifications_refresh">重新整理通知</string>
     <string name="hidden_notifications_permission">授予通知存取權</string>
-    <string name="hidden_notifications_permission_hint">讀取和隱藏通知需要通知存取權。通知內容僅供本機顯示，不會上傳或儲存至檔案。</string>
+    <string name="hidden_notifications_permission_hint">讀取和隱藏通知需要通知存取權。隱藏記錄的識別碼和標題僅儲存於本機，不會上傳；通知內文不會儲存。</string>
     <string name="hidden_notifications_connecting">正在等待通知服務連線，可點選右上角重新整理；若仍未連線，請檢查通知存取權。</string>
     <string name="hidden_notifications_connect_failed">通知服務連線失敗，請檢查權限後重試。</string>
     <string name="hidden_notifications_read_failed">讀取通知失敗，請重新整理後重試。</string>
@@ -18,4 +18,5 @@
     <string name="hidden_notifications_settings_failed">無法開啟通知存取權設定。</string>
     <string name="hidden_notifications_state_visible">未隱藏</string>
     <string name="hidden_notifications_state_hidden">已隱藏</string>
+    <string name="hidden_notifications_history">已隱藏但未傳送的通知</string>
 </resources>

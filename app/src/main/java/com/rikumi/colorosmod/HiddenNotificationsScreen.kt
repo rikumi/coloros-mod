@@ -28,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,12 +40,15 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import io.github.suqi8.coui.kmp.basic.BasicComponent
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.IconButton
 import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Back
 import io.github.suqi8.coui.kmp.icon.extended.Refresh
+import io.github.suqi8.coui.kmp.icon.extended.ExpandLess
+import io.github.suqi8.coui.kmp.icon.extended.ExpandMore
 import io.github.suqi8.coui.kmp.theme.COUITheme
 
 @Composable
@@ -64,7 +68,9 @@ internal fun HiddenNotificationsScreen(ctx: Context, onBack: () -> Unit, showBac
         refresh()
         onDispose { lifecycle.removeObserver(observer) }
     }
-    val hidden = remember(state.entries) { state.entries.filter { it.hidden } }
+    val hidden = remember(state.entries) { state.entries.filter { it.hidden && it.posted } }
+    val history = remember(state.entries) { state.entries.filter { it.hidden && !it.posted } }
+    var historyExpanded by rememberSaveable { mutableStateOf(false) }
     val visible = remember(state.entries) { state.entries.filterNot { it.hidden } }
     Scaffold(topBar = {
         SettingsTopAppBar(
@@ -114,10 +120,34 @@ internal fun HiddenNotificationsScreen(ctx: Context, onBack: () -> Unit, showBac
                     item(key = title) { SettingsSmallTitle(ctx.getString(title)) }
                     when {
                         !state.loaded -> item { SettingsSmallTitle(ctx.getString(R.string.ui_loading)) }
-                        entries.isEmpty() -> item { SettingsSmallTitle(ctx.getString(empty)) }
+                        entries.isEmpty() && (title != R.string.hidden_notifications_hidden || history.isEmpty()) -> item { SettingsSmallTitle(ctx.getString(empty)) }
                         else -> itemsIndexed(entries, key = { _, entry -> entry.key }) { index, entry ->
                             SettingsCardRow(first = index == 0, last = index == entries.lastIndex) {
                                 if (index > 0) SettingsItemDivider()
+                                HiddenNotificationRow(ctx, entry, enabled = state.busyKey == null,
+                                    busy = state.busyKey == entry.key,
+                                    onClick = { HiddenNotificationsService.toggle(entry) })
+                            }
+                        }
+                    }
+                    if (title == R.string.hidden_notifications_hidden && history.isNotEmpty()) {
+                        item(key = "hidden_notification_history") {
+                            SettingsCardRow(first = true, last = !historyExpanded) {
+                                BasicComponent(
+                                    title = ctx.getString(R.string.hidden_notifications_history),
+                                    onClick = { historyExpanded = !historyExpanded },
+                                    endActions = {
+                                        BasicText(history.size.toString(), style = COUITheme.textStyles.body2.copy(
+                                            color = settingsSummaryTextColor()), modifier = Modifier.padding(end = 8.dp))
+                                        Icon(if (historyExpanded) COUIIcons.ExpandLess else COUIIcons.ExpandMore,
+                                            contentDescription = null, tint = settingsSummaryTextColor())
+                                    },
+                                )
+                            }
+                        }
+                        if (historyExpanded) itemsIndexed(history, key = { _, entry -> "history:${entry.key}" }) { index, entry ->
+                            SettingsCardRow(first = false, last = index == history.lastIndex) {
+                                SettingsItemDivider()
                                 HiddenNotificationRow(ctx, entry, enabled = state.busyKey == null,
                                     busy = state.busyKey == entry.key,
                                     onClick = { HiddenNotificationsService.toggle(entry) })

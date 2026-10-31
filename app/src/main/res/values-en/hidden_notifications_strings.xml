@@ -10,7 +10,7 @@
     <string name="hidden_notifications_processing">Processing…</string>
     <string name="hidden_notifications_refresh">Refresh notifications</string>
     <string name="hidden_notifications_permission">Grant notification access</string>
-    <string name="hidden_notifications_permission_hint">Notification access is required to read and hide notifications. Their content is only displayed on this device, never uploaded or saved to files.</string>
+    <string name="hidden_notifications_permission_hint">Notification access is required to read and hide notifications. Hidden notification identifiers and titles are stored only on this device and never uploaded. Notification bodies are not saved.</string>
     <string name="hidden_notifications_connecting">Waiting for the notification service. Tap refresh at the top right; if it still cannot connect, check notification access.</string>
     <string name="hidden_notifications_connect_failed">Could not connect to the notification service. Check access and try again.</string>
     <string name="hidden_notifications_read_failed">Could not read notifications. Refresh to try again.</string>
@@ -18,4 +18,5 @@
     <string name="hidden_notifications_settings_failed">Could not open notification access settings.</string>
     <string name="hidden_notifications_state_visible">Not hidden</string>
     <string name="hidden_notifications_state_hidden">Hidden</string>
+    <string name="hidden_notifications_history">Hidden notifications not currently posted</string>
 </resources>
