@@ -16,6 +16,7 @@ import android.util.TypedValue;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
+import com.rikumi.colorosmod.xposed.XposedBridge;
 
 import java.util.ArrayList;
 import java.lang.ref.WeakReference;
@@ -251,18 +252,25 @@ public final class MergedCardRatioHooks {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     restoreMediaTiles((ViewGroup) p.thisObject);
                     restore((ViewGroup) p.thisObject);
+                    MergedPhoneCardLayout.restore((ViewGroup) p.thisObject);
                 }
             };
-            try {
-                XposedHelpers.findAndHookDeclaredMethod(containerClass, "updateResources$4", containerResources);
-            } catch (Throwable legacyResourceMethod) {
-                XposedHelpers.findAndHookDeclaredMethod(containerClass, "updateResources$6", containerResources);
+            for (java.lang.reflect.Method method : containerClass.getDeclaredMethods()) {
+                if (method.getName().startsWith("updateResources") && method.getParameterCount() == 0
+                        && method.getReturnType() == void.class)
+                    XposedBridge.hookMethod(method, containerResources);
             }
             Class<?> layout = XposedHelpers.findClass("androidx.constraintlayout.widget.ConstraintLayout", pkg.classLoader);
             XposedHelpers.findAndHookDeclaredMethod(layout, "onMeasure", int.class, int.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     if (containerClass.isInstance(p.thisObject) && !ratioEnabled((View) p.thisObject))
                         restore((ViewGroup) p.thisObject);
+                    if (containerClass.isInstance(p.thisObject)) {
+                        int spec = (Integer) p.args[0];
+                        int width = View.MeasureSpec.getMode(spec) == View.MeasureSpec.UNSPECIFIED
+                                ? ((View) p.thisObject).getMeasuredWidth() : View.MeasureSpec.getSize(spec);
+                        MergedPhoneCardLayout.update((ViewGroup) p.thisObject, width);
+                    }
                     if (!enabled(p)) return;
                     ViewGroup root = (ViewGroup) p.thisObject;
                     hosts.put(root, true);
@@ -477,7 +485,8 @@ public final class MergedCardRatioHooks {
     }
 
     private static boolean margins(View view, int gap) {
-        if (!(view.getLayoutParams() instanceof ViewGroup.MarginLayoutParams lp)) return false;
+        if (!(view.getLayoutParams() instanceof ViewGroup.MarginLayoutParams lp)
+                || MergedPhoneCardLayout.manages(view)) return false;
         remember(view);
         Original original = originals.get(view);
         int startGap = gap, endGap = gap;
@@ -1017,6 +1026,7 @@ public final class MergedCardRatioHooks {
         layoutListeners.clear(); nativeLabelPadding.clear();
         MergedTileGridHooks.cleanup();
         for (ViewGroup root : new ArrayList<>(hosts.keySet())) if (root != null) restore(root);
+        MergedPhoneCardLayout.cleanup();
         cardScales.clear(); gridCards.clear(); geometryPasses.clear();
         hosts.clear(); originals.clear(); radii.clear(); sliderRadii.clear(); geometry.clear(); iconSizes.clear(); iconTransforms.clear();
     }
