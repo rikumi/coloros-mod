@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about_title">About</string>
+    <string name="about_developer">Developer</string>
+    <string name="about_source">Source code</string>
+    <string name="about_feedback">Feedback</string>
+    <string name="about_feedback_summary">Reported issues are handled occasionally due to work commitments.</string>
+    <string name="about_sister_project">Sister project</string>
+    <string name="about_floating_lyrics">Floating lyrics</string>
+    <string name="about_open_source">Open-source components</string>
+    <string name="about_cannot_open_link">Unable to open link</string>
+</resources>

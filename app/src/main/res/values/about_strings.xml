@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about_title">关于</string>
+    <string name="about_developer">开发者</string>
+    <string name="about_source">项目源码</string>
+    <string name="about_feedback">问题反馈</string>
+    <string name="about_feedback_summary">由于工作原因，反馈的问题不定期处理</string>
+    <string name="about_sister_project">姊妹项目</string>
+    <string name="about_floating_lyrics">悬浮窗歌词</string>
+    <string name="about_open_source">开源组件</string>
+    <string name="about_cannot_open_link">无法打开链接</string>
+</resources>

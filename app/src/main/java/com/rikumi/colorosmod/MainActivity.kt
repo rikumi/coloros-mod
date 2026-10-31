@@ -57,6 +57,7 @@ import io.github.suqi8.coui.kmp.basic.IconButton
 import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Back
+import io.github.suqi8.coui.kmp.icon.extended.Info
 import io.github.suqi8.coui.kmp.icon.extended.Backup
 import io.github.suqi8.coui.kmp.icon.extended.Blocklist
 import io.github.suqi8.coui.kmp.icon.extended.Community
@@ -599,6 +600,7 @@ internal fun parentSettingsPage(id: String?): String? = when (id) {
     HIDDEN_LAUNCHER_APPS_ID -> "hidden_apps"
     NAVIGATION_APPS_ID -> "navigation"
     FONT_APPS_ID -> "system_fonts"
+    LICENSES_PAGE -> ABOUT_PAGE
     else -> null
 }
 
@@ -719,6 +721,7 @@ fun SettingsScreen(resumeRequest: Int = 0) {
                         HIDDEN_LAUNCHER_APPS_ID -> "hidden_apps"
                         NAVIGATION_APPS_ID -> "navigation"
                         FONT_APPS_ID -> "system_fonts"
+                        LICENSES_PAGE -> ABOUT_PAGE
                         else -> openCategoryId ?: "desktop"
                     },
                     showRestartMenu = false,
@@ -790,6 +793,8 @@ private fun DetailPane(
     showBack: Boolean = true,
 ) {
     when (targetId) {
+        ABOUT_PAGE -> AboutScreen(onBack = { navigate(null) }, onOpenLicenses = { navigate(LICENSES_PAGE) }, showBack = showBack)
+        LICENSES_PAGE -> OpenSourceScreen(onBack = { navigate(ABOUT_PAGE) })
         HIDDEN_LAUNCHER_APPS_ID -> HiddenAppsScreen(context = ctx, onBack = { navigate("hidden_apps") })
         NAVIGATION_APPS_ID -> HiddenAppsScreen(context = ctx, onBack = { navigate("navigation") }, navigationApplications = true)
         FONT_APPS_ID -> HiddenAppsScreen(context = ctx, onBack = { navigate("system_fonts") }, fontApplications = true)
@@ -894,6 +899,16 @@ private fun HomeScreen(
                             )
                         }
                     }
+                }
+            }
+            item(key = ABOUT_PAGE) {
+                SettingsCard {
+                    SettingsCategoryRow(
+                        icon = COUIIcons.Info,
+                        title = ctx.getString(R.string.about_title),
+                        onClick = { onOpenCategory(ABOUT_PAGE) },
+                        selected = selectedCategoryId?.let { it == ABOUT_PAGE },
+                    )
                 }
             }
             item { Box(Modifier.height(20.dp)) }
