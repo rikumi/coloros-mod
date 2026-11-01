@@ -55,6 +55,7 @@ public final class LauncherHooks {
     public static void onSettingsSnapshotPublished(java.util.Map<String, Integer> settings) {
         TaskbarGestureHooks.onSettingsSnapshotPublished();
         LauncherIconGapHooks.onSettingsSnapshotPublished(settings);
+        LauncherPopupBrightnessHooks.refresh();
         LauncherStartupRefresh.onSettingsSnapshotPublished();
         DrawerInstallTimeHooks.onSettingsSnapshotPublished(settings);
         refreshPowerSaveTaskLocks(settingValue(settings, KEY_POWER_SAVE_KEEP_LOCKED_TASKS_ENABLED) == 1);
@@ -711,6 +712,7 @@ public final class LauncherHooks {
         TaskbarGestureHooks.cleanupForHotReload();
         LauncherStartupRefresh.cleanup();
         LauncherIconGapHooks.cleanup();
+        LauncherPopupBrightnessHooks.cleanup();
         LauncherIdleRefresh.cleanup();
         LauncherIconClarityHooks.cleanup();
         DrawerInstallTimeHooks.cleanupForHotReload();
@@ -903,43 +905,7 @@ public final class LauncherHooks {
                 log("HOOK OK launcher BubbleTextView#isShouldShowGreenDot(boolean)");
             } catch (Throwable t) { log("launcher update dot hook failed: " + t); }
         }
-        try {
-            Class<?> more = XposedHelpers.findClass(
-                    "com.android.launcher3.popup.OplusBaseSystemShortcut$MordFunctions", lp.classLoader);
-            XposedHelpers.findAndHookMethod(
-                    "com.android.launcher3.popup.OplusPopupContainerWithArrow", lp.classLoader,
-                    "populateAndShow", View.class, java.util.List.class, int.class,
-                    java.util.List.class, java.util.List.class, java.util.List.class,
-                    new XC_MethodHook() {
-                        @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (!readBoolCached(KEY_DISABLE_LAUNCHER_SECONDARY_MENU_ENABLED, false)) return;
-                            java.util.List<?> source = (java.util.List<?>) p.args[4];
-                            java.util.ArrayList<Object> flattened = new java.util.ArrayList<>();
-                            java.util.HashSet<Class<?>> enabled = new java.util.HashSet<>();
-                            for (Object item : source) {
-                                if (!more.isInstance(item)
-                                        && Boolean.TRUE.equals(XposedHelpers.callMethod(item, "isEnabled")))
-                                    enabled.add(item.getClass());
-                            }
-                            for (Object item : source) {
-                                if (!more.isInstance(item)) {
-                                    flattened.add(item);
-                                    continue;
-                                }
-                                java.util.List<?> children = (java.util.List<?>) XposedHelpers.getObjectField(
-                                        item, "mMoreSystemShortcutList");
-                                for (Object child : children) {
-                                    // 保留系统已校验的权限及 mMoreShortcut 标志；不改原始列表。
-                                    if (enabled.add(child.getClass())) flattened.add(child);
-                                }
-                            }
-                            p.args[4] = flattened;
-                        }
-                    });
-        } catch (Throwable t) {
-
-            log("launcher secondary menu wrapper unavailable on this Launcher: " + t);
-        }
+        LauncherSecondaryMenuHooks.hook(lp);
     }
 
     public static void hookLauncher(final XC_LoadPackage.LoadPackageParam lpparam) {
@@ -975,11 +941,6 @@ public final class LauncherHooks {
 
         hookPopupBgBlur(lpparam);
 
-        hookPxRuntime(lpparam, "com.android.launcher.layoutparam.IconParam",
-                "getIconDrawablePaddingPx", density, KEY_ICON_GAP_ENABLED, KEY_ICON_GAP_DP, ICON_GAP_DP, 8, 1);
-        hookPxRuntime(lpparam, "com.android.launcher.layoutparam.AllAppsParam",
-                "getAllAppsIconDrawablePaddingPx", density, KEY_ICON_GAP_ENABLED, KEY_ICON_GAP_DP, ICON_GAP_DP, 8, 1);
-
         try { LauncherIconGapHooks.hook(lpparam); }
         catch (Throwable error) { log("launcher icon-label spacing hooks unavailable: " + error); }
         hookDrawerLayout(lpparam);
@@ -1004,7 +965,17 @@ public final class LauncherHooks {
         try {
             Class<?> mgrClass = XposedHelpers.findClass(
                     "com.android.launcher.filter.DeepProtectedAppsManager", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(mgrClass, "createVirtualFolder", new XC_MethodHook() {
+            // ColorOS 17 的此入口被混淆为 h()，返回类型仍为 FolderInfo。
+            String createFolder = "createVirtualFolder";
+            try {
+                XposedHelpers.findMethodExact(mgrClass, createFolder);
+            } catch (NoSuchMethodError missing) {
+                java.lang.reflect.Method method = XposedHelpers.findMethodExact(mgrClass, "h");
+                if (!method.getReturnType().getName().equals(
+                        "com.android.launcher3.model.data.FolderInfo")) throw missing;
+                createFolder = method.getName();
+            }
+            XposedHelpers.findAndHookMethod(mgrClass, createFolder, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     try {
@@ -1012,7 +983,12 @@ public final class LauncherHooks {
                         if (!readBool(KEY_HIDE_APPS_TITLE_FOLDER_ENABLED, false)) return;
                         Object folderInfo = param.getResult();
                         if (folderInfo == null) return;
-                        Object ctx = XposedHelpers.getObjectField(param.thisObject, "context");
+                        Object ctx;
+                        try {
+                            ctx = XposedHelpers.getObjectField(param.thisObject, "context");
+                        } catch (NoSuchFieldError missing) {
+                            ctx = XposedHelpers.getObjectField(param.thisObject, "c");
+                        }
                         if (!(ctx instanceof android.content.Context)) return;
                         String name = readAppHideFolderName((android.content.Context) ctx);
                         if (name == null || name.isEmpty()) return;
@@ -1177,9 +1153,29 @@ public final class LauncherHooks {
         try {
             Class<?> mgr = XposedHelpers.findClass(
                     "com.android.launcher.filter.DeepProtectedAppsManager", ctx.getClassLoader());
-            Object instance = XposedHelpers.callStaticMethod(mgr, "getInstance", ctx);
+            java.lang.reflect.Method factory;
+            try {
+                factory = XposedHelpers.findMethodExact(mgr, "getInstance", Context.class);
+            } catch (NoSuchMethodError missing) {
+                // ColorOS 17: k(Context) 是原生单例入口。
+                factory = XposedHelpers.findMethodExact(mgr, "k", Context.class);
+                if (!java.lang.reflect.Modifier.isStatic(factory.getModifiers())
+                        || factory.getReturnType() != mgr) throw missing;
+            }
+            Object instance = factory.invoke(null, ctx);
             if (instance == null) return;
-            XposedHelpers.callMethod(instance, "showHideApps", ctx, false);
+            try {
+                XposedHelpers.findMethodExact(mgr, "showHideApps", Context.class, boolean.class);
+                XposedHelpers.callMethod(instance, "showHideApps", ctx, false);
+            } catch (NoSuchMethodError missing) {
+                // 新版桌面通过 N(Launcher) 打开已初始化的原生隐藏应用文件夹。
+                Class<?> launcher = XposedHelpers.findClass("com.android.launcher.Launcher",
+                        ctx.getClassLoader());
+                if (!launcher.isInstance(ctx)) return;
+                java.lang.reflect.Method show = XposedHelpers.findMethodExact(mgr, "N", launcher);
+                if (show.getReturnType() != void.class) throw missing;
+                show.invoke(instance, ctx);
+            }
             log("pinch-out -> open hide apps folder");
         } catch (Throwable t) {
             log("openHideAppsFolder error: " + t);
@@ -1591,15 +1587,17 @@ public final class LauncherHooks {
             XC_MethodHook clearScrim = new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
-                    if (readBool(KEY_RECENTS_BG_TRANSPARENT_ENABLED, false)) {
+                    if (overviewScrimClass.isInstance(param.thisObject)
+                            && readBool(KEY_RECENTS_BG_TRANSPARENT_ENABLED, false)) {
                         param.args[0] = 0f;
                     }
                 }
             };
-            XposedHelpers.findAndHookMethod(overviewScrimClass, "setScrimProgress", float.class,
-                    clearScrim);
-            XposedHelpers.findAndHookMethod(overviewScrimClass, "setScrimProgress", float.class,
-                    int.class, clearScrim);
+            // ColorOS 17 的双通道入口改为静态 access$setScrimProgress，
+            // 各入口最终均调用 Scrim 的实现，在父类统一过滤。
+            XposedHelpers.findAndHookDeclaredMethod(
+                    "com.android.launcher3.graphics.Scrim", lpparam.classLoader,
+                    "setScrimProgress", float.class, clearScrim);
 
             XposedHelpers.findAndHookMethod(
                     "com.android.launcher3.graphics.Scrim", lpparam.classLoader,
@@ -1613,6 +1611,11 @@ public final class LauncherHooks {
                         }
                     });
 
+        } catch (Throwable t) {
+            log("HOOK FAIL launcher recents scrim: " + Log.getStackTraceString(t));
+        }
+
+        try {
             Class<?> depthClass = XposedHelpers.findClass(
                     "com.android.launcher3.uioverrides.states.OplusDepthController", lpparam.classLoader);
             XposedHelpers.findAndHookMethod(depthClass, "setBlur", float.class, boolean.class,
@@ -1650,6 +1653,11 @@ public final class LauncherHooks {
                         }
                     });
 
+        } catch (Throwable t) {
+            log("HOOK FAIL launcher recents blur blend: " + Log.getStackTraceString(t));
+        }
+
+        try {
             XposedHelpers.findAndHookMethod(
                     "com.android.quickstep.touch.SwipeToRecentAnimationHelper", lpparam.classLoader,
                     "clearState", new XC_MethodHook() {
@@ -1658,6 +1666,10 @@ public final class LauncherHooks {
                             refreshRecentsGestureBlend(param.thisObject, "mLauncher");
                         }
                     });
+        } catch (Throwable t) {
+            log("launcher legacy recents gesture refresh unavailable: " + t);
+        }
+        try {
             XposedHelpers.findAndHookMethod(
                     "com.android.quickstep.views.OplusRecentsViewImpl", lpparam.classLoader,
                     "onGestureAnimationEnd", new XC_MethodHook() {
@@ -1667,6 +1679,11 @@ public final class LauncherHooks {
                         }
                     });
 
+        } catch (Throwable t) {
+            log("HOOK FAIL launcher recents gesture end refresh: " + t);
+        }
+
+        try {
             Class<?> thumbnailViewClass = XposedHelpers.findClass(
                     "com.android.quickstep.views.OplusTaskThumbnailViewImpl", lpparam.classLoader);
             XposedHelpers.findAndHookMethod(thumbnailViewClass, "drawOnCanvas", Canvas.class,
@@ -2905,8 +2922,11 @@ public final class LauncherHooks {
     private static final float POPUP_DYNAMIC_BLUR_MAX_RADIUS = 80f;
 
     public static void hookPopupBgBlur(final XC_LoadPackage.LoadPackageParam lpparam) {
-        hookPopupBgBlurSource(lpparam);
-        hookPopupWallpaperBlurRadius(lpparam);
+        LauncherPopupBrightnessHooks.hook(lpparam);
+        if (!LauncherPopupDynamicBlurHooks.hook(lpparam)) {
+            hookPopupBgBlurSource(lpparam);
+            hookPopupWallpaperBlurRadius(lpparam);
+        }
         hookPopupBlurAnim(lpparam);
     }
 
@@ -3018,6 +3038,12 @@ public final class LauncherHooks {
                                 applyPopupBgEffect(view, target.progress);
                                 XposedHelpers.setAdditionalInstanceField(view,
                                         "colorosmod_popup_blur_animator", anim);
+                                // Native detach must cancel the replacement, rather
+                                // than the unused alpha animator it originally made.
+                                try {
+                                    XposedHelpers.setObjectField(view, "mLastBlurAnimatorRef",
+                                            new java.lang.ref.WeakReference<>(anim));
+                                } catch (Throwable ignored) { /* Legacy field may be absent. */ }
                                 param.setResult(anim);
                             } catch (Throwable t) {
                                 log("popup blur anim error: " + t);

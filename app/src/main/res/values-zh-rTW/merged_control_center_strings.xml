@@ -7,7 +7,7 @@
     <string name="qs_merged_landscape_split_tablet">合併通控中心左右配置</string>
     <string name="qs_merged_card_ratio">合併通控中心保持寬高比例</string>
     <string name="qs_merged_gap_enabled">調整合併控制中心欄間距</string>
-    <string name="qs_merged_four_columns">合併通控中心磁貼改為六欄</string>
+    <string name="qs_merged_four_columns">合併控制中心磁貼與卡片欄數一致</string>
     <string name="qs_merged_media_tiles_on_top">合併中心顯示播控時前兩磁貼置頂</string>
     <string name="qs_merged_settings_rotation">合併通控中心設定按鈕旋轉</string>
     <string name="qs_merged_tile_scale_animation">合併通控中心修復磁貼區縮放動畫</string>

@@ -78,6 +78,7 @@
     <string name="system_app_description_cert_installer">用户 CA、客户端及网络凭证安装</string>
     <string name="system_app_description_cht_prepaid">设备管理、锁定控制</string>
     <string name="system_app_description_clock_theme">经典锁屏时钟主题、渲染及回退资源</string>
+    <string name="system_app_description_coloros17_lockscreen_clock">ColorOS 17 锁屏时钟显示</string>
     <string name="system_app_description_cloud">云备份、云端数据同步</string>
     <string name="system_app_description_colorx">图形增强、游戏画质</string>
     <string name="system_app_description_companion">Android Wear 等设备的配对和连接</string>

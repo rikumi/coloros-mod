@@ -40,7 +40,8 @@ public final class AboutDeviceMarketingHooks {
 
     public static void hook(XC_LoadPackage.LoadPackageParam lp) {
         for (String name : new String[]{ "DeviceBatteryCapacityItemPreference", "DeviceCameraInfoItemPreference",
-                "DeviceChargeInfoItemPreference", "DeviceScreenInfoItemPreference" }) {
+                "DeviceChargeInfoItemPreference", "DeviceScreenInfoItemPreference",
+                "DeviceBatteryAndChargeInfoItemPreference", "DeviceInfoItemJumpPreference" }) {
             try {
                 Class<?> preference = XposedHelpers.findClass(INFO + name, lp.classLoader);
                 XposedBridge.hookAllMethods(preference, "onBindViewHolder", new XC_MethodHook() {
@@ -51,6 +52,8 @@ public final class AboutDeviceMarketingHooks {
                     }
                     @Override protected void afterHookedMethod(MethodHookParam p) {
                         if (p.hasThrowable()) return;
+                        if (name.equals("DeviceInfoItemJumpPreference") && !"cpu_info".equals(
+                                XposedHelpers.callMethod(p.thisObject, "getKey"))) return;
                         preferences.put(p.thisObject, Boolean.TRUE);
                         if (!enabled()) return;
                         View root = (View) XposedHelpers.getObjectField(p.args[0], "itemView");
@@ -110,6 +113,15 @@ public final class AboutDeviceMarketingHooks {
 
     private static void apply(String name, View root, ClassLoader loader, Binding binding) throws Exception {
         switch (name) {
+            case "DeviceInfoItemJumpPreference" -> {
+                TextView cpu = text(root, "assignment");
+                if (cpu != null && cpu.getText() != null) {
+                    binding.text(cpu, cpu.getText().toString().replaceAll("®[\\uFE0E\\uFE0F]?", ""));
+                }
+            }
+            case "DeviceBatteryAndChargeInfoItemPreference" -> {
+                binding.parameterStyle(text(root, "device_charge_specs"));
+            }
             case "DeviceBatteryCapacityItemPreference" -> {
                 binding.hide(find(root, "battery_type"));
                 // 原生右侧区域嵌套两层 LinearLayout；去掉名称后按整行中心对齐，
@@ -136,6 +148,8 @@ public final class AboutDeviceMarketingHooks {
                     binding.hide(backRow != null ? backRow : back);
                 } else if (first != null) binding.text(front, first);
                 else if (second != null) binding.text(back, second);
+                binding.parameterStyle(front);
+                binding.parameterStyle(back);
                 for (String row : new String[]{"device_camera_info_front_lin", "device_camera_info_ly"}) {
                     View firstVisibleRow = find(root, row);
                     if (firstVisibleRow != null && firstVisibleRow.getVisibility() == View.VISIBLE) {
@@ -229,6 +243,10 @@ public final class AboutDeviceMarketingHooks {
         final CharSequence text;
         Integer topMargin, gravity;
         Boolean baselineAligned;
+        android.graphics.Typeface typeface;
+        android.content.res.ColorStateList colors;
+        float textSize, spacingExtra, spacingMultiplier;
+        boolean includeFontPadding;
         Change(View target) {
             view = new WeakReference<>(target);
             visibility = target.getVisibility();
@@ -237,7 +255,16 @@ public final class AboutDeviceMarketingHooks {
         void restore() {
             View target = view.get();
             if (target == null) return;
-            if (target instanceof TextView label) label.setText(text);
+            if (target instanceof TextView label) {
+                label.setText(text);
+                if (colors != null) {
+                    label.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, textSize);
+                    label.setTypeface(typeface);
+                    label.setTextColor(colors);
+                    label.setIncludeFontPadding(includeFontPadding);
+                    label.setLineSpacing(spacingExtra, spacingMultiplier);
+                }
+            }
             target.setVisibility(visibility);
             if (gravity != null && target instanceof LinearLayout layout) {
                 layout.setGravity(gravity);
@@ -259,6 +286,29 @@ public final class AboutDeviceMarketingHooks {
         }
         void hide(View view) { if (view != null) { remember(view); view.setVisibility(View.GONE); } }
         void text(TextView view, String value) { if (view != null) { remember(view); view.setText(value); } }
+        void parameterStyle(TextView view) {
+            if (view == null) return;
+            int style = view.getResources().getIdentifier("AboutPhoneDevicePrimaryMediumLabel",
+                    "style", view.getContext().getPackageName());
+            if (style == 0) return; // 旧版系统保持原有样式。
+            Change change = remember(view);
+            if (change.colors == null) {
+                change.colors = view.getTextColors();
+                change.typeface = view.getTypeface();
+                change.textSize = view.getTextSize();
+                change.spacingExtra = view.getLineSpacingExtra();
+                change.spacingMultiplier = view.getLineSpacingMultiplier();
+                change.includeFontPadding = view.getIncludeFontPadding();
+            }
+            // 与处理器、内存、容量等参数使用同一个系统样式，随主题和字号缩放。
+            view.setTextAppearance(style);
+            android.content.res.TypedArray values = view.getContext().obtainStyledAttributes(
+                    style, new int[]{android.R.attr.lineHeight});
+            try {
+                int height = values.getDimensionPixelSize(0, 0);
+                if (height > 0) view.setLineHeight(height);
+            } finally { values.recycle(); }
+        }
         void centerVertically(LinearLayout view) {
             Change change = remember(view);
             if (change.gravity == null) {

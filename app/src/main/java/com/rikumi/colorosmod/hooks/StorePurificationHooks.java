@@ -148,6 +148,10 @@ public final class StorePurificationHooks {
 
         String base = MARKET + "appmanage.core.upgrade.upgrademgr.BaseRecyclerViewDownloadFragment";
         for (String suffix : new String[]{"$e", "$f"}) {
+            // 网络响应包装类在 26.10.2_CN 从 ik3 改为 nm3；按具体回调签名解析，
+            // 避免缓存或网络返回的推荐及推广页脚绕过开关。
+            String response = downloadResponseType(cl, base + suffix);
+            if (response == null) continue;
             hook(cl, base + suffix, "Ԫ", true, p -> {
                 Object fragment = owner(p.thisObject, base);
                 String type = fragment.getClass().getName();
@@ -155,8 +159,27 @@ public final class StorePurificationHooks {
                         && enabled("hide_download_recommendations"))
                         || (type.equals(MARKET + "appmanage.core.upgrade.upgrademgr.recyclerview.AppUpdateFragment")
                         && enabled("hide_update_recommendations"))) p.setResult(null);
-            }, "a.a.a.ik3");
+            }, response);
         }
+        // 更新页最终接收的卡片包含“新的应用，新的心情”等推广区。
+        // 保留原生绑定后的布局处理，仅将推荐数据置空，不影响待更新应用和忽略列表。
+        hook(cl, MARKET + "appmanage.core.upgrade.upgrademgr.recyclerview.AppUpdateFragment",
+                "ၿ", true, p -> {
+                    if (enabled("hide_update_recommendations")) p.args[0] = new ArrayList<>();
+                }, "java.util.List");
+    }
+
+    private static String downloadResponseType(ClassLoader cl, String callback) {
+        try {
+            for (Method method : Class.forName(callback, false, cl).getDeclaredMethods()) {
+                if (method.getName().equals("Ԫ") && !method.isBridge()
+                        && method.getReturnType() == void.class && method.getParameterCount() == 1
+                        && method.getParameterTypes()[0] != Object.class) {
+                    return method.getParameterTypes()[0].getName();
+                }
+            }
+        } catch (Throwable error) { log("Store recommendation response lookup: " + error); }
+        return null;
     }
 
     private static void installStyles(ClassLoader cl) {

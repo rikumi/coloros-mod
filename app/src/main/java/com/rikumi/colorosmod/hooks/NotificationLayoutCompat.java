@@ -3,8 +3,12 @@ package com.rikumi.colorosmod.hooks;
 import com.rikumi.colorosmod.xposed.XposedBridge;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 final class NotificationLayoutCompat {
+    private static final ConcurrentHashMap<Class<?>, Set<String>> FIELD_NAMES = new ConcurrentHashMap<>();
     static boolean userLocked(Object owner) {
         return XposedHelpers.getBooleanField(owner, hasField(owner.getClass(), "mUserLocked")
                 ? "mUserLocked" : "mIsUserSwipingToExpandRow");
@@ -16,11 +20,14 @@ final class NotificationLayoutCompat {
         else XposedHelpers.callMethod(state, method, value);
     }
     static boolean hasField(Class<?> owner, String name) {
-        for (Class<?> type = owner; type != null; type = type.getSuperclass()) {
-            try { type.getDeclaredField(name); return true; }
-            catch (NoSuchFieldException absent) { }
-        }
-        return false;
+        // 此查询会随通知布局逐帧调用。新版已删除的字段不能每帧通过异常探测，
+        // 按运行时类型一次收集继承链，同时缓存存在和不存在的结果。
+        return FIELD_NAMES.computeIfAbsent(owner, type -> {
+            Set<String> names = new HashSet<>();
+            for (Class<?> current = type; current != null; current = current.getSuperclass())
+                for (var field : current.getDeclaredFields()) names.add(field.getName());
+            return names;
+        }).contains(name);
     }
 
     static boolean hasMethod(Class<?> owner, String name) {

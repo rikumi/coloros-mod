@@ -28,6 +28,7 @@ final class RelaxedNotificationHooks {
     }
 
     static void hook(XC_LoadPackage.LoadPackageParam lp) {
+        RelaxedNotificationSurfaceHooks.hook(lp);
         try {
             XposedHelpers.findAndHookMethod("com.oplus.systemui.statusbar.notification.row.wrapper.OplusNotificationHeaderViewWrapperExImp",
                     lp.classLoader, "resolveHeaderViewsPlus", new XC_MethodHook() {
@@ -173,21 +174,22 @@ final class RelaxedNotificationHooks {
                     "notification_2025_template_collapsed_call", "notification_2025_template_expanded_call");
             XposedHelpers.findAndHookMethod(Resources.class, "getLayout", int.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    if (!enabled() || (((Integer) p.args[0]) >>> 24) != 1) return;
+                    if (!enabled() || RelaxedNotificationSurfaceHooks.nativePublicInflation()
+                            || (((Integer) p.args[0]) >>> 24) != 1) return;
                     Resources resources = (Resources) p.thisObject;
                     String expanded = shells.get(resources.getResourceEntryName((Integer) p.args[0]));
                     if (expanded == null) return;
-                    int id = resources.getIdentifier(expanded, "layout", "android");
+                    int id = NotificationResourceIds.get(resources, expanded, "layout", "android");
                     if (id != 0) p.setResult(resources.getLayout(id));
                 }
             });
             XposedHelpers.findAndHookMethod("com.android.systemui.statusbar.notification.row.NotificationContentView", lp.classLoader,
                     "onMeasure", int.class, int.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (!enabled()) return;
+                            if (!enabled() || RelaxedNotificationSurfaceHooks.isPublicContent((View) p.thisObject)) return;
                             Object object = XposedHelpers.getObjectField(p.thisObject, "mContractedChild");
                             if (!(object instanceof View child)) return;
-                            int id = child.getResources().getIdentifier("notification_header", "id", "android");
+                            int id = NotificationResourceIds.get(child.getResources(), "notification_header", "id", "android");
                             if (id == 0 || child.findViewById(id) == null) return;
                             p.setObjectExtra("smallHeight", XposedHelpers.getIntField(p.thisObject, "mSmallHeight"));
                             p.setObjectExtra("headsUpHeight", XposedHelpers.getIntField(p.thisObject, "mHeadsUpHeight"));
@@ -207,12 +209,14 @@ final class RelaxedNotificationHooks {
                     "updateExpandability", boolean.class, View.OnClickListener.class, boolean.class, new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             if (!enabled()) return;
+                            Object root = XposedHelpers.getObjectField(p.thisObject, "mView");
+                            if (root instanceof View view && RelaxedNotificationSurfaceHooks.isPublicContent(view)) return;
                             Object row = XposedHelpers.getObjectField(p.thisObject, "mRow");
                             if (row == null || XposedHelpers.getBooleanField(row, "mIsSummaryWithChildren")) return;
                             Object object = XposedHelpers.getObjectField(p.thisObject, "mExpandButton");
                             if (!(object instanceof View button)) return;
                             LegacyExpandAlignmentHooks.centerArrow(button);
-                            int id = button.getResources().getIdentifier("expand_button_pill", "id", "android");
+                            int id = NotificationResourceIds.get(button.getResources(), "expand_button_pill", "id", "android");
                             View pill = id == 0 ? null : button.findViewById(id);
 
                             if (pill != null) pill.setVisibility(Boolean.TRUE.equals(p.args[0]) ? View.VISIBLE : View.GONE);
@@ -221,7 +225,8 @@ final class RelaxedNotificationHooks {
             XposedHelpers.findAndHookMethod("com.android.systemui.statusbar.notification.row.NotificationContentView", lp.classLoader,
                     "updateExpandButtonsDuringLayout", boolean.class, boolean.class, new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
-                            if (!enabled() || !Boolean.TRUE.equals(p.args[0])
+                            if (!enabled() || RelaxedNotificationSurfaceHooks.isPublicContent((View) p.thisObject)
+                                    || !Boolean.TRUE.equals(p.args[0])
                                     || XposedHelpers.getBooleanField(p.thisObject, "mIsContentExpandable")) return;
                             Object row = XposedHelpers.getObjectField(p.thisObject, "mContainingNotification");
                             if (row == null || XposedHelpers.getBooleanField(row, "mIsSummaryWithChildren")) return;
@@ -262,13 +267,14 @@ final class RelaxedNotificationHooks {
     static void anchorIcon(Object object) { anchorIcon(object, -1, -1); }
 
     static int iconMargin(View view) {
-        int id = view.getResources().getIdentifier("notification_2025_margin", "dimen", "android");
+        int id = NotificationResourceIds.get(view.getResources(), "notification_2025_margin", "dimen", "android");
         return id == 0 ? Math.round(16 * view.getResources().getDisplayMetrics().density)
                 : view.getResources().getDimensionPixelSize(id);
     }
 
     private static void anchorIcon(Object object, int requestedStart, int requestedTop) {
         if (!enabled() || !(object instanceof View icon)) return;
+        if (RelaxedNotificationSurfaceHooks.isPublicContent(icon)) return;
 
         if (icon.getClass().getName().equals("com.oplus.systemui.notification.row.oplusgroup.OplusGroupNotificationRowIconView")) return;
         ViewGroup.LayoutParams params = icon.getLayoutParams();
@@ -318,6 +324,7 @@ final class RelaxedNotificationHooks {
     }
 
     private static void alignMessage(View root) {
+        if (RelaxedNotificationSurfaceHooks.isPublicContent(root)) return;
         int iconId = NotificationResourceIds.get(root.getResources(), "icon", "id", "android");
         int lineId = NotificationResourceIds.get(root.getResources(), "notification_top_line", "id", "android");
         View icon = root.findViewById(iconId), line = root.findViewById(lineId);

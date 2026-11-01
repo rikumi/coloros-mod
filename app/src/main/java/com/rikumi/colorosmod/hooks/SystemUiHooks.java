@@ -78,6 +78,7 @@ public final class SystemUiHooks {
         KeyguardHooks.hookFingerprintFailureDelay(lpparam);
         // 取消解锁界面控件光效: 与手势无关, 始终注入, 运行时门控。
         PasswordInputHooks.hookKeyguardNoLightEffect(lpparam);
+        PasswordDialHooks.hook(lpparam);
         // 自定义密码界面背景亮度: 与手势无关, 始终注入, 运行时门控。
         PasswordInputHooks.hookBouncerBackgroundBrightness(lpparam);
 

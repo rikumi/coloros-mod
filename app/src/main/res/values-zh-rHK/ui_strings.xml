@@ -83,6 +83,8 @@
     <string name="ui_float_edge_size">"優化小窗貼邊位置及最大尺寸"</string>
     <string name="ui_shrink_caption">"縮小分屏及小窗頂部菜單欄高度"</string>
     <string name="ui_gesture_behavior">"手勢行為"</string>
+    <string name="ui_tablet_landscape_cutout_insets">"允許軟件讀取平板橫向缺口邊襯區"</string>
+    <string name="ui_tablet_landscape_cutout_insets_hint">"保留平板橫向時的屏幕缺口資料，供應用程式透過 WindowInsets 讀取"</string>
     <string name="ui_gesture_bar_height">"增大底部手勢區高度"</string>
     <string name="ui_gesture_bar_height_hint">"緩解屏幕底部圓角區域吃掉應用程式內容"</string>
     <string name="ui_mback">"啟用 mBack"</string>
@@ -113,6 +115,7 @@
     <string name="ui_bouncer_swipe_back">"密碼介面支援側滑/下滑返回"</string>
     <string name="ui_bouncer_swipe_back_hint">"解決誤觸上滑還要再上滑的奇怪互動"</string>
     <string name="ui_lock_visual">"鎖屏視覺"</string>
+    <string name="ui_keyguard_no_digit_shake">"取消密碼數字鍵晃動"</string>
     <string name="ui_keyguard_no_light">"取消密碼介面控制項光效"</string>
     <string name="ui_keyguard_no_light_hint">"模擬恢復 ColorOS 15 效果"</string>
     <string name="ui_keyguard_brightness">"自訂密碼介面背景亮度"</string>

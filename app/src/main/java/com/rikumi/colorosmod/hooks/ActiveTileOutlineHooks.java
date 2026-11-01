@@ -40,20 +40,28 @@ public final class ActiveTileOutlineHooks {
     }
 
     static void hook(XC_LoadPackage.LoadPackageParam pkg) {
-        if (XposedHelpers.findClassIfExists("com.oplus.posteffect.GradientStrokeLineParamsKt",
+        // 描边辅助类在 ColorOS 17 已替换为 Adapter，不能据此判定磁贴仍用旧版渲染。
+        if (XposedHelpers.findClassIfExists("com.oplus.systemui.qs.base.res.drawable.MixColorTileDrawable",
                 pkg.classLoader) == null) {
             hookLegacy(pkg);
             return;
         }
         try {
-            ContourLightShader.init(pkg.classLoader);
-            strokeUniforms = XposedHelpers.findClass("com.oplus.posteffect.GradientStrokeLineParamsKt", pkg.classLoader);
+            strokeUniforms = XposedHelpers.findClassIfExists(
+                    "com.oplus.posteffect.GradientStrokeLineParamsKt", pkg.classLoader);
+            if (strokeUniforms != null) {
+                try { ContourLightShader.init(pkg.classLoader); }
+                catch (Throwable unavailable) {
+                    strokeUniforms = null;
+                    log("active tile contour supplement unavailable: " + unavailable);
+                }
+            }
             separateTileClass = XposedHelpers.findClassIfExists(
                     "com.oplus.systemui.plugins.qs.customize.view.tile.OplusQSResizeableTileView", pkg.classLoader);
             separateSliderClass = XposedHelpers.findClassIfExists(
                     "com.oplus.systemui.plugins.qs.widget.OplusQsToggleSliderLayout", pkg.classLoader);
             nativeBlurClass = XposedHelpers.findClass("com.android.internal.graphics.drawable.BackgroundBlurDrawable", pkg.classLoader);
-            XposedHelpers.findAndHookDeclaredMethod("com.oplusos.systemui.common.blurability.ViewBlurProxy",
+            if (strokeUniforms != null) XposedHelpers.findAndHookDeclaredMethod("com.oplusos.systemui.common.blurability.ViewBlurProxy",
                     pkg.classLoader, "getBlurDrawable", Drawable.class, new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             DrawFrame frame = drawing.get();
@@ -84,7 +92,7 @@ public final class ActiveTileOutlineHooks {
                                 p.setObjectExtra("originalMaskColor", original);
                                 XposedHelpers.setIntField(drawable, "maskColor", radiantColor != null ? radiantColor : readInt(KEY_QS_ACTIVE_COLOR, DEFAULT_QS_ACTIVE_COLOR));
                             }
-                            if (readBool(KEY_QS_ACTIVE_OUTLINE_ENABLED, false)) {
+                            if (strokeUniforms != null && readBool(KEY_QS_ACTIVE_OUTLINE_ENABLED, false)) {
                                 Object autoBlur = XposedHelpers.getObjectField(drawable, "autoBlurDrawable");
                                 Object proxy = XposedHelpers.callMethod(autoBlur, "getViewBlurProxy");
                                 View owner = (View) XposedHelpers.callMethod(proxy, "getView");
@@ -103,7 +111,8 @@ public final class ActiveTileOutlineHooks {
                             try {
                                 Object original = p.getObjectExtra("originalMaskColor");
                                 if (original instanceof Integer color) XposedHelpers.setIntField(p.thisObject, "maskColor", color);
-                                if (p.hasThrowable() || !readBool(KEY_QS_ACTIVE_OUTLINE_ENABLED, false)) return;
+                                if (p.hasThrowable() || strokeUniforms == null
+                                        || !readBool(KEY_QS_ACTIVE_OUTLINE_ENABLED, false)) return;
                                 Drawable drawable = (Drawable) p.thisObject;
                                 if (MergedRadiantHooks.iconOnlyBackground(drawable) || !isActive(drawable) || drawable.getAlpha() == 0) return;
 

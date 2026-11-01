@@ -192,7 +192,16 @@ public final class TaskbarGestureHooks {
         try {
             Class<?> service = XposedHelpers.findClass(
                     "com.android.quickstep.OplusBaseTouchInteractionService", loader);
-            XposedHelpers.findAndHookDeclaredMethod(service, "onInputEvent", InputEvent.class,
+            String inputMethod = "onInputEvent";
+            try {
+                XposedHelpers.findMethodExact(service, inputMethod, InputEvent.class);
+            } catch (NoSuchMethodError missing) {
+                // ColorOS 17 的原始输入入口改名为 K(InputEvent)。
+                Method method = XposedHelpers.findMethodExact(service, "K", InputEvent.class);
+                if (method.getReturnType() != void.class) throw missing;
+                inputMethod = method.getName();
+            }
+            XposedHelpers.findAndHookDeclaredMethod(service, inputMethod, InputEvent.class,
                     new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam param) {
                             if (replaying || !(param.args[0] instanceof MotionEvent)) return;

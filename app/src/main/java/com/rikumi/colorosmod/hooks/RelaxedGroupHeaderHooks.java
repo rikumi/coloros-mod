@@ -6,6 +6,7 @@ import android.view.ViewGroup;
 import android.view.Gravity;
 import android.widget.FrameLayout;
 import android.widget.TextView;
+import android.widget.RelativeLayout;
 import android.text.TextUtils;
 import java.lang.ref.WeakReference;
 import java.util.WeakHashMap;
@@ -17,6 +18,35 @@ final class RelaxedGroupHeaderHooks {
     private static final WeakHashMap<View, WeakReference<TextView>> names = new WeakHashMap<>();
     private static final WeakHashMap<View, HeaderLine> headerLines = new WeakHashMap<>();
     private static final WeakHashMap<View, Integer> lineEndPaddings = new WeakHashMap<>();
+    private static final WeakHashMap<View, ModernHeader> modernGroups = new WeakHashMap<>();
+    private static final WeakHashMap<TextView, Boolean> nativeNames = new WeakHashMap<>();
+    private static final class ModernHeader {
+        final WeakReference<View> header, line, button;
+        final WeakReference<TextView> name, time;
+        final ViewGroup.LayoutParams lineParams, buttonParams;
+        final int lineVisibility, nameVisibility;
+        final int[] padding;
+        ModernHeader(View header, View line, TextView name, View button, TextView time) {
+            this.header = new WeakReference<>(header); this.line = new WeakReference<>(line);
+            this.name = new WeakReference<>(name); this.button = new WeakReference<>(button);
+            this.time = new WeakReference<>(time);
+            lineParams = line.getLayoutParams(); buttonParams = button.getLayoutParams();
+            lineVisibility = line.getVisibility(); nameVisibility = name.getVisibility();
+            padding = new int[]{line.getPaddingStart(), line.getPaddingTop(), line.getPaddingEnd(), line.getPaddingBottom()};
+        }
+        void restore() {
+            View line = this.line.get(), button = this.button.get();
+            TextView name = this.name.get();
+            if (line != null) {
+                line.setLayoutParams(lineParams); line.setVisibility(lineVisibility);
+                line.setPaddingRelative(padding[0], padding[1], padding[2], padding[3]);
+            }
+            if (name != null) name.setVisibility(nameVisibility);
+            if (button != null) button.setLayoutParams(buttonParams);
+            View header = this.header.get();
+            if (header != null) header.requestLayout();
+        }
+    }
     private static final class HeaderLine {
         final WeakReference<TextView> name, time;
         final WeakReference<View> button;
@@ -59,7 +89,10 @@ final class RelaxedGroupHeaderHooks {
             XposedHelpers.findAndHookMethod(container,
                     "onLayout", boolean.class, int.class, int.class, int.class, int.class, new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
-                            if (enabled() && XposedHelpers.getObjectField(p.thisObject, "mGroupHeader") instanceof View header)
+                            if (!enabled()) return;
+                            ModernHeader modern = modernGroups.get(p.thisObject);
+                            if (modern != null) alignModernTime(modern);
+                            else if (XposedHelpers.getObjectField(p.thisObject, "mGroupHeader") instanceof View header)
                                 alignExpandedHeader(header, true);
                         }
                     });
@@ -91,6 +124,7 @@ final class RelaxedGroupHeaderHooks {
                     int.class, int.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             if (!enabled()) return;
+                            if (!NotificationLayoutCompat.hasField(p.thisObject.getClass(), "opusGroupView")) return;
                             Object view = NotificationLayoutCompat.groupHeader(p.thisObject);
                             if (view instanceof FrameLayout header) alignHeader(p.args[0], p.thisObject, header);
                         }
@@ -135,6 +169,10 @@ final class RelaxedGroupHeaderHooks {
         try {
             Object extension = XposedHelpers.callMethod(container, "getExt");
             Object owner = XposedHelpers.getObjectField(extension, "oplusNotificationGroupExtImpl");
+            if (!NotificationLayoutCompat.hasField(owner.getClass(), "opusGroupView")) {
+                refreshModern((View) container, owner);
+                return;
+            }
             Object object = NotificationLayoutCompat.groupHeader(owner);
             if (!(object instanceof FrameLayout header)) return;
             Object original = XposedHelpers.callMethod(container, "getNotificationHeaderWrapper");
@@ -181,6 +219,72 @@ final class RelaxedGroupHeaderHooks {
             alignHeader(container, owner, header);
             key.requestLayout();
         } catch (Throwable error) { log("relaxed compact group name failed: " + error); }
+    }
+
+    private static void refreshModern(View container, Object owner) {
+        if (NotificationHooks.isMinimizedGroup(container)) return;
+        Object wrapper = XposedHelpers.callMethod(container, "getNotificationHeaderWrapper");
+        if (wrapper == null) return;
+        View header = (View) XposedHelpers.getObjectField(wrapper, "mView");
+        Object source = XposedHelpers.getObjectField(wrapper, "mAppNameText");
+        if (!(source instanceof TextView name)) return;
+        int id = NotificationResourceIds.get(header.getResources(), "notification_top_line", "id", "android");
+        View line = id == 0 ? null : header.findViewById(id);
+        View button = (View) XposedHelpers.callMethod(wrapper, "getExpandButton");
+        id = NotificationResourceIds.get(header.getResources(), "time", "id", "android");
+        View timeView = id == 0 ? null : header.findViewById(id);
+        if (line == null || button == null || !(timeView instanceof TextView time)
+                || !(line.getLayoutParams() instanceof RelativeLayout.LayoutParams)
+                || !(button.getLayoutParams() instanceof RelativeLayout.LayoutParams)) return;
+        ModernHeader saved = modernGroups.get(container);
+        if (saved == null || saved.header.get() != header || saved.name.get() != name) {
+            if (saved != null) saved.restore();
+            saved = new ModernHeader(header, line, name, button, time);
+            modernGroups.put(container, saved);
+        }
+        // 17's collapsed badge is inside the original NotificationHeaderView.
+        // The separate Oplus header returned by getOplusExpandGroupHeaderView is
+        // for the expanded group only. Restore the native name row in its own shell.
+        names.put(container, new WeakReference<>(name));
+        nativeNames.put(name, true);
+        line.setVisibility(View.VISIBLE);
+        name.setVisibility(View.VISIBLE);
+        RelativeLayout.LayoutParams lineParams = new RelativeLayout.LayoutParams(
+                (RelativeLayout.LayoutParams) saved.lineParams);
+        lineParams.topMargin = XposedHelpers.getIntField(owner, "groupCollapsedTopPadding")
+                + NotificationGroupPaddingHooks.inset(container) + fixedTopInset(container);
+        line.setLayoutParams(lineParams);
+        line.setPaddingRelative(XposedHelpers.getIntField(owner, "contentPaddingStart"),
+                saved.padding[1], line.getPaddingEnd(), saved.padding[3]);
+        // The old collapsed shell had this end margin around the expand/time
+        // control; 17 embeds that control directly in the full-width header.
+        RelativeLayout.LayoutParams buttonParams = new RelativeLayout.LayoutParams(
+                (RelativeLayout.LayoutParams) saved.buttonParams);
+        buttonParams.setMarginEnd(buttonParams.getMarginEnd() + XposedHelpers.getIntField(owner, "contentPaddingEnd"));
+        button.setLayoutParams(buttonParams);
+        container.requestLayout();
+    }
+
+    private static float topWithin(View child, View ancestor) {
+        float top = 0;
+        while (child != ancestor) {
+            top += child.getTop() + child.getTranslationY();
+            if (!(child.getParent() instanceof View parent)) return Float.NaN;
+            child = parent;
+        }
+        return top;
+    }
+
+    private static void alignModernTime(ModernHeader saved) {
+        View header = saved.header.get(), button = saved.button.get();
+        TextView name = saved.name.get(), time = saved.time.get();
+        if (header == null || button == null || name == null || time == null
+                || name.getHeight() == 0 || time.getHeight() == 0
+                || name.getBaseline() < 0 || time.getBaseline() < 0) return;
+        float target = topWithin(name, header) + name.getBaseline();
+        float current = topWithin(time, header) + time.getBaseline();
+        if (Float.isNaN(target) || Float.isNaN(current)) return;
+        button.offsetTopAndBottom(Math.round(target - current));
     }
 
     private static void alignTime(View header, HeaderLine line) {
@@ -241,6 +345,7 @@ final class RelaxedGroupHeaderHooks {
 
     private static void alignExpandedHeader(View header, boolean laidOut) {
         if (!(header.getParent() instanceof View container) || !names.containsKey(container)
+                || modernGroups.containsKey(container)
                 || NotificationHooks.isMinimizedGroup(container)
                 || XposedHelpers.getObjectField(container, "mGroupHeader") != header) return;
         Object extension = XposedHelpers.callMethod(container, "getExt");
@@ -270,6 +375,7 @@ final class RelaxedGroupHeaderHooks {
     // 导致基线对齐把 notification_top_line 下移后溢出。这里把展开头的高度补上模块额外内边距。
     private static void adjustExpandedHeaderHeight(View header) {
         if (!(header.getParent() instanceof View container) || !names.containsKey(container)
+                || modernGroups.containsKey(container)
                 || NotificationHooks.isMinimizedGroup(container)
                 || XposedHelpers.getObjectField(container, "mGroupHeader") != header) return;
         int extra = 2 * NotificationGroupPaddingHooks.inset(container) + fixedExtraHeight(container);
@@ -312,6 +418,8 @@ final class RelaxedGroupHeaderHooks {
     static int fixedTopInset(Object object) { return (fixedExtraHeight(object) + 1) / 2; }
 
     static void cleanup() {
+        for (ModernHeader header : modernGroups.values()) header.restore();
+        modernGroups.clear();
         for (var entry : lineEndPaddings.entrySet()) {
             View body = entry.getKey();
             body.setPaddingRelative(body.getPaddingStart(), body.getPaddingTop(), entry.getValue(), body.getPaddingBottom());
@@ -333,9 +441,10 @@ final class RelaxedGroupHeaderHooks {
         transformations.clear();
         for (var reference : names.values()) {
             TextView name = reference.get();
-            if (name != null && name.getParent() instanceof ViewGroup parent) parent.removeView(name);
+            if (name != null && !nativeNames.containsKey(name) && name.getParent() instanceof ViewGroup parent) parent.removeView(name);
         }
         names.clear();
+        nativeNames.clear();
         for (var entry : iconPositions.entrySet()) {
             View icon = entry.getKey();
             if (icon.getLayoutParams() instanceof FrameLayout.LayoutParams params) {

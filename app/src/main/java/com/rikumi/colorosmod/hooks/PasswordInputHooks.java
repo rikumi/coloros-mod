@@ -1057,6 +1057,7 @@ public final class PasswordInputHooks {
         return sTransparentBitmap;
     }
     public static void cleanupForHotReload() {
+        PasswordDialHooks.cleanup();
 
         synchronized (sBorderOriginalColors) {
             for (java.util.Map.Entry<Object, Integer> entry :

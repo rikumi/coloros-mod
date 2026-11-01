@@ -126,6 +126,7 @@ internal object SystemAppDescriptions {
         "com.android.externalstorage" to R.string.system_app_recommendation_keep,
         "com.oplus.notificationmanager" to R.string.system_app_recommendation_keep,
         "com.oplus.keyguard.clock.base" to R.string.system_app_recommendation_keep,
+        "com.oplus.keyguard.personality.clocks" to R.string.system_app_recommendation_keep,
         "com.google.android.networkstack.overlay" to R.string.system_app_recommendation_keep,
         "com.android.SystemUIResOverlay" to R.string.system_app_recommendation_keep,
     )
@@ -832,7 +833,7 @@ internal object SystemAppDescriptions {
         "com.oplus.gleanerservice" to R.string.system_app_description_gleaner,
         "com.oplus.healthservice" to R.string.system_app_description_health,
         "com.oplus.keyguard.clock.base" to R.string.system_app_description_clock_theme,
-        "com.oplus.keyguard.personality.clocks" to R.string.system_app_description_clock_theme,
+        "com.oplus.keyguard.personality.clocks" to R.string.system_app_description_coloros17_lockscreen_clock,
         "com.oplus.keyguard.style.widgets" to R.string.system_app_description_lock_widgets,
         "com.oplus.lfeh" to R.string.system_app_description_lfeh,
         "com.oplus.linker" to R.string.system_app_description_linker,

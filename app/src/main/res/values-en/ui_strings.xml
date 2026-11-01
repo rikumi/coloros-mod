@@ -82,6 +82,8 @@
     <string name="ui_float_edge_size">"Optimize edge placement and max size"</string>
     <string name="ui_shrink_caption">"Reduce split-screen and floating window top menu height"</string>
     <string name="ui_gesture_behavior">"Gesture behavior"</string>
+    <string name="ui_tablet_landscape_cutout_insets">"Allow apps to read tablet landscape cutout insets"</string>
+    <string name="ui_tablet_landscape_cutout_insets_hint">"Preserve tablet landscape display cutout data for apps to read through WindowInsets"</string>
     <string name="ui_gesture_bar_height">"Increase gesture area height"</string>
     <string name="ui_gesture_bar_height_hint">"Reduce app content clipping at the rounded bottom screen corners."</string>
     <string name="ui_mback">"Enable mBack"</string>
@@ -112,6 +114,7 @@
     <string name="ui_bouncer_swipe_back">"Swipe sideways or down to dismiss password"</string>
     <string name="ui_bouncer_swipe_back_hint">"Avoid having to swipe up again after an accidental upward swipe."</string>
     <string name="ui_lock_visual">"Lock screen appearance"</string>
+    <string name="ui_keyguard_no_digit_shake">"Disable password digit key entrance motion"</string>
     <string name="ui_keyguard_no_light">"Remove contour glow on password keys"</string>
     <string name="ui_keyguard_no_light_hint">"Recreate the ColorOS 15 appearance."</string>
     <string name="ui_keyguard_brightness">"Custom password screen background brightness"</string>

@@ -200,6 +200,9 @@ public class XposedInit extends XposedModule {
             "float_window_edge_size_optimize_enabled";
     // 小窗放大到最大时, 左右各保留的边距(dp): 最大宽度 = 屏幕宽度 - 2 * FLOAT_WINDOW_SIDE_MARGIN_DP。
     public static final float FLOAT_WINDOW_SIDE_MARGIN_DP = 8f;
+    public static final String KEY_TABLET_LANDSCAPE_CUTOUT_INSETS_ENABLED =
+            "tablet_landscape_cutout_insets_enabled";
+
     public static final String KEY_GESTURE_BAR_HEIGHT_ENABLED = "gesture_bar_height_enabled";
     public static final String KEY_GESTURE_BAR_HEIGHT_DP = "gesture_bar_height_dp";
     public static final String KEY_GESTURE_BAR_WIDTH_ENABLED = "gesture_bar_width_enabled";
@@ -292,6 +295,8 @@ public class XposedInit extends XposedModule {
 
     public static final String KEY_KEYGUARD_NO_LIGHT_EFFECT_ENABLED =
             "keyguard_no_light_effect_enabled";
+    public static final String KEY_KEYGUARD_NO_DIGIT_SHAKE_ENABLED =
+            "keyguard_no_digit_shake_enabled";
 
     public static final String KEY_KEYGUARD_BOUNCER_BRIGHTNESS_ENABLED =
             "keyguard_bouncer_brightness_enabled";
@@ -535,6 +540,7 @@ public class XposedInit extends XposedModule {
             QsHooks.onCornerRadiusSettingsChanged();
             SignalHooks.onSettingsSnapshotPublished();
             StatusBarLyricHooks.onSettingsSnapshotPublished();
+            com.rikumi.colorosmod.hooks.PasswordDialHooks.refresh();
             FoldIdleMediaHooks.refresh();
             StatusBarFontHooks.refresh();
             MergedCardRatioHooks.refresh();
@@ -998,6 +1004,7 @@ public class XposedInit extends XposedModule {
             com.rikumi.colorosmod.hooks.RecentFreeformHistoryHooks.hook(systemServerLpparam());
             SystemServerHooks.hookStatusBarThirdPartyOverlayEvents(systemServerLpparam());
             SystemServerHooks.hookCompactCanvasCaptionInsets(systemServerLpparam());
+            com.rikumi.colorosmod.hooks.TabletCutoutInsetsHooks.hook(sSystemServerClassLoader, this);
             SystemServerHooks.hookCompactFlexibleCaptionBar(systemServerLpparam());
             sSystemServerHooked = true;
         } else {
@@ -1254,6 +1261,7 @@ public class XposedInit extends XposedModule {
             SystemServerHooks.hookStatusBarThirdPartyOverlayEvents(lpparam);
             // system_server: 将画布分屏嵌入应用的状态栏 inset 同步缩至三点控制栏的新高度。
             SystemServerHooks.hookCompactCanvasCaptionInsets(lpparam);
+            com.rikumi.colorosmod.hooks.TabletCutoutInsetsHooks.hook(lpparam.classLoader, this);
             // system_server: 同步缩小悬浮小窗顶部控制栏、系统上报高度与触摸区。
             SystemServerHooks.hookCompactFlexibleCaptionBar(lpparam);
         }

@@ -25,6 +25,13 @@ final class LauncherIconGapHooks {
 
     static void hook(XC_LoadPackage.LoadPackageParam lp) {
         Class<?> bubble = XposedHelpers.findClass("com.android.launcher3.BubbleTextView", lp.classLoader);
+        XposedHelpers.findAndHookMethod(bubble, "getRegularCompoundDrawablePadding", new XC_MethodHook() {
+            @Override protected void afterHookedMethod(MethodHookParam p) {
+                if (!active || p.hasThrowable() || !(p.thisObject instanceof TextView view)
+                        || !(p.getResult() instanceof Integer padding) || !supported(view)) return;
+                p.setResult(padding + extraPadding(view));
+            }
+        });
         XposedBridge.hookAllMethods(bubble, "onAttachedToWindow", new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam p) {
                 if (active && p.thisObject instanceof TextView view) {
@@ -64,15 +71,11 @@ final class LauncherIconGapHooks {
 
     private static boolean apply(TextView view) {
         try {
-            int display = XposedHelpers.getIntField(view, "mDisplay");
-            if (display != 0 && display != 1) return false;
-            // 不经原生 getRegularCompoundDrawablePadding 的已编译调用点读取 getter：
-            // ART 可能已将简单参数 getter 内联，反射调用外层方法也不会经过 getter hook。
-            Object activity = XposedHelpers.getObjectField(view, "mActivity");
-            Object profile = XposedHelpers.callMethod(activity, "getDeviceProfile");
-            Object params = XposedHelpers.callMethod(profile, display == 1 ? "allapps" : "icon");
-            int padding = (Integer) XposedHelpers.callMethod(params, display == 1
-                    ? "getAllAppsIconDrawablePaddingPx" : "getIconDrawablePaddingPx");
+            if (!supported(view)) return false;
+            // 17.3.12 直接读取混淆后的参数字段，已无 IconParam / AllAppsParam getter。
+            // 显式调用 BubbleTextView 的真实入口也能避开已编译调用点的内联，
+            // 并从原生基准重算，不能在现有 compound padding 上反复累加。
+            int padding = (Integer) XposedHelpers.callMethod(view, "getRegularCompoundDrawablePadding");
             if (view.getCompoundDrawablePadding() != padding) {
                 view.setCompoundDrawablePadding(padding);
                 view.requestLayout();
@@ -81,6 +84,17 @@ final class LauncherIconGapHooks {
             }
         } catch (Throwable error) { log("launcher icon-label spacing update failed: " + error); }
         return false;
+    }
+
+    private static boolean supported(TextView view) {
+        int display = XposedHelpers.getIntField(view, "mDisplay");
+        return display == 0 || display == 1;
+    }
+
+    private static int extraPadding(TextView view) {
+        if (!readBoolCached(KEY_ICON_GAP_ENABLED, false)) return 0;
+        int dp = Math.max(0, Math.min(8, readIntCached(KEY_ICON_GAP_DP, ICON_GAP_DP)));
+        return Math.round(dp * view.getResources().getDisplayMetrics().density);
     }
 
     static Object captureViews() {

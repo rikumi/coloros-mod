@@ -32,6 +32,7 @@ public final class MergedRadiantHooks {
     private static int activeAttr, inactiveAttr, inoperableAttr, unavailableAttr;
     private static boolean restoring, settingTint;
     private static boolean activeBlurAvailable;
+    private static boolean activeBlurHasMirrorScale;
     private static final WeakHashMap<View, Card> cards = new WeakHashMap<>();
     private static final WeakHashMap<View, WeakReference<Object>> icons = new WeakHashMap<>();
     private static final WeakHashMap<Object, ColorStateList> nativeTints = new WeakHashMap<>();
@@ -45,6 +46,13 @@ public final class MergedRadiantHooks {
             highlightClass = XposedHelpers.findClass("com.oplus.systemui.qs.base.tile.OplusQSHighlightTileView", pkg.classLoader);
             normalClass = XposedHelpers.findClass("com.oplus.systemui.qs.base.tile.OplusQSTileBaseView", pkg.classLoader);
             blurProvider = XposedHelpers.findClass("com.oplusos.systemui.common.util.QSBlurConfigProvider", pkg.classLoader);
+            activeBlurHasMirrorScale = false;
+            try {
+                XposedHelpers.findMethodExact(blurProvider, "getSeekBarActiveBlurConfig", boolean.class);
+            } catch (NoSuchMethodError legacyUnavailable) {
+                XposedHelpers.findMethodExact(blurProvider, "getSeekBarActiveBlurConfig", boolean.class, float.class);
+                activeBlurHasMirrorScale = true;
+            }
             activeBlurAvailable = false;
             try {
                 seekBarBlurManager = XposedHelpers.findClass("com.oplus.systemui.qs.base.util.QsSeekBarBlurManager", pkg.classLoader);
@@ -87,8 +95,19 @@ public final class MergedRadiantHooks {
                             for (int state : drawable.getState())
                                 if (state == activeAttr || state == inoperableAttr) active = true;
                             if (!active) return;
-                            Object config = XposedHelpers.callStaticMethod(blurProvider, "getSeekBarActiveBlurConfig",
-                                    tile.getResources().getConfiguration().isNightModeActive());
+                            boolean night = tile.getResources().getConfiguration().isNightModeActive();
+                            Object config;
+                            if (activeBlurHasMirrorScale) {
+                                // ColorOS 17 新增镜像缩放参数，沿用本次原生磁贴配置，
+                                // 只替换激活态配色，不改变材质的缩放效果。
+                                Object original = XposedHelpers.callMethod(p.args[0], "getFirst");
+                                float mirror = ((Number) XposedHelpers.callMethod(original, "getMirrorScale")).floatValue();
+                                config = XposedHelpers.callStaticMethod(blurProvider,
+                                        "getSeekBarActiveBlurConfig", night, mirror);
+                            } else {
+                                config = XposedHelpers.callStaticMethod(blurProvider,
+                                        "getSeekBarActiveBlurConfig", night);
+                            }
                             p.args[0] = XposedHelpers.newInstance(triple, config, 0,
                                     XposedHelpers.callMethod(p.args[0], "getThird"));
                         }

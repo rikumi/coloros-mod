@@ -24,6 +24,7 @@ import com.rikumi.colorosmod.xposed.XposedHelpers;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 
 public final class QsHooks {
+    private static final ThreadLocal<Integer> panelBlurRadiusDepth = new ThreadLocal<>();
     private static final java.util.WeakHashMap<Object, Boolean> nameHosts = new java.util.WeakHashMap<>();
     private static final android.os.Handler radiusHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private static final java.util.Map<Object, Object[]> radiusSliders = java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
@@ -382,16 +383,30 @@ public final class QsHooks {
         try {
             Class<?> exImpClass = XposedHelpers.findClass(
                     "com.oplus.systemui.statusbar.phone.ScrimControllerExImp", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(exImpClass, "refreshBehindDrawable",
-                    new XC_MethodHook() {
+            // 在原生写入前替换半径，避免 updateBehindMixConfig 再次覆盖自定义值。
+            // 仅在控制中心背后遮罩的更新范围内生效，不改磁贴或密码界面的半径。
+            XposedHelpers.findAndHookMethod(
+                    "com.oplusos.systemui.common.util.NotifiAndQsPlatformBlurExKt",
+                    lpparam.classLoader, "panelBlurRadius", Context.class, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam param) {
+                            if (panelBlurRadiusDepth.get() != null
+                                    && readBool(KEY_QS_BLUR_RADIUS_ENABLED, false))
+                                param.setResult(qsBackgroundBlurRadius());
+                        }
+                    });
+            XC_MethodHook updateRadius = new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam param) {
+                            Integer depth = panelBlurRadiusDepth.get();
+                            param.setObjectExtra("qsBlurRadiusDepth", depth == null ? 0 : depth);
+                            panelBlurRadiusDepth.set(depth == null ? 1 : depth + 1);
+                        }
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             try {
+                                if (param.hasThrowable()) return;
                                 if (!readBool(KEY_QS_BLUR_RADIUS_ENABLED, false)) return;
 
-                                int value = readInt(KEY_QS_BLUR_RADIUS, QS_BLUR_RADIUS_DEFAULT);
-                                value = Math.max(0, Math.min(QS_BLUR_RADIUS_MAX, value));
-                                int radius = value * QS_BLUR_RADIUS_SCALE;
+                                int radius = qsBackgroundBlurRadius();
                                 Object controller = XposedHelpers.callMethod(param.thisObject, "getScrimController");
                                 if (controller == null) return;
                                 Object scrimBehind = XposedHelpers.callMethod(controller, "getScrimBehind");
@@ -404,17 +419,30 @@ public final class QsHooks {
                                 if (proxy == null) return;
                                 Object config = XposedHelpers.callMethod(proxy, "getBlurConfig");
                                 if (config == null) return;
+                                // 复用原生背景时仍更新设置；半径已正确则不重复提交模糊配置。
+                                if (((Number) XposedHelpers.callMethod(config, "getBlurRadius")).intValue() == radius) return;
                                 XposedHelpers.setIntField(config, "blurRadius", radius);
                                 XposedHelpers.callMethod(proxy, "applyBlurConfig");
                             } catch (Throwable t) {
                                 log("qs_blur_radius apply error: " + t);
+                            } finally {
+                                int depth = (Integer) param.getObjectExtra("qsBlurRadiusDepth");
+                                if (depth == 0) panelBlurRadiusDepth.remove();
+                                else panelBlurRadiusDepth.set(depth);
                             }
                         }
-                    });
-            log("HOOK OK ScrimControllerExImp#refreshBehindDrawable (qs_blur_radius)");
+                    };
+            XposedHelpers.findAndHookMethod(exImpClass, "refreshBehindDrawable", updateRadius);
+            NotificationLayoutCompat.optionalHook(exImpClass, "updateBehindMixConfig", updateRadius);
+            log("HOOK OK ScrimControllerExImp background writers (qs_blur_radius)");
         } catch (Throwable t) {
             log("HOOK FAIL refreshBehindDrawable :: " + Log.getStackTraceString(t));
         }
+    }
+
+    private static int qsBackgroundBlurRadius() {
+        int value = readInt(KEY_QS_BLUR_RADIUS, QS_BLUR_RADIUS_DEFAULT);
+        return Math.max(0, Math.min(QS_BLUR_RADIUS_MAX, value)) * QS_BLUR_RADIUS_SCALE;
     }
 
     public static void hookQsBackgroundScale(final XC_LoadPackage.LoadPackageParam lpparam) {

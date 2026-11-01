@@ -78,6 +78,7 @@
     <string name="system_app_description_cert_installer">使用者 CA、用戶端及網路憑證安裝</string>
     <string name="system_app_description_cht_prepaid">裝置管理、鎖定控制</string>
     <string name="system_app_description_clock_theme">經典鎖定畫面時鐘主題、繪製及回復資源</string>
+    <string name="system_app_description_coloros17_lockscreen_clock">ColorOS 17 鎖定畫面時鐘顯示</string>
     <string name="system_app_description_cloud">雲備份、雲端資料同步</string>
     <string name="system_app_description_colorx">圖形增強、游戲畫質</string>
     <string name="system_app_description_companion">Android Wear 等裝置的配對和連接</string>

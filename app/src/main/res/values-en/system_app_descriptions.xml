@@ -78,6 +78,7 @@
     <string name="system_app_description_cert_installer">User CA, client certificate, and network credential installation</string>
     <string name="system_app_description_cht_prepaid">device management, locking controls</string>
     <string name="system_app_description_clock_theme">Classic lock screen clock theme, rendering, and fallback resources</string>
+    <string name="system_app_description_coloros17_lockscreen_clock">ColorOS 17 lock screen clock display</string>
     <string name="system_app_description_cloud">Cloud backup, data synchronization</string>
     <string name="system_app_description_colorx">graphics enhancement, game visuals</string>
     <string name="system_app_description_companion">Pairing and connecting Android Wear and other devices</string>

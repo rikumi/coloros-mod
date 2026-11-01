@@ -364,6 +364,7 @@ private val FLOATWINDOW: List<SettingsItem> = listOf(
 
 private val NAV: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_gesture_behavior),
+    SwitchItem(XposedInit.KEY_TABLET_LANDSCAPE_CUTOUT_INSETS_ENABLED, R.string.ui_tablet_landscape_cutout_insets, R.string.ui_tablet_landscape_cutout_insets_hint),
     SwitchItem("gesture_bar_height_enabled", R.string.ui_gesture_bar_height, R.string.ui_gesture_bar_height_hint, "gesture_bar_height_dp", 24, 12),
     SwitchItem("mback_enabled", R.string.ui_mback, R.string.ui_mback_hint),
     SwitchItem("gesture_touch_through_enabled", R.string.ui_gesture_touch_through),
@@ -405,6 +406,7 @@ private val LOCKSCREEN: List<SettingsItem> = listOf(
             R.string.ui_weight_400, R.string.ui_weight_500, R.string.ui_weight_600, R.string.ui_weight_700, R.string.ui_weight_800, R.string.ui_weight_900),
         defaultValue = 3, masterManaged = true, masterEnabledValue = 3),
     SwitchItem("keyguard_no_light_effect_enabled", R.string.ui_keyguard_no_light, R.string.ui_keyguard_no_light_hint),
+    SwitchItem("keyguard_no_digit_shake_enabled", R.string.ui_keyguard_no_digit_shake),
     SwitchItem("keyguard_bouncer_brightness_enabled", R.string.ui_keyguard_brightness, sliderKey = "keyguard_bouncer_brightness", sliderMax = 5, sliderDefault = 0, sliderUnit = "%"),
     SwitchItem("keyguard_notification_offset_enabled", R.string.ui_keyguard_notification_offset, sliderKey = "keyguard_notification_offset_dp", sliderMax = 40, sliderDefault = 20),
     SwitchItem("keyguard_no_charge_anim_enabled", R.string.ui_keyguard_no_charge),
@@ -537,8 +539,12 @@ private data class SwitchGroup(val desc: Int?, val items: List<SettingsItem>)
 private val List<SettingsItem>.switches: List<SwitchItem> get() = filterIsInstance<SwitchItem>()
 
 // 分类/全局顶部“一键启用”所管理的项目；目录屏蔽项也属于可启用功能。
+private val SettingsItem.availableOnDevice: Boolean
+    get() = this !is SwitchItem || key != XposedInit.KEY_TABLET_LANDSCAPE_CUTOUT_INSETS_ENABLED
+            || TabletDevice.isTablet()
+
 private val List<SettingsItem>.masterItems: List<SettingsItem>
-    get() = filter {
+    get() = filter { it.availableOnDevice }.filter {
         (it is SwitchItem && (it.masterManaged || it.key == AppNavigationSettings.ENABLED)) || it is FolderBlockItem
                 || (it is SelectItem && it.masterManaged)
     }
@@ -954,7 +960,7 @@ private fun CategoryScreen(
     val isPad = LocalConfiguration.current.smallestScreenWidthDp >= 600
     // 按 GroupTitleItem 切分: 每段一张卡片, 段与段之间自然留出 group 间距。
     val groups = remember(category, version, overrideValue, isPad) {
-        category.items.map { it.forDevice(isPad) }.filterNot {
+        category.items.filter { it.availableOnDevice }.map { it.forDevice(isPad) }.filterNot {
             it is SwitchItem && it.key == "drawer_letter_scroll_enabled"
                     && prefs.getBoolean("drawer_install_time_sort_enabled", false)
         }.splitByDivider()
