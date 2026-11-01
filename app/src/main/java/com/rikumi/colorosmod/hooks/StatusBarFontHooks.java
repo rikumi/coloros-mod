@@ -53,7 +53,7 @@ public final class StatusBarFontHooks {
                     new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             if (!Boolean.TRUE.equals(applying.get()) && isClock((TextView) p.thisObject))
-                                p.args[0] = alignColons((CharSequence) p.args[0], family() > 0);
+                                p.args[0] = alignColons((CharSequence) p.args[0], overridesFont());
                         }
                     });
             XposedHelpers.findAndHookMethod(TextView.class, "onAttachedToWindow", new XC_MethodHook() {
@@ -67,6 +67,7 @@ public final class StatusBarFontHooks {
                     @Override protected void beforeHookedMethod(MethodHookParam p) {
                         TextView view = (TextView) p.thisObject;
                         if (Boolean.TRUE.equals(applying.get()) || !isTarget(view)) return;
+                        if (!overridesFont() && !originals.containsKey(view)) return;
                         Original original = remember(view);
                         Typeface nativeFont = (Typeface) p.args[0];
                         if (styled) nativeFont = Typeface.create(nativeFont, (Integer) p.args[1]);
@@ -93,8 +94,9 @@ public final class StatusBarFontHooks {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     TextView view = (TextView) p.thisObject;
                     if (Boolean.TRUE.equals(applying.get()) || !isTarget(view)) return;
+                    if (!overridesFont() && !originals.containsKey(view)) return;
                     remember(view).variation = (String) p.args[0];
-                    if (family() > 0) p.setResult(false);
+                    if (overridesFont()) p.setResult(false);
                 }
             });
             // hot reload 后已有时钟未必重新 attach；测量前识别已有实例并应用字体。
@@ -114,7 +116,7 @@ public final class StatusBarFontHooks {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     TextView view = (TextView) p.thisObject;
                     if (isTarget(view)) applyStatusBarFont(view);
-                    if (family() > 0 && panelDateClass.isInstance(view)
+                    if (overridesFont() && panelDateClass.isInstance(view)
                             && view.getParent() instanceof ViewGroup parent) {
                         for (int i = 0; i < parent.getChildCount(); i++) {
                             View sibling = parent.getChildAt(i);
@@ -218,11 +220,15 @@ public final class StatusBarFontHooks {
 
     public static void applyStatusBarFont(TextView view) {
         if (Boolean.TRUE.equals(applying.get())) return;
+        // The native clock/date can update their Paint without setTypeface(). Do not
+        // overwrite those updates with a snapshot when no custom font was applied.
+        if (!overridesFont() && !originals.containsKey(view)) return;
         Original original = remember(view);
         Typeface selected = resolve(view, original.font);
         Typeface target = selected == null ? original.font : selected;
         applying.set(true);
         try {
+            if (selected != null && view.getFontVariationSettings() != null) view.setFontVariationSettings(null);
             if (view.getTypeface() != target) view.setTypeface(target);
             applyPanelMetrics(view, original, selected != null);
             if (selected == null && !Objects.equals(view.getFontVariationSettings(), original.variation))
@@ -231,20 +237,26 @@ public final class StatusBarFontHooks {
                 CharSequence text = view.getText(), aligned = alignColons(text, selected != null);
                 if (aligned != text) view.setText(aligned);
             }
+            if (selected == null) originals.remove(view);
         } finally { applying.remove(); }
     }
 
     private static int family() { return Math.max(0, Math.min(4, readInt(KEY_STATUS_BAR_FONT, 0))); }
+    private static boolean overridesFont() { return family() > 0 || readInt(KEY_STATUS_BAR_FONT_WEIGHT, 0) > 0; }
     private static Typeface resolve(TextView view, Typeface nativeFont) {
         return resolve(view.getContext(), nativeFont);
     }
 
     private static Typeface resolve(Context context, Typeface nativeFont) {
         int family = family();
-        if (family == 0) return null;
         try {
             int selectedWeight = readInt(KEY_STATUS_BAR_FONT_WEIGHT, 0) * 100;
-            int weight = selectedWeight == 0 ? 600 : selectedWeight;
+            if (family == 0) {
+                if (selectedWeight == 0) return null;
+                return Typeface.create(nativeFont, Math.max(100, Math.min(900, selectedWeight)),
+                        nativeFont != null && nativeFont.isItalic());
+            }
+            int weight = selectedWeight == 0 ? (nativeFont == null ? 400 : nativeFont.getWeight()) : selectedWeight;
             weight = Math.max(100, Math.min(900, weight));
             if (family == 2) weight = Math.max(200, Math.min(800, weight));
             if (family == 3) weight = Math.max(300, weight);

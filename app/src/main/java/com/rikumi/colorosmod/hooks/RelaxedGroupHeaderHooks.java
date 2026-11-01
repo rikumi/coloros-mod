@@ -85,11 +85,13 @@ final class RelaxedGroupHeaderHooks {
                     View.OnClickListener.class, boolean.class, new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) { if (enabled()) refresh(p.args[0]); }
                     });
-            XposedHelpers.findAndHookMethod(group, lp.classLoader, "measureOplusHeader", container,
+            String measure = NotificationLayoutCompat.hasMethod(XposedHelpers.findClass(group, lp.classLoader),
+                    "measureOplusHeader") ? "measureOplusHeader" : "measureOplusExpandHeader";
+            XposedHelpers.findAndHookMethod(group, lp.classLoader, measure, container,
                     int.class, int.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             if (!enabled()) return;
-                            Object view = XposedHelpers.getObjectField(p.thisObject, "opusGroupView");
+                            Object view = NotificationLayoutCompat.groupHeader(p.thisObject);
                             if (view instanceof FrameLayout header) alignHeader(p.args[0], p.thisObject, header);
                         }
                     });
@@ -133,7 +135,7 @@ final class RelaxedGroupHeaderHooks {
         try {
             Object extension = XposedHelpers.callMethod(container, "getExt");
             Object owner = XposedHelpers.getObjectField(extension, "oplusNotificationGroupExtImpl");
-            Object object = XposedHelpers.getObjectField(owner, "opusGroupView");
+            Object object = NotificationLayoutCompat.groupHeader(owner);
             if (!(object instanceof FrameLayout header)) return;
             Object original = XposedHelpers.callMethod(container, "getNotificationHeaderWrapper");
             if (original == null) return;
@@ -292,7 +294,7 @@ final class RelaxedGroupHeaderHooks {
         TextView name = reference == null ? null : reference.get();
         if (name == null) return 0;
         int height = name.getLineHeight() + Math.round(4 * name.getResources().getDisplayMetrics().density);
-        if (XposedHelpers.getBooleanField(group, "mUserLocked")) {
+        if (NotificationLayoutCompat.userLocked(group)) {
             Object row = XposedHelpers.callMethod(group, "getContainingNotification");
             Object extension = XposedHelpers.getObjectField(row, "mRowEx");
             float progress = ((Number) XposedHelpers.callMethod(extension, "getGroupExpansionProgress")).floatValue();

@@ -37,6 +37,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -84,6 +85,8 @@ import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.IconButton
 import io.github.suqi8.coui.kmp.basic.Slider
 import io.github.suqi8.coui.kmp.basic.SmallTitle
+import io.github.suqi8.coui.kmp.basic.SmallTitleDefaults
+import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
 import io.github.suqi8.coui.kmp.basic.ScrollBehavior
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Switch
@@ -124,6 +127,8 @@ internal val SETTINGS_CARD_CORNER = 12.dp
 
 // 分组左右外边距（相对屏幕边缘）。
 internal val SETTINGS_GROUP_HMARGIN = 16.dp
+internal val SETTINGS_GROUP_TITLE_START = SmallTitleDefaults.InsideMargin.calculateLeftPadding(LayoutDirection.Ltr)
+internal val LocalSettingsTitlePadding = staticCompositionLocalOf { TopAppBarDefaults.TitlePadding }
 
 // 卡片下方留白 = 相邻 section 之间的间距（首页卡片→卡片、子页面卡片→下一节小标题）。
 private val SETTINGS_CARD_BOTTOM_GAP = 16.dp
@@ -160,6 +165,7 @@ fun SettingsLargeTitle(
     SmallTopAppBar(
         title = title, subtitle = subtitle.orEmpty(), modifier = modifier,
         scrollBehavior = scrollBehavior, actions = actions,
+        titlePadding = LocalSettingsTitlePadding.current,
     )
 }
 
@@ -191,6 +197,7 @@ fun SettingsTopAppBar(
     SmallTopAppBar(
         title = title, modifier = modifier, scrollBehavior = scrollBehavior,
         navigationIcon = { navigationIcon?.invoke() }, actions = actions,
+        titlePadding = LocalSettingsTitlePadding.current,
     )
 }
 

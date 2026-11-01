@@ -10,11 +10,15 @@ final class MergedLandscapeGeometry {
     }
 
     static SplitPanels splitPanels(int available, float density, int outerMargin, int gap) {
+        return splitPanels(available, density, outerMargin, gap, false);
+    }
+
+    static SplitPanels splitPanels(int available, float density, int outerMargin, int gap, boolean equalColumns) {
         int width = Math.max(0, available);
         int margin = Math.min(Math.max(0, outerMargin), width / 2);
         int spacing = Math.min(Math.max(0, gap), width - 2 * margin);
         int maxQs = Math.max(1, Math.round(400f * density));
-        int maxNotifications = Math.max(1, Math.round(540f * density));
+        int maxNotifications = equalColumns ? maxQs : Math.max(1, Math.round(540f * density));
         int content = Math.min(width - 2 * margin - spacing, maxQs + maxNotifications);
         int qsWidth = Math.round(content * (maxQs / (float) (maxQs + maxNotifications)));
         int notificationWidth = content - qsWidth;
@@ -24,9 +28,14 @@ final class MergedLandscapeGeometry {
 
     static SplitPanels splitPanels(int available, float density, int outerMargin, int gap,
                                    int safeLeft, int safeRight) {
+        return splitPanels(available, density, outerMargin, gap, safeLeft, safeRight, false);
+    }
+
+    static SplitPanels splitPanels(int available, float density, int outerMargin, int gap,
+                                   int safeLeft, int safeRight, boolean equalColumns) {
         int left = Math.min(Math.max(0, safeLeft), Math.max(0, available));
         int right = Math.min(Math.max(0, safeRight), Math.max(0, available - left));
-        SplitPanels panels = splitPanels(available - left - right, density, outerMargin, gap);
+        SplitPanels panels = splitPanels(available - left - right, density, outerMargin, gap, equalColumns);
         return new SplitPanels(left + panels.notificationLeft(), panels.notificationWidth(),
                 left + panels.qsLeft(), panels.qsWidth());
     }

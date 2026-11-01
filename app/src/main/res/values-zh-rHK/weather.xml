@@ -23,4 +23,5 @@
     <string name="weather_hide_theme">移除主題換膚</string>
     <string name="weather_hide_voice">移除天氣語音播報按鈕</string>
     <string name="weather_navigation_padding">補齊底部導覽區域邊距</string>
+    <string name="weather_legacy_buttons">恢復舊版按鈕配置</string>
 </resources>

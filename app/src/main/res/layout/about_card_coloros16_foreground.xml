@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Legacy foreground from ColorOS 16; independent of the 17 binder's fixed offsets. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content" android:layout_height="wrap_content"
+    android:layout_alignParentTop="true" android:layout_centerHorizontal="true"
+    android:layout_marginTop="42dp" android:orientation="vertical"
+    android:tag="colorosmod:aboutcard:lin_center">
+    <TextView android:tag="colorosmod:aboutcard:device_market_name"
+        android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_marginStart="36dp" android:layout_marginEnd="36dp"
+        android:layout_gravity="center" android:gravity="center" android:maxLines="2"
+        android:textSize="16dp" android:fontFamily="sans-serif-medium" />
+    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_gravity="center" android:layout_marginTop="30dp" android:orientation="vertical">
+        <ImageView android:tag="colorosmod:aboutcard:coloros_logo"
+            android:layout_width="165dp" android:layout_height="34dp"
+            android:layout_gravity="center" />
+        <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_gravity="center" android:layout_marginTop="4dp" android:orientation="horizontal">
+            <TextView android:tag="colorosmod:aboutcard:model_build_number"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginTop="4dp" android:gravity="center"
+                android:textSize="16dp" android:fontFamily="sans-serif-medium" android:textDirection="locale" />
+            <TextView android:tag="colorosmod:aboutcard:model_ai"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:gravity="center" android:textSize="16sp" android:visibility="gone" />
+        </LinearLayout>
+    </LinearLayout>
+    <TextView android:tag="colorosmod:aboutcard:update_text"
+        android:layout_width="wrap_content" android:layout_height="44dp"
+        android:layout_gravity="center" android:layout_marginTop="47dp"
+        android:paddingTop="11dp" android:paddingBottom="11dp"
+        android:gravity="center" android:textSize="18dp" android:singleLine="true"
+        android:fontFamily="sans-serif-medium" android:visibility="gone" />
+    <TextView android:tag="colorosmod:aboutcard:update_find"
+        android:layout_width="160dp" android:layout_height="44dp"
+        android:layout_gravity="center" android:layout_marginTop="47dp"
+        android:paddingStart="10dp" android:paddingEnd="10dp"
+        android:gravity="center" android:textSize="16dp" android:singleLine="true"
+        android:ellipsize="end" android:fontFamily="sans-serif-medium" android:visibility="gone" />
+</LinearLayout>

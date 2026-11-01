@@ -48,7 +48,7 @@ final class LegacyGroupContentHooks {
                     Object parent = XposedHelpers.callMethod(p.thisObject, "getView");
                     if (parent == null || !XposedHelpers.getBooleanField(parent, "mIsSummaryWithChildren")) return;
                     Object container = XposedHelpers.getObjectField(parent, "mChildrenContainer");
-                    if (container == null || XposedHelpers.getBooleanField(container, "mUserLocked")) return;
+                    if (container == null || NotificationLayoutCompat.userLocked(container)) return;
                     java.util.List<?> children = (java.util.List<?>) XposedHelpers.callMethod(container, "getAttachedChildren");
 
                     for (Object child : children) select(child, false);
@@ -58,7 +58,7 @@ final class LegacyGroupContentHooks {
     }
 
     private static void select(Object row, boolean animate) {
-        if (XposedHelpers.getBooleanField(row, "mUserLocked")) return;
+        if (NotificationLayoutCompat.userLocked(row)) return;
         Object content = XposedHelpers.getObjectField(row, "mPrivateLayout");
         if (content != null) XposedHelpers.callMethod(content, "selectLayout", animate, !animate);
     }

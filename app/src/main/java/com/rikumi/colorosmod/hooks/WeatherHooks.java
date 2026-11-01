@@ -16,6 +16,7 @@ public final class WeatherHooks {
     private WeatherHooks() {}
 
     static boolean enabled(String key) { return readBool("weather_" + key, false); }
+    static boolean usingOverseasApi() { return readInt("weather_api_region", 0) == 2; }
 
     interface Callback { void run(XC_MethodHook.MethodHookParam param) throws Throwable; }
 
@@ -85,7 +86,15 @@ public final class WeatherHooks {
         hook(cl, "main.skin.ThemeUtil", "isShowThemeIcon", false,
                 p -> { if (enabled("hide_theme")) p.setResult(false); });
         hook(cl, "main.view.itemview.TodayWeatherItem", "getVoiceVisible", false,
-                p -> { if (enabled("hide_voice")) p.setResult(View.GONE); });
+                p -> { if (enabled("hide_voice") || usingOverseasApi()) p.setResult(View.GONE); });
+        hook(cl, "main.model.WeatherWrapper", "isSupportPrecipitationCloudMap", true,
+                p -> { if (usingOverseasApi()) p.setResult(false); });
+        // Weather 17 also exposes voice broadcast in the title bar, outside TodayWeatherItem.
+        String titleBarVoice = "main.home.quality.feel.HomeTitleBarVoiceBroadcastHelper";
+        if (XposedHelpers.findClassIfExists(BASE + titleBarVoice, cl) != null) {
+            hook(cl, titleBarVoice, "isVoiceEntrySupported", true,
+                    p -> { if (enabled("hide_voice") || usingOverseasApi()) p.setResult(false); });
+        }
         hook(cl, "main.view.WeatherFragment", "onViewCreated", false, p -> {
             View list = (View) XposedHelpers.callMethod(p.thisObject, "getBindingRecyclerView");
             if (list == null || XposedHelpers.getAdditionalInstanceField(list, NAV_PADDING_STATE) != null) return;
@@ -97,7 +106,10 @@ public final class WeatherHooks {
         hookApi(cl);
         hookMeteorologyBackground(cl);
         WeatherForecastHooks.install(cl);
+        WeatherLegacyButtonsHooks.install(cl);
     }
+
+    public static void cleanupForHotReload() { WeatherLegacyButtonsHooks.cleanupForHotReload(); }
 
     private static final String NAV_PADDING_STATE = "colorosmod.weather.navigationPadding";
 

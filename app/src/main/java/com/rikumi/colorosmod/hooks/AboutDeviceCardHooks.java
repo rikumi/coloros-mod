@@ -150,9 +150,18 @@ public final class AboutDeviceCardHooks {
         // Inflate the ROM's own foreground hierarchy instead of approximating its
         // typography, spacing, order, dark-mode resources or tablet qualifiers.
         ViewGroup card = (ViewGroup) LayoutInflater.from(host).inflate(layout, root, false);
+        int artwork = selected == 4 ? AboutCardStyleResolver.resolve(
+                systemProperty("ro.oplus.image.system_ext.area"),
+                systemProperty("ro.oplus.image.system_ext.brand"),
+                systemProperty("ro.build.version.ota"),
+                systemProperty("ro.build.version.oplusrom.display"),
+                systemProperty("ro.build.version.oplusrom"), Build.DISPLAY) : selected;
+        boolean style17 = artwork == 9;
+        // 17's XML is only a skeleton: its binder sets logo offsets and moves
+        // update controls outside lin_center. It cannot present a legacy style.
+        boolean native17 = find(card, "device_build_number_row", View.class) != null;
         if (selected == 5 || selected == 7) {
-            View originalContent = find(card, "lin_center", View.class);
-            if (originalContent != null) card.removeView(originalContent);
+            removeForeground(card);
             View legacyContent = LayoutInflater.from(module).inflate(R.layout.about_card_oxygenos15_foreground, card, false);
             ImageView phoneBrand = legacyContent.findViewById(R.id.about_card15_phone_brand);
             if (phoneBrand != null) {
@@ -166,16 +175,13 @@ public final class AboutDeviceCardHooks {
             }
             card.addView(legacyContent);
         }
-        boolean straightPhone = selected != 9 || isStraightPhone(host);
-        if (selected == 9) {
-            View originalContent = find(card, "lin_center", View.class);
-            if (originalContent != null) card.removeView(originalContent);
-            // 17 moves update controls outside lin_center. Include them in the replacement group.
-            hide(card, "update_text"); hide(card, "update_find");
-            View nativeStatus = find(card, "update_text", View.class);
-            View nativeUpdate = find(card, "update_find", View.class);
-            if (nativeStatus != null && nativeStatus.getParent() instanceof ViewGroup parent) parent.removeView(nativeStatus);
-            if (nativeUpdate != null && nativeUpdate.getParent() instanceof ViewGroup parent) parent.removeView(nativeUpdate);
+        if (native17 && !style17 && selected != 5 && selected != 7) {
+            removeForeground(card);
+            card.addView(LayoutInflater.from(module).inflate(R.layout.about_card_coloros16_foreground, card, false));
+        }
+        boolean straightPhone = !style17 || isStraightPhone(host);
+        if (style17) {
+            removeForeground(card);
             ViewGroup content = (ViewGroup) LayoutInflater.from(module).inflate(R.layout.about_card_coloros17_foreground, card, false);
             View brandGroup = content.findViewById(R.id.about_card17_brand_group);
             if (brandGroup != null && brandGroup.getLayoutParams() instanceof ViewGroup.MarginLayoutParams margins) {
@@ -203,12 +209,6 @@ public final class AboutDeviceCardHooks {
         Resources resources = module.getResources();
         boolean tabletLandscape = host.getResources().getConfiguration().smallestScreenWidthDp >= 600
                 && host.getResources().getConfiguration().orientation == 2;
-        int artwork = selected == 4 ? AboutCardStyleResolver.resolve(
-                systemProperty("ro.oplus.image.system_ext.area"),
-                systemProperty("ro.oplus.image.system_ext.brand"),
-                systemProperty("ro.build.version.ota"),
-                systemProperty("ro.build.version.oplusrom.display"),
-                systemProperty("ro.build.version.oplusrom"), Build.DISPLAY) : selected;
         int bg = AboutCardStyleResolver.backgroundResource(artwork, tabletLandscape);
         int brand = switch (artwork) {
             case 2 -> R.drawable.about_card_logo_coloros15;
@@ -225,16 +225,19 @@ public final class AboutDeviceCardHooks {
         logo.setImageDrawable(resources.getDrawable(brand, module.getTheme()));
         logo.setVisibility(View.VISIBLE);
         ViewGroup.LayoutParams logoParams = logo.getLayoutParams();
-        logoParams.width = dp(host, selected == 9 ? 220 : selected == 8 ? 193 : selected == 7 ? 69 : selected == 5 ? 74 : selected == 3 ? 179 : 165);
-        logoParams.height = dp(host, selected == 9 ? 60 : selected == 7 ? 13 : selected == 5 ? 17 : 34);
+        logoParams.width = dp(host, style17 ? 220 : selected == 8 ? 193 : selected == 7 ? 69 : selected == 5 ? 74 : selected == 3 ? 179 : 165);
+        logoParams.height = dp(host, style17 ? 60 : selected == 7 ? 13 : selected == 5 ? 17 : 34);
         logo.setLayoutParams(logoParams);
         View nativeCard = find(card, "about_device_top_video_card", View.class);
         if (nativeCard != null) XposedHelpers.callMethod(nativeCard, "setCardBackgroundColor",
                 artwork == 3 || artwork == 5 ? 0xff010103 : 0x99ffffff);
-        int color = selected == 9 ? 0xd9ffffff : artwork == 5 ? module.getColor(R.color.about_card15_text_color)
+        int color = style17 ? 0xd9ffffff : artwork == 5 ? module.getColor(R.color.about_card15_text_color)
                 : artwork == 2 || artwork == 7 || artwork == 8 ? Color.WHITE : 0xffffddeb;
         version.setTextColor(color);
-        if (name != null) name.setTextColor(color);
+        if (name != null) {
+            if (native17 && name.getText().length() == 0) name.setText(legacyDeviceName(host));
+            name.setTextColor(color);
+        }
         if (selected == 5 || selected == 7) {
             version.setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 14);
             version.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
@@ -243,7 +246,7 @@ public final class AboutDeviceCardHooks {
                 name.setTypeface(Typeface.create("sans-serif-semibold", Typeface.NORMAL));
             }
         }
-        if (selected == 9) {
+        if (style17) {
             version.setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 16);
             version.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         }
@@ -257,11 +260,12 @@ public final class AboutDeviceCardHooks {
                     systemProperty("ro.build.version.oplusrom.display"),
                     systemProperty("ro.build.version.oplusrom"), Build.DISPLAY, version.getText().toString()));
         }
-        if (selected == 4) addModLabel(logo, color, artwork == 6 ? 0f : 34f / 36f);
+        // The 17 logo's opaque lettering starts at y=19 in the 183px source.
+        if (selected == 4) addModLabel(logo, color, style17 ? 19f * 60f / 183f : artwork == 6 ? 0f : 34f / 36f);
         boolean hasUpdater = updaterAvailable(host, preference);
         // Adding/removing a compound drawable changes the measured width of this
         // centered row; no empty arrow slot remains when the updater is absent.
-        Drawable arrow = hasUpdater && selected != 9 ? resources.getDrawable(R.drawable.about_card_version_arrow, module.getTheme()) : null;
+        Drawable arrow = hasUpdater && !style17 ? resources.getDrawable(R.drawable.about_card_version_arrow, module.getTheme()) : null;
         if (arrow != null) {
             arrow = arrow.mutate();
             arrow.setTint(color);
@@ -276,35 +280,40 @@ public final class AboutDeviceCardHooks {
         if (version.getParent() instanceof LinearLayout row) row.setGravity(Gravity.CENTER);
         TextView status = find(card, "update_text", TextView.class);
         if (status != null) {
+            if (native17 && !style17 && selected != 5 && selected != 7)
+                status.setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 18);
             if (!hasUpdater) {
                 int latest = host.getResources().getIdentifier("about_phone_already_last_version", "string", host.getPackageName());
                 status.setText(latest != 0 ? host.getString(latest) : module.getString(R.string.ui_about_card_latest));
                 status.setVisibility(View.VISIBLE);
                 status.setClickable(false);
             }
-            status.setTextColor(selected == 9 ? Color.WHITE : artwork == 5 || selected == 7 ? color : 0xe6ffffff);
-            if (selected == 9) style17Status(status, module, false);
+            status.setTextColor(style17 ? Color.WHITE : artwork == 5 || selected == 7 ? color : 0xe6ffffff);
+            if (style17) style17Status(status, module, false);
         }
         if (!hasUpdater) hide(card, "update_find");
         else {
             TextView update = find(card, "update_find", TextView.class);
             if (update != null) {
-                if (selected == 9) style17Status(update, module, true);
+                if (style17) style17Status(update, module, true);
                 else if (selected == 5 || selected == 7) {
                     update.setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 8);
                     update.setTypeface(Typeface.create("sans-serif-semibold", Typeface.BOLD));
                     update.setTextColor(color);
-                } else styleUpdateButton(update, artwork);
+                } else {
+                    if (native17) update.setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 16);
+                    styleUpdateButton(update, artwork);
+                }
                 update.setOnClickListener(v -> XposedHelpers.callMethod(preference, "performClick"));
             }
         }
         Binding binding = new Binding(root);
         bindings.put(root, binding);
-        if (selected == 9) {
+        if (style17 || native17) {
             ViewGroup.LayoutParams rootParams = root.getLayoutParams();
-            rootParams.height = dp(host, straightPhone ? 328 : 240);
+            rootParams.height = dp(host, style17 ? (straightPhone ? 328 : 240) : 280);
             root.setLayoutParams(rootParams);
-            float radius = dp(host, straightPhone ? 28 : 24);
+            float radius = dp(host, style17 ? (straightPhone ? 28 : 24) : 16);
             ViewOutlineProvider outline = new ViewOutlineProvider() {
                 @Override public void getOutline(View view, Outline shape) {
                     shape.setRoundRect(0, 0, view.getWidth(), view.getHeight(), radius);
@@ -331,6 +340,22 @@ public final class AboutDeviceCardHooks {
         root.addView(card);
         root.setClickable(hasUpdater);
         binding.replacement = new WeakReference<>(card);
+    }
+
+    private static void removeForeground(ViewGroup card) {
+        for (String name : new String[]{"lin_center", "update_text", "update_find"}) {
+            View view = find(card, name, View.class);
+            if (view != null && view.getParent() instanceof ViewGroup parent) parent.removeView(view);
+        }
+    }
+
+    private static String legacyDeviceName(Context host) {
+        try {
+            Class<?> info = XposedHelpers.findClass("com.oplus.settings.utils.OplusDeviceInfoUtils", host.getClassLoader());
+            String name = (String) XposedHelpers.callStaticMethod(info, "getOplusMarketName");
+            if (name != null && !name.isEmpty()) return name;
+        } catch (Throwable unavailable) { }
+        return Build.MODEL;
     }
 
     private static boolean isStraightPhone(Context host) {

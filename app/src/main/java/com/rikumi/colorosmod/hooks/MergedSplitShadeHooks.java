@@ -113,7 +113,7 @@ final class MergedSplitShadeHooks {
                         layout.apply(root, View.MeasureSpec.getSize(spec));
                 }
             });
-            XposedHelpers.findAndHookMethod("com.android.systemui.qs.QSImpl", pkg.classLoader,
+            XposedHelpers.findAndHookMethod(QsClassCompat.find("com.android.systemui.qs.QSImpl", pkg.classLoader),
                     "setQsExpansion", float.class, float.class, float.class, float.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             View view = (View) XposedHelpers.callMethod(p.thisObject, "getView");
@@ -407,7 +407,7 @@ final class MergedSplitShadeHooks {
                     - (root.getRootView().getWidth() - safe.right));
             MergedLandscapeGeometry.SplitPanels panels = MergedLandscapeGeometry.splitPanels(
                     available, root.getResources().getDisplayMetrics().density, outerMargin, gap,
-                    safeLeft, safeRight);
+                    safeLeft, safeRight, root.getResources().getConfiguration().smallestScreenWidthDp < 600);
             Object originalQs = XposedHelpers.callMethod(original, "getConstraint", qs);
             int nativeTop = XposedHelpers.getIntField(XposedHelpers.getObjectField(originalQs, "layout"), "topMargin");
             int top = Math.max(nativeTop, safe.top - location[1] - root.getPaddingTop());

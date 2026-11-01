@@ -42,6 +42,22 @@ final class LegacyFrameworkNotificationTemplates {
 
     long dimension(int id) {
         Resource resource = resources.get(id);
+        // These Android 15 dimensions are aliases, rather than literal values
+        // in the asset index. Android 17 removed them; resolve within the bundle.
+        if (resource != null && resource.type.equals("dimen") && resource.dimension == null) {
+            String target = switch (resource.name) {
+                case "media_notification_header_height" -> "notification_header_height";
+                case "notification_left_icon_start" -> "notification_icon_circle_start";
+                case "notification_alerted_size", "notification_phishing_alert_size",
+                        "notification_verification_icon_size" -> "notification_badge_size";
+                default -> null;
+            };
+            if (target != null) for (Resource candidate : resources.values())
+                if (candidate.type.equals("dimen") && candidate.name.equals(target)) {
+                    resource = candidate;
+                    break;
+                }
+        }
         return resource != null && resource.dimension != null ? (5L << 32) | resource.dimension : -1L;
     }
 }

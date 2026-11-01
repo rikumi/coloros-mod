@@ -158,9 +158,9 @@ public final class NotificationHooks {
                                                 final float density) {
         try {
             // 限定本类声明: 上溯会命中父类, 影响面变大且语义不明确。
-            XposedHelpers.findAndHookDeclaredMethod(
-                    "com.android.systemui.statusbar.notification.row.ExpandableNotificationRow",
-                    lpparam.classLoader, "onNotificationUpdated",
+            Class<?> rowClass = XposedHelpers.findClass(
+                    "com.android.systemui.statusbar.notification.row.ExpandableNotificationRow", lpparam.classLoader);
+            NotificationLayoutCompat.optionalHook(rowClass, "onNotificationUpdated",
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -195,21 +195,25 @@ public final class NotificationHooks {
             String contentClass = "com.android.systemui.statusbar.notification.row.NotificationContentView";
             XC_MethodHook bindPadding = new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
-                    try {
-                        Object row = XposedHelpers.getObjectField(param.thisObject, "mContainingNotification");
-                        boolean minimized = !sNotifPadEnabled || (row != null
-                                && XposedHelpers.getBooleanField(row, "mIsMinimized"));
-                        applyNotificationChildPadding(param.thisObject, minimized, sNotifPadPx);
-                    } catch (Throwable error) { log("notification template padding failed: " + error); }
+                    updateContentPadding(param.thisObject, density);
                 }
             };
+            // Android 17 removed Row.onNotificationUpdated and moved binding into
+            // NotificationRowContentBinderImpl. Cached settings are safe here and
+            // also cover reused RemoteViews and settings changes before rebinding.
+            XposedHelpers.findAndHookMethod(contentClass, lpparam.classLoader, "onMeasure",
+                    int.class, int.class, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            updateContentPadding(p.thisObject, density);
+                        }
+                    });
             for (String method : new String[]{"setContractedChild", "setExpandedChild", "setHeadsUpChild"}) {
                 XposedHelpers.findAndHookMethod(contentClass, lpparam.classLoader, method,
                         android.view.View.class, bindPadding);
             }
             XposedHelpers.findAndHookMethod(contentClass, lpparam.classLoader, "setSingleLineView",
                     XposedHelpers.findClass("com.android.systemui.statusbar.notification.row.HybridNotificationView", lpparam.classLoader), bindPadding);
-            XposedHelpers.findAndHookMethod(contentClass, lpparam.classLoader,
+            NotificationLayoutCompat.optionalHook(XposedHelpers.findClass(contentClass, lpparam.classLoader),
                     "updateAllSingleLineViews", bindPadding);
             XposedHelpers.findAndHookMethod(contentClass, lpparam.classLoader,
                     "setIsChildInGroup", boolean.class, bindPadding);
@@ -716,6 +720,17 @@ public final class NotificationHooks {
         } catch (Throwable t) {
             return false;
         }
+    }
+
+    private static void updateContentPadding(Object content, float density) {
+        try {
+            sNotifPadEnabled = readBoolCached(KEY_NOTIFICATION_PADDING_ENABLED, false);
+            sNotifPadPx = Math.round(Math.max(0, Math.min(8,
+                    readIntCached(KEY_NOTIFICATION_PADDING_DP, NOTIFICATION_PADDING_DP))) * density);
+            Object row = XposedHelpers.getObjectField(content, "mContainingNotification");
+            boolean minimized = !sNotifPadEnabled || (row != null && XposedHelpers.getBooleanField(row, "mIsMinimized"));
+            applyNotificationChildPadding(content, minimized, sNotifPadPx);
+        } catch (Throwable error) { log("notification template padding failed: " + error); }
     }
 
     static void applyNotificationChildPadding(Object contentView, boolean minimized, int padPx) {

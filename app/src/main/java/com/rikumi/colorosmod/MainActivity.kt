@@ -398,7 +398,7 @@ private val LOCKSCREEN: List<SettingsItem> = listOf(
         defaultValue = 1, masterManaged = true, masterEnabledValue = 1),
     SwitchItem("keyguard_clock_monospace", R.string.ui_keyguard_clock_monospace, defaultEnabled = true),
     SwitchItem("keyguard_clock_spacing_enabled", R.string.ui_keyguard_clock_spacing,
-        sliderKey = "keyguard_clock_spacing", sliderMin = -10, sliderMax = 10, sliderDefault = -4,
+        sliderKey = "keyguard_clock_spacing", sliderMin = -6, sliderMax = 14, sliderDefault = 0,
         sliderDisplayScale = 0.01f, sliderUnit = "em", defaultEnabled = true),
     SelectItem("keyguard_clock_weight", R.string.ui_keyguard_clock_weight,
         listOf(R.string.ui_option_follow_system, R.string.ui_weight_100, R.string.ui_weight_200, R.string.ui_weight_300,
@@ -456,6 +456,7 @@ private val PURIFICATION: List<SettingsItem> = listOf(
     SwitchItem("weather_hide_operations", R.string.weather_hide_operations),
     SwitchItem("weather_hide_meteorology_bg", R.string.weather_hide_meteorology_bg),
     SwitchItem("weather_navigation_padding", R.string.weather_navigation_padding),
+    SwitchItem("weather_legacy_buttons", R.string.weather_legacy_buttons),
     SwitchItem("weather_hide_voice", R.string.weather_hide_voice),
     SwitchItem("weather_hide_theme", R.string.weather_hide_theme),
     SwitchItem("weather_legacy_background", R.string.weather_legacy_background),
@@ -709,23 +710,25 @@ fun SettingsScreen(resumeRequest: Int = 0) {
                     .weight(TABLET_LEFT_PANE_WEIGHT)
                     .fillMaxHeight(),
             ) {
-                HomeScreen(
-                    cardStyle = cardStyle,
-                    bannerCache = bannerCache,
-                    missingScopes = missingScopes,
-                    masterChecked = masterOverride.valueFor(null) ?: anyEnabled,
-                    onMasterChange = { onMasterChange(null, it) },
-                    // 桌面设置是右栏默认页, 点击它回到 null 以保持返回键能退出。
-                    onOpenCategory = { id -> navigate(if (id == "desktop") null else id) },
-                    selectedCategoryId = when (openCategoryId) {
-                        HIDDEN_LAUNCHER_APPS_ID -> "hidden_apps"
-                        NAVIGATION_APPS_ID -> "navigation"
-                        FONT_APPS_ID -> "system_fonts"
-                        LICENSES_PAGE -> ABOUT_PAGE
-                        else -> openCategoryId ?: "desktop"
-                    },
-                    showRestartMenu = false,
-                )
+                CompositionLocalProvider(LocalSettingsTitlePadding provides (LocalSettingsTitlePadding.current + 4.dp)) {
+                    HomeScreen(
+                        cardStyle = cardStyle,
+                        bannerCache = bannerCache,
+                        missingScopes = missingScopes,
+                        masterChecked = masterOverride.valueFor(null) ?: anyEnabled,
+                        onMasterChange = { onMasterChange(null, it) },
+                        // 桌面设置是右栏默认页, 点击它回到 null 以保持返回键能退出。
+                        onOpenCategory = { id -> navigate(if (id == "desktop") null else id) },
+                        selectedCategoryId = when (openCategoryId) {
+                            HIDDEN_LAUNCHER_APPS_ID -> "hidden_apps"
+                            NAVIGATION_APPS_ID -> "navigation"
+                            FONT_APPS_ID -> "system_fonts"
+                            LICENSES_PAGE -> ABOUT_PAGE
+                            else -> openCategoryId ?: "desktop"
+                        },
+                        showRestartMenu = false,
+                    )
+                }
             }
             Box(
                 Modifier
@@ -734,18 +737,20 @@ fun SettingsScreen(resumeRequest: Int = 0) {
                     .background(COUITheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.16f)),
             )
             Column(Modifier.weight(TABLET_RIGHT_PANE_WEIGHT).fillMaxHeight()) {
-                SettingsPageHost(openCategoryId, onBackCompleted = { openCategoryId = it }) { targetId ->
-                    DetailPane(
-                        targetId = targetId ?: "desktop",
-                        ctx = ctx,
-                        prefs = prefs,
-                        version = version,
-                        masterOverride = masterOverride,
-                        onMasterChange = onMasterChange,
-                        onItemChanged = { version++ },
-                        navigate = navigate,
-                        showBack = false,
-                    )
+                CompositionLocalProvider(LocalSettingsTitlePadding provides SETTINGS_GROUP_TITLE_START) {
+                    SettingsPageHost(openCategoryId, onBackCompleted = { openCategoryId = it }) { targetId ->
+                        DetailPane(
+                            targetId = targetId ?: "desktop",
+                            ctx = ctx,
+                            prefs = prefs,
+                            version = version,
+                            masterOverride = masterOverride,
+                            onMasterChange = onMasterChange,
+                            onItemChanged = { version++ },
+                            navigate = navigate,
+                            showBack = false,
+                        )
+                    }
                 }
             }
         }
@@ -1463,6 +1468,7 @@ internal fun Context.settingsPrefs(): SharedPreferences {
         SettingsProvider.notifySettingsChanged(this)
     }
     SettingsProvider.migrateNotificationIconPrefs(this, de)
+    SettingsProvider.migrateKeyguardClockSpacing(this, de)
     if (!de.contains("statusbar_lyric_mode")
             && (de.contains("statusbar_lyric_enabled") || de.contains("fluid_cloud_lyric_enabled"))) {
         val mode = when {

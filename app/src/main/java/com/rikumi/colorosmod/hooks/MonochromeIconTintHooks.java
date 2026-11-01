@@ -4,6 +4,7 @@ import android.graphics.Canvas;
 import android.view.View;
 import java.util.ArrayList;
 import java.util.WeakHashMap;
+import java.lang.reflect.Method;
 import com.rikumi.colorosmod.xposed.XC_LoadPackage;
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
@@ -11,10 +12,17 @@ import static com.rikumi.colorosmod.XposedInit.log;
 
 final class MonochromeIconTintHooks {
     private static final WeakHashMap<View, Boolean> nativeColorable = new WeakHashMap<>();
+    private static Method updateIconColor;
 
     static void hook(XC_LoadPackage.LoadPackageParam lp) {
         try {
             String type = "com.android.systemui.statusbar.StatusBarIconView";
+            Class<?> iconClass = XposedHelpers.findClass(type, lp.classLoader);
+            try { updateIconColor = iconClass.getDeclaredMethod("updateIconColor"); }
+            catch (NoSuchMethodException renamed) {
+                updateIconColor = iconClass.getDeclaredMethod("updateIconColor$1");
+            }
+            updateIconColor.setAccessible(true);
             XposedHelpers.findAndHookMethod(type, lp.classLoader, "setIsIconColorable", boolean.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     View view = (View) p.thisObject;
@@ -23,7 +31,7 @@ final class MonochromeIconTintHooks {
                     if (mask) p.args[0] = true;
                 }
             });
-            XposedHelpers.findAndHookMethod(type, lp.classLoader, "updateIconColor", new XC_MethodHook() {
+            com.rikumi.colorosmod.xposed.XposedBridge.hookMethod(updateIconColor, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     prepare((View) p.thisObject);
                 }
@@ -34,10 +42,16 @@ final class MonochromeIconTintHooks {
                     View view = (View) p.thisObject;
                     boolean wasTracked = nativeColorable.containsKey(view);
                     boolean old = XposedHelpers.getBooleanField(view, "mIsIconColorable");
-                    if (prepare(view) && (!wasTracked || !old)) XposedHelpers.callMethod(view, "updateIconColor");
+                    if (prepare(view) && (!wasTracked || !old)) updateColor(view);
                 }
             });
         } catch (Throwable error) { log("monochrome icon tint hook failed: " + error); }
+    }
+
+    private static void updateColor(View view) {
+        if (updateIconColor == null) return;
+        try { updateIconColor.invoke(view); }
+        catch (ReflectiveOperationException error) { log("monochrome icon color refresh failed: " + error); }
     }
 
     private static boolean prepare(View view) {
@@ -55,7 +69,7 @@ final class MonochromeIconTintHooks {
     static void refresh() {
         for (View view : new ArrayList<>(nativeColorable.keySet())) {
             prepare(view);
-            XposedHelpers.callMethod(view, "updateIconColor");
+            updateColor(view);
             view.invalidate();
         }
     }
@@ -65,7 +79,7 @@ final class MonochromeIconTintHooks {
         nativeColorable.clear();
         for (var entry : saved.entrySet()) {
             XposedHelpers.setBooleanField(entry.getKey(), "mIsIconColorable", entry.getValue());
-            XposedHelpers.callMethod(entry.getKey(), "updateIconColor");
+            updateColor(entry.getKey());
             entry.getKey().invalidate();
         }
     }

@@ -38,7 +38,7 @@ final class LegacyNotificationXml {
                     int valueType = bytes[value + 3] & 255;
                     if (valueType == 1 || valueType == 2 || valueType == 7 || valueType == 8) {
                         int id = xml.getInt(value + 4);
-                        long replacement = valueType == 1 ? literal.applyAsLong(id) : -1L;
+                        long replacement = valueType == 1 || valueType == 2 ? literal.applyAsLong(id) : -1L;
                         if (replacement != -1L) {
                             bytes[value + 3] = (byte) (replacement >>> 32);
                             xml.putInt(value + 4, (int) replacement);

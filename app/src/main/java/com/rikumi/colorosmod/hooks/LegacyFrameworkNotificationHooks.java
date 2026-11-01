@@ -14,13 +14,52 @@ final class LegacyFrameworkNotificationHooks {
     static final String ASSET = "legacy_framework_notifications_15.zip";
     private static volatile LegacyFrameworkNotificationTemplates templates;
     private static boolean errorLogged;
+    private static final java.util.concurrent.ConcurrentHashMap<Integer, String> virtualLayouts = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<Integer, Integer> missingIds = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.atomic.AtomicInteger nextId = new java.util.concurrent.atomic.AtomicInteger(0x01fe0000);
+
+    private static int missingResource(Resources current, int oldId, LegacyFrameworkNotificationTemplates.Resource resource) {
+        if (resource.type().equals("id")) return missingIds.computeIfAbsent(oldId, ignored -> nextId.getAndIncrement());
+        if (resource.type().equals("layout")) {
+            int id = missingIds.computeIfAbsent(oldId, ignored -> nextId.getAndIncrement());
+            virtualLayouts.put(id, resource.name());
+            return id;
+        }
+        if (resource.name().equals("notificationHeaderAppNameVisibility")
+                || resource.name().equals("Theme.DeviceDefault.Notification")) return 0;
+        if (resource.name().equals("TextAppearance.DeviceDefault.Notification.BigTitle"))
+            return current.getIdentifier("TextAppearance.DeviceDefault.Notification.Title", "style", "android");
+        throw new IllegalArgumentException("Missing framework resource " + resource.type() + "/" + resource.name());
+    }
 
     static void hook(XC_LoadPackage.LoadPackageParam lp) {
+        LegacyNotificationGeometry.hook(lp);
         hookHeaderParentCompatibility(lp);
         LegacyMessagingSpacingHooks.hook(lp);
         RelaxedNotificationHooks.hook(lp);
         RelaxedGroupHeaderHooks.hook(lp);
         try {
+            // Enter getLayout explicitly: the platform inflater may inline it or
+            // return a pre-inflated ColorOS view before the resource hook runs.
+            XposedHelpers.findAndHookMethod(android.view.LayoutInflater.class, "inflate", int.class,
+                    android.view.ViewGroup.class, boolean.class, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                            int mode = readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT);
+                            if (mode != 1 && mode != 2) return;
+                            int id = (Integer) p.args[0];
+                            if ((id >>> 24) != 1) return;
+                            android.view.LayoutInflater inflater = (android.view.LayoutInflater) p.thisObject;
+                            Resources resources = inflater.getContext().getResources();
+                            if (!resources.getResourceEntryName(id).startsWith("notification_")) return;
+                            try (android.content.res.XmlResourceParser parser = resources.getLayout(id)) {
+                                p.setResult(inflater.inflate(parser, (android.view.ViewGroup) p.args[1], (Boolean) p.args[2]));
+                            }
+                        }
+                    });
+            // getLayout() is inlined into include inflation on Android 17. Re-enter
+            // its hook for nested legacy templates as well as the outer RemoteViews.
+            com.rikumi.colorosmod.xposed.XposedBridge.hookAllMethods(android.view.LayoutInflater.class,
+                    "parseInclude", new XC_MethodHook() {});
             XposedHelpers.findAndHookMethod(Resources.class, "getLayout", int.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     if (readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) != 1) return;
@@ -28,7 +67,8 @@ final class LegacyFrameworkNotificationHooks {
                     if ((id >>> 24) != 1) return;
                     try {
                         Resources current = (Resources) p.thisObject;
-                        String name = current.getResourceEntryName(id);
+                        String name = virtualLayouts.get(id);
+                        if (name == null) name = NotificationLayoutCompat.legacyLayout(current.getResourceEntryName(id));
 
                         if ("notification_expand_button".equals(name)) return;
                         if (!name.startsWith("notification_") && !name.equals("conversation_face_pile_layout")) return;
@@ -41,10 +81,18 @@ final class LegacyFrameworkNotificationHooks {
                             LegacyFrameworkNotificationTemplates.Resource resource = bundle.resources.get(oldId);
                             if (resource == null) throw new IllegalArgumentException("Unknown old framework ID " + oldId);
                             int mappedId = current.getIdentifier(resource.name(), resource.type(), "android");
-                            if (mappedId == 0) throw new IllegalArgumentException("Missing framework resource " + resource.type() + "/" + resource.name());
+                            if (mappedId == 0) mappedId = missingResource(current, oldId, resource);
                             return mappedId;
-                        }, bundle::dimension);
-                        p.setResult(LegacyNotificationLayoutHooks.parseXml(mapped));
+                        }, oldId -> {
+                            var resource = bundle.resources.get(oldId);
+                            if (resource != null && resource.name().equals("notificationHeaderAppNameVisibility")
+                                    && current.getIdentifier(resource.name(), resource.type(), "android") == 0)
+                                return 16L << 32; // Removed theme attribute: View.VISIBLE, not unresolved ?0.
+                            return bundle.dimension(oldId);
+                        });
+                        Object parser = LegacyNotificationLayoutHooks.parseXml(mapped);
+                        LegacyNotificationGeometry.mark(parser);
+                        p.setResult(parser);
                     } catch (Throwable error) {
                         if (!errorLogged) {
                             errorLogged = true;
@@ -54,7 +102,8 @@ final class LegacyFrameworkNotificationHooks {
                 }
             });
 
-            XposedHelpers.findAndHookMethod("android.app.Flags", lp.classLoader,
+            Class<?> flags = XposedHelpers.findClassIfExists("android.app.Flags", lp.classLoader);
+            if (flags != null) NotificationLayoutCompat.optionalHook(flags,
                     "notificationsRedesignTemplates", new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             if (readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) == 1) p.setResult(false);
@@ -74,7 +123,7 @@ final class LegacyFrameworkNotificationHooks {
                     XposedHelpers.findClass("android.app.Notification$TemplateBindResult", lp.classLoader),
                     new XC_MethodHook() { });
             String wrapper = "com.oplus.systemui.statusbar.notification.row.wrapper.OplusNotificationTemplateViewWrapperExImpl";
-            XposedHelpers.findAndHookMethod(wrapper, lp.classLoader, "resolveContentMargin", boolean.class,
+            NotificationLayoutCompat.optionalHook(XposedHelpers.findClass(wrapper, lp.classLoader), "resolveContentMargin", boolean.class,
                     new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
 

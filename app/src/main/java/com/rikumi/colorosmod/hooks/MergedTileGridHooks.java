@@ -35,9 +35,9 @@ final class MergedTileGridHooks {
     static void hook(XC_LoadPackage.LoadPackageParam pkg) {
         hookCustomizerMinimum(pkg);
         try {
-            tileClass = XposedHelpers.findClass("com.android.systemui.qs.TileLayout", pkg.classLoader);
-            headerClass = XposedHelpers.findClass("com.oplus.systemui.qs.widget.OplusHeaderTileLayout", pkg.classLoader);
-            quickControllerClass = XposedHelpers.findClass("com.android.systemui.qs.QuickQSPanelController", pkg.classLoader);
+            tileClass = QsClassCompat.find("com.android.systemui.qs.TileLayout", pkg.classLoader);
+            headerClass = QsClassCompat.find("com.oplus.systemui.qs.widget.OplusHeaderTileLayout", pkg.classLoader);
+            quickControllerClass = QsClassCompat.find("com.android.systemui.qs.QuickQSPanelController", pkg.classLoader);
             XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.OplusQSPanelContainer", pkg.classLoader,
                     "updateQSBounds", Rect.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
@@ -57,10 +57,12 @@ final class MergedTileGridHooks {
                             if (nativeBounds != null) p.args[0] = panelBounds(panel, clip);
                         }
                     });
-            XposedHelpers.findAndHookDeclaredMethod(quickControllerClass, "onInit", new XC_MethodHook() {
-                @Override protected void afterHookedMethod(MethodHookParam p) { quickControllers.put(p.thisObject, true); }
+            XposedHelpers.findAndHookMethod(quickControllerClass, "onInit", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (quickControllerClass.isInstance(p.thisObject)) quickControllers.put(p.thisObject, true);
+                }
             });
-            XposedHelpers.findAndHookDeclaredMethod("com.android.systemui.qs.QuickQSPanel", pkg.classLoader, "getNumQuickTiles", new XC_MethodHook() {
+            XposedHelpers.findAndHookDeclaredMethod(QsClassCompat.find("com.android.systemui.qs.QuickQSPanel", pkg.classLoader), "getNumQuickTiles", new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     if (forceColumns((View) p.thisObject)) p.setResult(forcedColumns((View) p.thisObject));
 
@@ -210,7 +212,7 @@ final class MergedTileGridHooks {
                     }
                     int size = integer(root, "mCellWidth");
                     int spec = View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY);
-                    boolean header = headerClass.isInstance(root) || MergedLandscapeHooks.enabled(root);
+                    boolean header = headerClass.isInstance(root) || MergedLandscapeHooks.iconOnly(root);
                     int rowHeight = header ? size : integer(root, "mCellHeight");
                     // 行距只依据名称第一行；磁贴自身仍可容纳两行内容，避免裁切文字。
                     int tileHeight = header ? size : size + labelHeight(root, 2);
@@ -251,7 +253,7 @@ final class MergedTileGridHooks {
                 }
             });
             // 分页器在测量磁贴前决定每页行数，先更新高度，避免使用上一帧的高度上限。
-            Class<?> paged = XposedHelpers.findClass("com.android.systemui.qs.PagedTileLayout", pkg.classLoader);
+            Class<?> paged = QsClassCompat.find("com.android.systemui.qs.PagedTileLayout", pkg.classLoader);
             XposedHelpers.findAndHookDeclaredMethod(paged, "onMeasure", int.class, int.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     if (!MergedCardRatioHooks.ratioEnabled((View) p.thisObject) && !fourColumns()) return;
@@ -381,7 +383,7 @@ final class MergedTileGridHooks {
         int columns = columns(root), size = integer(root, "mCellWidth");
         int gap = integer(root, "mCellMarginHorizontal");
         boolean rtl = root.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL;
-        float squish = (headerClass.isInstance(root) || MergedLandscapeHooks.enabled(root)) ? 1f : XposedHelpers.getFloatField(root, "mSquishinessFraction") * .9f + .1f;
+        float squish = (headerClass.isInstance(root) || MergedLandscapeHooks.iconOnly(root)) ? 1f : XposedHelpers.getFloatField(root, "mSquishinessFraction") * .9f + .1f;
         int count = Math.min(root.getChildCount(), headerClass.isInstance(root) ? columns : integer(root, "mRows") * columns);
         for (int i = 0; i < count; i++) {
             View tile = root.getChildAt(i);
@@ -404,8 +406,8 @@ final class MergedTileGridHooks {
     }
     private static boolean isGrid(View view) {
         if (tileClass == null || !tileClass.isInstance(view)) return false;
-        String name = view.getClass().getName();
-        return name.equals("com.android.systemui.qs.TileLayout") || name.equals("com.android.systemui.qs.SideLabelTileLayout")
+        return QsClassCompat.matches(view.getClass(), "com.android.systemui.qs.TileLayout")
+                || QsClassCompat.matches(view.getClass(), "com.android.systemui.qs.SideLabelTileLayout")
                 || (headerClass != null && headerClass.isInstance(view));
     }
     static ViewGroup root(View view) {
@@ -500,7 +502,7 @@ final class MergedTileGridHooks {
                 int side = root.getResources().getDimensionPixelSize(id);
                 View ancestor = root.getParent() instanceof View parent ? parent : null;
                 while (ancestor != null) {
-                    if (ancestor.getClass().getName().equals("com.android.systemui.qs.QSPanel")) {
+                    if (QsClassCompat.matches(ancestor.getClass(), "com.android.systemui.qs.QSPanel")) {
                         side = Math.max(0, side - ancestor.getPaddingLeft()); break;
                     }
                     ancestor = ancestor.getParent() instanceof View parent ? parent : null;
@@ -536,7 +538,7 @@ final class MergedTileGridHooks {
                 root.getChildAt(i).setVisibility(i < diameterColumns ? View.VISIBLE : View.GONE);
         }
         if (MergedLandscapeHooks.enabled(root) && !headerClass.isInstance(root)) {
-            for (int i = 0; i < root.getChildCount(); i++) MergedLandscapeHooks.compact(root.getChildAt(i));
+            for (int i = 0; i < root.getChildCount(); i++) MergedLandscapeHooks.updateTileLayout(root.getChildAt(i));
         }
         int count = columns(root);
         int diameterGap = Math.round(diameterWidth * MergedCardRatioHooks.gapFraction(root));
@@ -551,16 +553,22 @@ final class MergedTileGridHooks {
             content = content * 31 + tile.getVisibility();
         }
         original.contentHash = content;
-        boolean compact = MergedLandscapeHooks.enabled(root);
+        boolean compact = MergedLandscapeHooks.iconOnly(root);
         if (original.configuredCompact == compact && original.configuredWidth == available && original.configuredColumns == count
                 && original.configuredGap == gap && original.configuredScale == scale
                 && original.configuredDensity == density && original.configuredFontScale == fontScale
                 && original.configuredContent == content && integer(root, "mCellWidth") == size
                 && integer(root, "mCellHeight") == original.rowHeight
-                && integer(root, "mCellMarginHorizontal") == gap && integer(root, "mCellMarginVertical") == gap) return;
+                && integer(root, "mCellMarginHorizontal") == gap && integer(root, "mCellMarginVertical") == gap) {
+            // Native updateIconResource can reset tile surfaces without changing
+            // any grid metrics. It invalidates the separate geometry cache;
+            // consume that invalidation even when the grid itself is unchanged.
+            MergedCardRatioHooks.applyGridGeometry(root);
+            return;
+        }
         XposedHelpers.setIntField(root, "mCellWidth", size);
         MergedCardRatioHooks.applyGridGeometry(root);
-        int rowHeight = size + ((headerClass.isInstance(root) || MergedLandscapeHooks.enabled(root)) ? 0 : labelHeight(root, 1));
+        int rowHeight = size + ((headerClass.isInstance(root) || compact) ? 0 : labelHeight(root, 1));
         XposedHelpers.setIntField(root, "mCellHeight", rowHeight);
         XposedHelpers.setIntField(root, "mResourceCellHeight", rowHeight);
         XposedHelpers.setIntField(root, "mEstimatedCellHeight", rowHeight);
@@ -617,7 +625,7 @@ final class MergedTileGridHooks {
             for (ViewGroup root : new ArrayList<>(columnHosts.keySet())) if (root != null) {
                 XposedHelpers.callMethod(root, "updateResources");
                 if (root.getParent() instanceof View parent) {
-                    if (parent.getClass().getName().equals("com.android.systemui.qs.PagedTileLayout"))
+                    if (QsClassCompat.matches(parent.getClass(), "com.android.systemui.qs.PagedTileLayout"))
                         XposedHelpers.setBooleanField(parent, "mDistributeTiles", true);
                     parent.requestLayout();
                 }

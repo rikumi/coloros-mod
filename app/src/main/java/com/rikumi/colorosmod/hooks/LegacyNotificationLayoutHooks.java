@@ -135,17 +135,25 @@ public final class LegacyNotificationLayoutHooks {
             try {
                 Object children = XposedHelpers.getObjectField(view, "mChildrenContainer");
                 if (children instanceof android.view.View group) {
-                    XposedHelpers.callMethod(children, "initDimens$2");
+                    XposedHelpers.callMethod(children, NotificationLayoutCompat.initDimens(children.getClass()));
                     LegacyCollapsedGroupHooks.refresh(children);
                     RelaxedGroupHeaderHooks.refresh(children);
                     group.requestLayout();
                 }
-                Object entry = XposedHelpers.getObjectField(view, "mEntry");
                 Object stage = XposedHelpers.getObjectField(view, "mRowContentBindStage");
-                if (entry != null && stage != null) {
-                    Object params = XposedHelpers.callMethod(stage, "getStageParams", entry);
-                    XposedHelpers.callMethod(params, "setNeedsReinflation", true);
-                    XposedHelpers.callMethod(stage, "requestRebind", entry, null);
+                if (!NotificationLayoutCompat.hasField(view.getClass(), "mEntry")) {
+                    Object adapter = XposedHelpers.callMethod(view, "getEntryAdapter");
+                    if (adapter != null && stage != null) {
+                        XposedHelpers.callMethod(adapter, "markForReinflation", stage);
+                        XposedHelpers.callMethod(adapter, "requestRebind", stage, null);
+                    }
+                } else {
+                    Object entry = XposedHelpers.getObjectField(view, "mEntry");
+                    if (entry != null && stage != null) {
+                        Object params = XposedHelpers.callMethod(stage, "getStageParams", entry);
+                        XposedHelpers.callMethod(params, "setNeedsReinflation", true);
+                        XposedHelpers.callMethod(stage, "requestRebind", entry, null);
+                    }
                 }
             } catch (Throwable error) { log("legacy notification row rebind failed: " + error); }
         }

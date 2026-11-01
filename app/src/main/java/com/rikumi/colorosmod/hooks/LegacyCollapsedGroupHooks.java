@@ -26,12 +26,11 @@ final class LegacyCollapsedGroupHooks {
                             if (enabled()) alignName(p.thisObject);
                         }
                     });
-            XposedHelpers.findAndHookMethod(container, "initDimens$2", new XC_MethodHook() {
+            XposedHelpers.findAndHookMethod(container, NotificationLayoutCompat.initDimens(container), new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) { if (enabled()) dimensions(p.thisObject); }
             });
-            XposedHelpers.findAndHookMethod("com.oplus.systemui.statusbar.notification.stack.NotificationChildrenContainerExtImp", lp.classLoader,
-                    "updateIntrinsicHeight", container, XposedHelpers.findClass("android.view.NotificationHeaderView", lp.classLoader),
-                    int.class, int.class, int.class, new XC_MethodHook() {
+            com.rikumi.colorosmod.xposed.XposedBridge.hookAllMethods(XposedHelpers.findClass("com.oplus.systemui.statusbar.notification.stack.NotificationChildrenContainerExtImp", lp.classLoader),
+                    "updateIntrinsicHeight", new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
 
                             if (enabled()) p.setResult(p.args[3]);
@@ -48,8 +47,8 @@ final class LegacyCollapsedGroupHooks {
                     p.setResult(null);
                 }
             };
-            XposedHelpers.findAndHookMethod(group, lp.classLoader, "setChildrenExpanded", container, boolean.class, wrapper, boolean.class, keepHeader);
-            XposedHelpers.findAndHookMethod(group, lp.classLoader, "updateHeaderState", container, float.class, wrapper, String.class, keepHeader);
+            NotificationLayoutCompat.optionalHook(XposedHelpers.findClass(group, lp.classLoader), "setChildrenExpanded", container, boolean.class, wrapper, boolean.class, keepHeader);
+            NotificationLayoutCompat.optionalHook(XposedHelpers.findClass(group, lp.classLoader), "updateHeaderState", container, float.class, wrapper, String.class, keepHeader);
             XposedHelpers.findAndHookMethod(group, lp.classLoader, "updateSingleLinePadding", row, int.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     if (!enabled()) return;

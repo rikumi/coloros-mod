@@ -780,6 +780,9 @@ public class XposedInit extends XposedModule {
         } else if ("com.oplus.wallpapers".equals(sHookedPackageName)) {
             try { WallpapersHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("wallpapers hot reload cleanup failed: " + t); }
+        } else if ("com.coloros.weather2".equals(sHookedPackageName)) {
+            try { WeatherHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("weather hot reload cleanup failed: " + t); }
         }
         try { XposedHelpers.cancelTrackedCallbacksAndAnimators(); }
         catch (Throwable t) { log("tracked callback cleanup failed: " + t); }

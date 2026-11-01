@@ -21,7 +21,7 @@ final class LegacyGroupExpansionHooks {
             });
             XposedHelpers.findAndHookMethod(row, "getIntrinsicHeight", new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    if (!enabled() || XposedHelpers.getBooleanField(p.thisObject, "mUserLocked")) return;
+                    if (!enabled() || NotificationLayoutCompat.userLocked(p.thisObject)) return;
                     Object guts = XposedHelpers.getObjectField(p.thisObject, "mGuts");
                     if (guts != null && XposedHelpers.getBooleanField(guts, "mExposed")) return;
                     if (Boolean.TRUE.equals(XposedHelpers.callMethod(p.thisObject, "isChildInGroup"))
@@ -75,7 +75,7 @@ final class LegacyGroupExpansionHooks {
             };
             XposedHelpers.findAndHookMethod(split, lp.classLoader, "initGroupChildCustomDelay", expandable, properties, int.class, skip);
             XposedHelpers.findAndHookMethod(split, lp.classLoader, "initGroupChildCustomAnimType", row, properties, int.class, skip);
-            XposedHelpers.findAndHookMethod(split, lp.classLoader, "notificationGroupExpansionInterpolator", properties, boolean.class, boolean.class, new XC_MethodHook() {
+            com.rikumi.colorosmod.xposed.XposedBridge.hookAllMethods(XposedHelpers.findClass(split, lp.classLoader), "notificationGroupExpansionInterpolator", new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     if (!enabled()) return;
                     XposedHelpers.setLongField(p.args[0], "duration", 360L);
@@ -102,7 +102,7 @@ final class LegacyGroupExpansionHooks {
         try {
             Object container = XposedHelpers.getObjectField(row, "mChildrenContainer");
             boolean expanded = XposedHelpers.getBooleanField(container, "mChildrenExpanded");
-            boolean locked = XposedHelpers.getBooleanField(container, "mUserLocked");
+            boolean locked = NotificationLayoutCompat.userLocked(container);
             boolean low = Boolean.TRUE.equals(XposedHelpers.callMethod(container, "showingAsLowPriority"));
             boolean dragging = locked && !low;
             float fraction = locked ? ((Number) XposedHelpers.callMethod(container, "getGroupExpandFraction")).floatValue() : 0f;
@@ -120,15 +120,15 @@ final class LegacyGroupExpansionHooks {
                 Object state = XposedHelpers.callMethod(child, "getViewState");
                 int height = ((Number) XposedHelpers.callMethod(child, "getIntrinsicHeight")).intValue();
                 XposedHelpers.setIntField(state, "height", height);
-                XposedHelpers.callMethod(state, "setYTranslation", (float) y);
-                if (i < visible) XposedHelpers.callMethod(state, "setAlpha", low ? fraction : 1f);
+                NotificationLayoutCompat.stateValue(state, "setYTranslation", (float) y);
+                if (i < visible) NotificationLayoutCompat.stateValue(state, "setAlpha", low ? fraction : 1f);
                 neutralize(state);
                 y += height;
             }
             Object headerState = XposedHelpers.getObjectField(container, "mHeaderViewState");
             if (headerState != null && !low) {
 
-                XposedHelpers.callMethod(headerState, "setYTranslation", (float)
+                NotificationLayoutCompat.stateValue(headerState, "setYTranslation", (float)
                         XposedHelpers.getIntField(container, "mCurrentHeaderTranslation"));
             }
             neutralize(XposedHelpers.callMethod(row, "getViewState"));

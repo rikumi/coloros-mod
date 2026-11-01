@@ -51,12 +51,17 @@ final class MergedLandscapeHooks {
         return cached;
     }
 
-    static void compact(View tile) {
+    static boolean iconOnly(View view) {
+        return enabled(view) && !MergedSplitShadeHooks.phoneLayout(view);
+    }
+
+    static void updateTileLayout(View tile) {
         if (!enabled(tile)) return;
         View label = (View) XposedHelpers.getObjectField(tile, "mLabelContainer");
-        hide(label, View.GONE);
+        boolean compact = iconOnly(tile);
+        hide(label, compact ? View.GONE : View.VISIBLE);
         collapsed.putIfAbsent(tile, XposedHelpers.getBooleanField(tile, "mCollapsedView"));
-        XposedHelpers.setBooleanField(tile, "mCollapsedView", true);
+        XposedHelpers.setBooleanField(tile, "mCollapsedView", compact);
     }
 
     private static void hide(View view, int value) {
@@ -209,11 +214,13 @@ final class MergedLandscapeHooks {
                             View.MeasureSpec.makeMeasureSpec((Integer) p.getObjectExtra("outerWidth"), View.MeasureSpec.EXACTLY), (Integer) p.args[1]);
                 }
             });
-            XposedHelpers.findAndHookMethod("com.android.systemui.qs.QSContainerImpl", lp.classLoader,
+            Class<?> layoutOwner = XposedHelpers.findClassIfExists("com.android.systemui.qs.QSContainerImpl", lp.classLoader);
+            if (layoutOwner == null) layoutOwner = containerClass;
+            XposedHelpers.findAndHookMethod(layoutOwner,
                     "onLayout", boolean.class, int.class, int.class, int.class, int.class, new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             ViewGroup root = (ViewGroup) p.thisObject;
-                            if (!enabled(root) || MergedSplitShadeHooks.phoneLayout(root)) return;
+                            if (!containerClass.isInstance(root) || !enabled(root) || MergedSplitShadeHooks.phoneLayout(root)) return;
                             for (int i = 0; i < root.getChildCount(); i++) {
                                 View child = root.getChildAt(i);
                                 if (child.getId() == id(root, "qs_customize")) continue;

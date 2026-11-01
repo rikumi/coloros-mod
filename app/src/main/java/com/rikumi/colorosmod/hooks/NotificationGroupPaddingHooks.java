@@ -84,6 +84,6 @@ final class NotificationGroupPaddingHooks {
 
     private static void offset(Object state, int inset) {
         float y = ((Number) XposedHelpers.callMethod(state, "getYTranslation")).floatValue();
-        XposedHelpers.callMethod(state, "setYTranslation", y + inset);
+        NotificationLayoutCompat.stateValue(state, "setYTranslation", y + inset);
     }
 }

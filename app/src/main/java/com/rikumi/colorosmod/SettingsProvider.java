@@ -40,6 +40,7 @@ public class SettingsProvider extends ContentProvider {
         Context de = ctx.createDeviceProtectedStorageContext();
         SharedPreferences preferences = (de != null ? de : ctx).getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
         migrateNotificationIconPrefs(ctx, preferences);
+        migrateKeyguardClockSpacing(ctx, preferences);
         HiddenLauncherApps.migrate(ctx, preferences);
         return preferences;
     }
@@ -55,6 +56,17 @@ public class SettingsProvider extends ContentProvider {
                             preferences.getBoolean(statusBarKey, false)).commit()) {
                 notifySettingsChanged(context);
             }
+        }
+    }
+
+    public static void migrateKeyguardClockSpacing(Context context, SharedPreferences preferences) {
+        synchronized (preferences) {
+            String migrated = "keyguard_clock_spacing_shifted_v1";
+            if (preferences.getBoolean(migrated, false)) return;
+            SharedPreferences.Editor editor = preferences.edit().putBoolean(migrated, true);
+            String key = "keyguard_clock_spacing";
+            if (preferences.contains(key)) editor.putInt(key, preferences.getInt(key, -4) + 4);
+            if (editor.commit()) notifySettingsChanged(context);
         }
     }
 

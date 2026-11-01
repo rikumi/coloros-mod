@@ -92,11 +92,13 @@ final class LegacyMessagingSpacingHooks {
                             avatar.setPaddingRelative(0, avatar.getPaddingTop(), avatar.getPaddingEnd(), avatar.getPaddingBottom());
                         }
                     });
-            XposedHelpers.findAndHookMethod("com.oplus.systemui.statusbar.notification.row.wrapper.OplusNotificationMessagingTemplateViewWrapperExImpl",
-                    lp.classLoader, "onContentUpdated", new XC_MethodHook() {
+            Class<?> messagingWrapper = XposedHelpers.findClass("com.oplus.systemui.statusbar.notification.row.wrapper.OplusNotificationMessagingTemplateViewWrapperExImpl", lp.classLoader);
+            boolean legacyCallback = NotificationLayoutCompat.hasMethod(messagingWrapper, "onContentUpdated");
+            XposedHelpers.findAndHookMethod(messagingWrapper,
+                    legacyCallback ? "onContentUpdated" : "onFindViews", new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
 
-                            if (enabled()) p.setResult(null);
+                            if (enabled() && legacyCallback) p.setResult(null);
                         }
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             if (!enabled()) return;

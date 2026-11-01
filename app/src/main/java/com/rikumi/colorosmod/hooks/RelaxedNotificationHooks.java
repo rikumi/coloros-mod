@@ -79,8 +79,7 @@ final class RelaxedNotificationHooks {
                         }
                     });
             // The inflater's compiled lambda may inline Builder's public wrappers.
-            XposedHelpers.findAndHookMethod("com.android.systemui.statusbar.notification.row.NotificationContentInflater$$ExternalSyntheticLambda3",
-                    lp.classLoader, "invoke", new XC_MethodHook() { });
+            NotificationLayoutCompat.deoptimizeInflater(lp.classLoader);
             XposedHelpers.findAndHookMethod("android.app.Notification$Builder", lp.classLoader,
                     "createBigContentView", new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
@@ -88,8 +87,9 @@ final class RelaxedNotificationHooks {
                         }
                     });
 
-            XposedHelpers.findAndHookMethod("com.oplus.systemui.statusbar.notification.row.wrapper.OplusNotificationMessagingTemplateViewWrapperExImpl",
-                    lp.classLoader, "onContentUpdated", new XC_MethodHook() {
+            Class<?> messagingWrapper = XposedHelpers.findClass("com.oplus.systemui.statusbar.notification.row.wrapper.OplusNotificationMessagingTemplateViewWrapperExImpl", lp.classLoader);
+            XposedHelpers.findAndHookMethod(messagingWrapper,
+                    NotificationLayoutCompat.hasMethod(messagingWrapper, "onContentUpdated") ? "onContentUpdated" : "onFindViews", new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             if (!enabled()) return;
                             Object wrapper = XposedHelpers.callMethod(p.thisObject, "getBase");
@@ -129,6 +129,20 @@ final class RelaxedNotificationHooks {
                             p.args[0] = expanded;
                         }
                         @Override protected void afterHookedMethod(MethodHookParam p) {
+                            // Android 17 adds the expanded title's start margin in
+                            // Builder. Our collapsed shell already insets the entire
+                            // message column, so retaining it applies the inset twice.
+                            if (enabled() && Boolean.TRUE.equals(compactMessage.get())
+                                    && p.getResult() instanceof android.widget.RemoteViews views) {
+                                views.setViewLayoutMargin(android.R.id.title, 4, 0f, 0);
+                                Object builder = XposedHelpers.getObjectField(p.thisObject, "mBuilder");
+                                android.content.Context context = (android.content.Context) XposedHelpers.getObjectField(builder, "mContext");
+                                Resources resources = context.getResources();
+                                int messaging = NotificationResourceIds.get(resources, "notification_messaging", "id", "android");
+                                int gap = NotificationResourceIds.get(resources, "notification_2025_text_margin_top", "dimen", "android");
+                                if (messaging != 0 && gap != 0)
+                                    views.setViewLayoutMargin(messaging, 1, resources.getDimensionPixelSize(gap), 0);
+                            }
                             Object previous = p.getObjectExtra("relaxedCompactMessage");
                             if (previous == null) return;
                             if (Boolean.TRUE.equals(previous)) compactMessage.set(true);
@@ -145,7 +159,8 @@ final class RelaxedNotificationHooks {
             XposedHelpers.findAndHookMethod("android.app.Notification$StandardTemplateParams", lp.classLoader,
                     "hideAppName", boolean.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (enabled()) p.args[0] = false;
+                            int mode = readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT);
+                            if (mode == 1 || mode == 2) p.args[0] = false;
                         }
                     });
 
@@ -201,6 +216,28 @@ final class RelaxedNotificationHooks {
                             View pill = id == 0 ? null : button.findViewById(id);
 
                             if (pill != null) pill.setVisibility(Boolean.TRUE.equals(p.args[0]) ? View.VISIBLE : View.GONE);
+                        }
+                    });
+            XposedHelpers.findAndHookMethod("com.android.systemui.statusbar.notification.row.NotificationContentView", lp.classLoader,
+                    "updateExpandButtonsDuringLayout", boolean.class, boolean.class, new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            if (!enabled() || !Boolean.TRUE.equals(p.args[0])
+                                    || XposedHelpers.getBooleanField(p.thisObject, "mIsContentExpandable")) return;
+                            Object row = XposedHelpers.getObjectField(p.thisObject, "mContainingNotification");
+                            if (row == null || XposedHelpers.getBooleanField(row, "mIsSummaryWithChildren")) return;
+                            Object expanded = XposedHelpers.getObjectField(p.thisObject, "mExpandedChild");
+                            Object contracted = XposedHelpers.getObjectField(p.thisObject, "mContractedChild");
+                            if (!(expanded instanceof View big) || !(contracted instanceof View small)
+                                    || big.getHeight() == 0 || big.getHeight() > small.getHeight()) return;
+                            // A relaxed contracted shell can be as tall as its expanded
+                            // counterpart while still showing different text/actions.
+                            // Android 17's height-only check must not disable that switch.
+                            Object click = XposedHelpers.getObjectField(p.thisObject, "mExpandClickListener");
+                            for (String field : new String[]{"mContractedWrapper", "mExpandedWrapper", "mHeadsUpWrapper"}) {
+                                Object wrapper = XposedHelpers.getObjectField(p.thisObject, field);
+                                if (wrapper != null) XposedHelpers.callMethod(wrapper, "updateExpandability", true, click, true);
+                            }
+                            XposedHelpers.setBooleanField(p.thisObject, "mIsContentExpandable", true);
                         }
                     });
         } catch (Throwable error) { log("relaxed notification hook failed: " + error); }
@@ -295,13 +332,12 @@ final class RelaxedNotificationHooks {
             current = parent;
         }
         int collapsedSize = Math.round(32f * density);
-        float top = root.getPaddingTop() + Math.max(16f * density,
-                (root.getHeight() - root.getPaddingTop() - root.getPaddingBottom() - collapsedSize) / 2f);
+        float top = root.getPaddingTop() + iconMargin(icon);
         // The fixed-height header constrains children by their layout margins. Moving a
         // 32dp icon down with topMargin shrinks its measured height (95x75 on PKT110).
         // Keep the square inside the header while measuring, then offset its drawing.
         int requestedTop = Math.max(0, Math.round(top) - parentTop);
-        anchorIcon(icon, Math.round((collapsed ? 16f : expandedStart) * density), collapsed ? 0 : -1);
+        anchorIcon(icon, collapsed ? iconMargin(icon) : Math.round(expandedStart * density), collapsed ? 0 : -1);
         messageRoots.put(icon, new java.lang.ref.WeakReference<>(root));
         int start = Math.round(58f * density); // 16dp inset + 32dp icon + 10dp gap.
         messageLineStarts.putIfAbsent(line, line.getPaddingStart());

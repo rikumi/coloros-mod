@@ -23,4 +23,5 @@
     <string name="weather_hide_theme">Hide theme switching</string>
     <string name="weather_hide_voice">Hide weather voice broadcast button</string>
     <string name="weather_navigation_padding">Add bottom navigation area padding</string>
+    <string name="weather_legacy_buttons">Restore legacy button layout</string>
 </resources>

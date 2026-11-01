@@ -193,9 +193,9 @@ public final class MergedRadiantHooks {
         for (View current = view; current != null; current = current.getParent() instanceof View parent ? parent : null) {
             String name = current.getClass().getName();
             if (name.equals("com.oplus.systemui.qs.OplusQSTileMediaContainer")
-                    || name.equals("com.oplus.systemui.qs.widget.OplusHeaderTileLayout")
-                    || name.equals("com.android.systemui.qs.TileLayout")
-                    || name.equals("com.android.systemui.qs.SideLabelTileLayout")) return true;
+                    || QsClassCompat.matches(current.getClass(), "com.oplus.systemui.qs.widget.OplusHeaderTileLayout")
+                    || QsClassCompat.matches(current.getClass(), "com.android.systemui.qs.TileLayout")
+                    || QsClassCompat.matches(current.getClass(), "com.android.systemui.qs.SideLabelTileLayout")) return true;
         }
         return false;
     }

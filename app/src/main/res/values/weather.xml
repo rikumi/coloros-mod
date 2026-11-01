@@ -23,4 +23,5 @@
     <string name="weather_hide_theme">去除主题换肤</string>
     <string name="weather_hide_voice">去除语音播报天气按钮</string>
     <string name="weather_navigation_padding">补齐底部导航区域边距</string>
+    <string name="weather_legacy_buttons">恢复旧版按钮布局</string>
 </resources>

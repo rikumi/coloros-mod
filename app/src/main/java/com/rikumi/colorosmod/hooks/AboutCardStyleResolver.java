@@ -21,8 +21,9 @@ public final class AboutCardStyleResolver {
                 int patch = match.group(3) == null ? 0 : Integer.parseInt(match.group(3));
                 if (major < 15) continue;
                 if (major == 15) return oxygen ? 5 : 2;
+                if (major >= 17) return 9;
                 // User-defined 16.1 boundary, including versions reported as 16.0.7.
-                if (major > 16 || minor > 0 || patch >= 7) return 6;
+                if (minor > 0 || patch >= 7) return 6;
                 return oxygen ? 3 : 1;
             } catch (NumberFormatException ignored) { }
         }

@@ -24,6 +24,10 @@ public final class KeyguardClockFontHooks {
     private static final String HOST = "com.oplus.systemui.shared.clocks.SingleClockView";
     private static final String PLUGIN_TIME = "com.oplus.keyguard.clock.base.ui.view.ClockTimeView";
     private static final String PLUGIN_TEXT = "com.oplus.keyguard.clock.base.widget.CustomizedTextView";
+    private static final String DIGITAL_TIME = "com.oplus.keyguard.clock.digital.ui.view.ClockTimeView";
+    private static final String DIGITAL_TEXT = "com.oplus.keyguard.clock.digital.widget.MyCustomizedTextView";
+    private static String lastDigitalStyle;
+    private static boolean digitalDefault;
     private static Object configRecord;
     private static final Handler main = new Handler(Looper.getMainLooper());
     private static final WeakHashMap<TextView, Original> views = new WeakHashMap<>();
@@ -60,11 +64,16 @@ public final class KeyguardClockFontHooks {
             XposedHelpers.findAndHookMethod(HOST, lp.classLoader, "setTextFont$2", bind);
             XposedHelpers.findAndHookMethod(TextView.class, "onMeasure", int.class, int.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    TextView view = (TextView) p.thisObject;
-                    if (!active) return;
-                    try {
+                        TextView view = (TextView) p.thisObject;
+                        if (!active) return;
+                        try {
+                            if (DIGITAL_TEXT.equals(view.getClass().getName())) {
+                                View host = pluginHost(view);
+                                if (host != null && defaultTheme(host)) DigitalKeyguardFontHooks.trackText(host, view);
+                                return;
+                            }
                         Original original = views.get(view);
-                        if (original == null && PLUGIN_TEXT.equals(view.getClass().getName())) {
+                        if (original == null && pluginText(view)) {
                             View host = pluginHost(view);
                             if (host != null && defaultTheme(host)) {
                                 original = new Original(view, host);
@@ -116,13 +125,18 @@ public final class KeyguardClockFontHooks {
     private static View pluginHost(View view) {
         // Date/message views use the same text widget; only ClockTimeView digits qualify.
         for (android.view.ViewParent parent = view.getParent(); parent instanceof View owner; parent = owner.getParent())
-            if (PLUGIN_TIME.equals(owner.getClass().getName())) return owner;
+            if (PLUGIN_TIME.equals(owner.getClass().getName()) || DIGITAL_TIME.equals(owner.getClass().getName())) return owner;
         return null;
     }
 
-    private static boolean defaultTheme(View host) {
+    private static boolean pluginText(View view) {
+        return PLUGIN_TEXT.equals(view.getClass().getName()) || DIGITAL_TEXT.equals(view.getClass().getName());
+    }
+
+    static boolean defaultTheme(View host) {
         if (host == null) return false;
-        boolean plugin = PLUGIN_TIME.equals(host.getClass().getName());
+        boolean digital = DIGITAL_TIME.equals(host.getClass().getName());
+        boolean plugin = PLUGIN_TIME.equals(host.getClass().getName()) || digital;
         if (!plugin && !HOST.equals(host.getClass().getName())) return false;
 
         int user = (Integer) XposedHelpers.callStaticMethod(updateMonitor, "getCurrentUser");
@@ -130,6 +144,21 @@ public final class KeyguardClockFontHooks {
                 host.getContext().getContentResolver(), "oplus_customize_unlock_change_pkg", user);
         if (!TextUtils.isEmpty(owner) && !"com.android.systemui".equals(owner)) return false;
         if (plugin) {
+
+            if (digital) {
+                Object data = XposedHelpers.callMethod(configRecord, "getPersonalityData");
+                String style = data == null ? null : (String) XposedHelpers.callMethod(data, "getStyleData");
+                if (!TextUtils.equals(lastDigitalStyle, style)) {
+                    lastDigitalStyle = style;
+                    digitalDefault = false;
+                    try {
+                        org.json.JSONObject config = new org.json.JSONObject(style);
+                        digitalDefault = "com.oplus.keyguard.clock.base".equals(config.optString("pkg"))
+                                && new org.json.JSONObject(config.optString("clockStyleConfig")).optInt("clockStyle", -1) == 0;
+                    } catch (Exception ignored) { }
+                }
+                return digitalDefault;
+            }
 
             Object config = XposedHelpers.callMethod(configRecord, "getKeyguardStyleConfig");
             Object clock = XposedHelpers.callMethod(configRecord, "getClockStyleConfig");
@@ -154,7 +183,7 @@ public final class KeyguardClockFontHooks {
             original.applied = selected;
             original.centered = family != 0 || weight != 0;
             float spacing = readBoolCached("keyguard_clock_spacing_enabled", true)
-                    ? Math.max(-10, Math.min(10, readIntCached("keyguard_clock_spacing", -4))) / 100f : original.spacing;
+                    ? (Math.max(-6, Math.min(14, readIntCached("keyguard_clock_spacing", 0))) - 4) / 100f : original.spacing;
             if (view.getLetterSpacing() != spacing) view.setLetterSpacing(spacing);
             String features = original.features;
             if (readBoolCached("keyguard_clock_monospace", true))
@@ -165,7 +194,7 @@ public final class KeyguardClockFontHooks {
         }
     }
 
-    private static Typeface resolve(Context context, int family, int weight, Typeface nativeFont) throws Exception {
+    static Typeface resolve(Context context, int family, int weight, Typeface nativeFont) throws Exception {
         if (family == 0 && weight == 0) return nativeFont;
         if (weight == 0) weight = nativeFont == null ? 400 : nativeFont.getWeight();
         if (family == 0) return Typeface.create(nativeFont, weight, false);
@@ -203,15 +232,20 @@ public final class KeyguardClockFontHooks {
                     if (root instanceof View view) discover(view);
                 }
                 for (TextView view : new ArrayList<>(views.keySet())) { apply(view, views.get(view)); view.requestLayout(); view.invalidate(); }
+                DigitalKeyguardFontHooks.refresh();
             } catch (Throwable error) { if (!failed) { failed = true; log("default keyguard clock refresh failed: " + error); } }
         });
     }
 
     private static void discover(View view) {
         if (HOST.equals(view.getClass().getName())) { track(view); return; }
-        if (view instanceof TextView text && PLUGIN_TEXT.equals(view.getClass().getName())) {
+        if (view instanceof TextView text && pluginText(view)) {
             View host = pluginHost(view);
             if (host != null && defaultTheme(host)) {
+                if (DIGITAL_TEXT.equals(view.getClass().getName())) {
+                    DigitalKeyguardFontHooks.track(host);
+                    return;
+                }
                 Original original = views.get(text);
                 if (original == null) { original = new Original(text, host); views.put(text, original); }
                 apply(text, original);
@@ -226,5 +260,6 @@ public final class KeyguardClockFontHooks {
         main.removeCallbacksAndMessages(null);
         for (TextView view : new ArrayList<>(views.keySet())) restore(view, views.get(view));
         views.clear(); fonts.clear(); moduleContext = null;
+        DigitalKeyguardFontHooks.cleanup();
     }
 }

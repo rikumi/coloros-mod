@@ -36,6 +36,10 @@ final class MergedShadeAlignmentHooks {
             });
             Class<?> ext = XposedHelpers.findClass("com.oplus.systemui.statusbar.notification.stack.NotificationStackScrollLayoutExtImpl", pkg.classLoader);
             for (String method : new String[]{"getTopPadding", "getTopPaddingFloat"}) {
+                // ColorOS 17 removed these vendor getters. The native updateTopPadding and
+                // clipping hooks below must still be installed to keep notifications below the date.
+                try { ext.getDeclaredMethod(method); }
+                catch (NoSuchMethodException removedGetter) { continue; }
                 XposedHelpers.findAndHookMethod(ext, method, new XC_MethodHook() {
                     @Override protected void afterHookedMethod(MethodHookParam p) {
                         View stack = (View) XposedHelpers.callMethod(p.thisObject, "getView");
@@ -109,8 +113,10 @@ final class MergedShadeAlignmentHooks {
         if (!active(stack) || !stack.isLaidOut()) return null;
         View root = stack.getRootView();
         View editor = root.findViewById(id(stack, "qs_customize"));
+        // Both ROM versions retain these fields; ColorOS 17 removed isCustomizing().
         boolean editing = editor != null && (editor.isShown()
-                || Boolean.TRUE.equals(XposedHelpers.callMethod(editor, "isCustomizing")));
+                || XposedHelpers.getBooleanField(editor, "mCustomizing")
+                || XposedHelpers.getBooleanField(editor, "mOpening"));
         Alignment alignment = stacks.get(stack);
         int[] location = new int[2];
         root.getLocationInWindow(location);
