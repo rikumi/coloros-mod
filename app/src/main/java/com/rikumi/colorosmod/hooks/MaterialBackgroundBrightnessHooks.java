@@ -367,12 +367,12 @@ final class MaterialBackgroundBrightnessHooks {
 
     private static int percent(String key, int fallback) { return Math.max(50, Math.min(100, readIntCached(key, fallback))); }
     static void refresh() {
-        String settings = readBoolCached("qs_bg_brightness_enabled", false) + ":" + percent("qs_bg_brightness_percent", 75)
-                + ":" + readBoolCached("qs_bg_opacity_enabled", false) + ":" + tileOpacityPercent()
-                + ":" + readBoolCached(NotificationBackgroundBrightnessHooks.ENABLED, false)
-                + ":" + NotificationBackgroundBrightnessHooks.brightnessPercent()
-                + ":" + readBoolCached(NotificationBackgroundBrightnessHooks.OPACITY_ENABLED, false)
-                + ":" + NotificationBackgroundBrightnessHooks.opacityPercent();
+        String settings = (readBoolCached("qs_bg_brightness_enabled", false) ? "on:" + percent("qs_bg_brightness_percent", 75) : "off")
+                + ":" + (readBoolCached("qs_bg_opacity_enabled", false) ? "on:" + tileOpacityPercent() : "off")
+                + ":" + (readBoolCached(NotificationBackgroundBrightnessHooks.ENABLED, false)
+                    ? "on:" + NotificationBackgroundBrightnessHooks.brightnessPercent() : "off")
+                + ":" + (readBoolCached(NotificationBackgroundBrightnessHooks.OPACITY_ENABLED, false)
+                    ? "on:" + NotificationBackgroundBrightnessHooks.opacityPercent() : "off");
         if (settings.equals(lastSettings)) return;
         lastSettings = settings;
         new Handler(Looper.getMainLooper()).post(() -> {

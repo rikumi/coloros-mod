@@ -1135,8 +1135,11 @@ public final class GestureHooks {
             return;
         }
 
-        if (dispatchNavigationButton(navView, false)) return;
-        if (!injectKey(android.view.KeyEvent.KEYCODE_BACK)) {
+        // ColorOS 17 的 sendEvent 仅将注入任务放入后台队列，返回 void，
+        // 不能据此确认返回按键已被接受。与原生侧滑返回一样直接注入，
+        // 并将事件定向到手势所在显示屏，避免使用隐藏按钮残留的显示状态。
+        if (injectKey(handle, android.view.KeyEvent.KEYCODE_BACK)) return;
+        if (!dispatchNavigationButton(navView, false)) {
             log("mback back dispatch was rejected");
         }
     }
@@ -1165,6 +1168,11 @@ public final class GestureHooks {
     }
 
     static boolean injectKey(int code) {
+        return injectKey(null, code);
+    }
+
+    static boolean injectKey(android.view.View handle, int code) {
+        boolean downInjected = false;
         try {
             // ColorOS 17 的 KeyButtonView 使用 InputManagerGlobal；旧系统保留
             // InputManager 兼容分支，不能只依赖旧版隐藏的 getInstance() 接口。
@@ -1188,12 +1196,21 @@ public final class GestureHooks {
                     code, 0, 0,
                     android.view.KeyCharacterMap.VIRTUAL_KEYBOARD, 0, flags,
                     android.view.InputDevice.SOURCE_KEYBOARD);
-            Object downAccepted = XposedHelpers.callMethod(inputManager, "injectInputEvent", down, 0);
+            if (handle != null && handle.getDisplay() != null) {
+                int displayId = handle.getDisplay().getDisplayId();
+                XposedHelpers.callMethod(down, "setDisplayId", displayId);
+                XposedHelpers.callMethod(up, "setDisplayId", displayId);
+            }
+            downInjected = Boolean.TRUE.equals(
+                    XposedHelpers.callMethod(inputManager, "injectInputEvent", down, 0));
+            if (!downInjected) return false;
             Object upAccepted = XposedHelpers.callMethod(inputManager, "injectInputEvent", up, 0);
-            return Boolean.TRUE.equals(downAccepted) && Boolean.TRUE.equals(upAccepted);
+            if (!Boolean.TRUE.equals(upAccepted)) log("mback key up injection rejected for " + code);
+            // DOWN 已被接受后不得再走备用路径，否则可能重复返回。
+            return true;
         } catch (Throwable t) {
             log("mback key injection failed for " + code + ": " + t);
-            return false;
+            return downInjected;
         }
     }
 
@@ -1429,7 +1446,7 @@ public final class GestureHooks {
 
     static void applyGestureBarWidth(android.view.View view) {
         try {
-            if (readInt(KEY_GESTURE_BAR_WIDTH_ENABLED, 1) != 1) return;
+            if (readInt(KEY_GESTURE_BAR_WIDTH_ENABLED, 0) != 1) return;
             int dp = Math.max(80, Math.min(120,
                     readInt(KEY_GESTURE_BAR_WIDTH_DP, 100)));
             int width = Math.round(dp * readDensity());

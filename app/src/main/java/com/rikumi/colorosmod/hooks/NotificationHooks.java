@@ -167,9 +167,9 @@ public final class NotificationHooks {
                             try {
                                 // 低频路径: 刷新缓存值供高频 hook 读取。
                                 boolean enabled = readBool(KEY_NOTIFICATION_PADDING_ENABLED, false);
-                                int padPx = Math.round(Math.max(0, Math.min(8,
+                                int padPx = enabled ? Math.round(Math.max(0, Math.min(8,
                                         readInt(KEY_NOTIFICATION_PADDING_DP,
-                                                NOTIFICATION_PADDING_DP))) * density);
+                                                NOTIFICATION_PADDING_DP))) * density) : 0;
                                 sNotifPadEnabled = enabled;
                                 sNotifPadPx = padPx;
 
@@ -725,8 +725,8 @@ public final class NotificationHooks {
     private static void updateContentPadding(Object content, float density) {
         try {
             sNotifPadEnabled = readBoolCached(KEY_NOTIFICATION_PADDING_ENABLED, false);
-            sNotifPadPx = Math.round(Math.max(0, Math.min(8,
-                    readIntCached(KEY_NOTIFICATION_PADDING_DP, NOTIFICATION_PADDING_DP))) * density);
+            sNotifPadPx = sNotifPadEnabled ? Math.round(Math.max(0, Math.min(8,
+                    readIntCached(KEY_NOTIFICATION_PADDING_DP, NOTIFICATION_PADDING_DP))) * density) : 0;
             Object row = XposedHelpers.getObjectField(content, "mContainingNotification");
             boolean minimized = !sNotifPadEnabled || (row != null && XposedHelpers.getBooleanField(row, "mIsMinimized"));
             applyNotificationChildPadding(content, minimized, sNotifPadPx);

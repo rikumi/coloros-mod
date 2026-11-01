@@ -894,7 +894,7 @@ public final class QsHooks {
                 readBool(KEY_QS_NORMAL_CORNER_RADIUS_ENABLED, false) ? 2 : 0);
         if (!readBool(KEY_QS_CORNER_RADIUS_ENABLED, mode == 1 || mode == 2)) return null;
         int oldDp = readInt(KEY_QS_CORNER_RADIUS_DP, -1);
-        int fallback = oldDp >= 0 ? Math.round(Math.min(32, oldDp) * 50f / 32f) : mode == 1 ? 50 : 25;
+        int fallback = oldDp >= 0 ? Math.round(Math.min(32, oldDp) * 50f / 32f) : mode == 1 ? 50 : mode == 2 ? 25 : 30;
         return Math.max(0, Math.min(50, readInt(KEY_QS_CORNER_RADIUS_PERCENT, fallback)));
     }
 

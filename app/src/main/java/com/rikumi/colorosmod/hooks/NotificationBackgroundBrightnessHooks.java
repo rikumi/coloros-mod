@@ -168,8 +168,8 @@ public final class NotificationBackgroundBrightnessHooks {
 
     public static void refresh() {
         MaterialBackgroundBrightnessHooks.refresh();
-        String setting = readBoolCached(ENABLED, false) + ":" + readIntCached(VALUE, DEFAULT)
-                + ":" + readBoolCached(OPACITY_ENABLED, false) + ":" + opacityPercent();
+        String setting = (readBoolCached(ENABLED, false) ? "on:" + brightnessPercent() : "off")
+                + ":" + (readBoolCached(OPACITY_ENABLED, false) ? "on:" + opacityPercent() : "off");
         if (setting.equals(lastSetting)) return;
         lastSetting = setting;
         new Handler(Looper.getMainLooper()).post(NotificationBackgroundBrightnessHooks::refreshNow);

@@ -366,10 +366,10 @@ public final class TaskbarGestureHooks {
     }
 
     public static void onSettingsSnapshotPublished() {
-        String signature = readInt(KEY_GESTURE_BAR_WIDTH_ENABLED, 1) + ":"
-                + readInt(KEY_GESTURE_BAR_WIDTH_DP, 100) + ":"
-                + readInt(KEY_GESTURE_BAR_HEIGHT_ENABLED, 0) + ":"
-                + readInt(KEY_GESTURE_BAR_HEIGHT_DP, 12) + ":"
+        String signature = (readBool(KEY_GESTURE_BAR_WIDTH_ENABLED, false)
+                ? "on:" + readInt(KEY_GESTURE_BAR_WIDTH_DP, 100) : "off") + ":"
+                + (readBool(KEY_GESTURE_BAR_HEIGHT_ENABLED, false)
+                    ? "on:" + readInt(KEY_GESTURE_BAR_HEIGHT_DP, 12) : "off") + ":"
                 + readInt(KEY_MBACK_ENABLED, 0) + ":"
                 + readInt(KEY_GESTURE_TOUCH_THROUGH_ENABLED, 0);
         if (signature.equals(settingsSignature)) return;
@@ -490,7 +490,7 @@ public final class TaskbarGestureHooks {
                 originalOutline.getOutline(view, out);
                 if (!out.getRect(localBounds)) { localBounds.setEmpty(); return; }
                 if (active && isGestureNav(context)) {
-                    if (readBool(KEY_GESTURE_BAR_WIDTH_ENABLED, true)) {
+                    if (readBool(KEY_GESTURE_BAR_WIDTH_ENABLED, false)) {
                         int width = Math.round(Math.max(80, Math.min(120,
                                 readInt(KEY_GESTURE_BAR_WIDTH_DP, 100))) * density());
                         int center = localBounds.centerX();
