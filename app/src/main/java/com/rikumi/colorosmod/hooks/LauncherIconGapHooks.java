@@ -3,6 +3,8 @@ package com.rikumi.colorosmod.hooks;
 import android.os.Handler;
 import android.os.Looper;
 import android.widget.TextView;
+import android.view.View;
+import android.view.ViewGroup;
 import com.rikumi.colorosmod.xposed.*;
 import java.util.*;
 import static com.rikumi.colorosmod.XposedInit.*;
@@ -10,21 +12,32 @@ import static com.rikumi.colorosmod.XposedInit.*;
 final class LauncherIconGapHooks {
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final Set<TextView> VIEWS = Collections.newSetFromMap(new WeakHashMap<>());
+    private static final Set<View> ROOTS = Collections.newSetFromMap(new WeakHashMap<>());
+    private static Class<?> bubbleClass;
     private static volatile boolean active = true;
     private static Integer lastGap;
     private static final Runnable UPDATE = () -> {
         if (!active) return;
+        for (View root : new ArrayList<>(ROOTS)) discover(root);
         TextView[] views;
         synchronized (VIEWS) { views = VIEWS.toArray(new TextView[0]); }
         // 缓存页和回收池中的图标也可能保留首次加载时的间距。
         int changed = 0;
-        for (TextView view : views) if (apply(view)) changed++;
+        for (TextView view : views) {
+            if (!supported(view)) continue;
+            if (apply(view)) changed++;
+            // Binding can set the correct padding while mDisableRelayout suppresses
+            // requestLayout(). Revisit layout even if the numeric value is unchanged.
+            view.requestLayout();
+            view.invalidate();
+        }
         XposedBridge.log("launcher icon-label spacing refreshed: tracked=" + views.length
                 + ", changed=" + changed);
     };
 
     static void hook(XC_LoadPackage.LoadPackageParam lp) {
         Class<?> bubble = XposedHelpers.findClass("com.android.launcher3.BubbleTextView", lp.classLoader);
+        bubbleClass = bubble;
         XposedHelpers.findAndHookMethod(bubble, "getRegularCompoundDrawablePadding", new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam p) {
                 if (!active || p.hasThrowable() || !(p.thisObject instanceof TextView view)
@@ -69,6 +82,22 @@ final class LauncherIconGapHooks {
         MAIN.post(UPDATE);
     }
 
+    static void onWorkspaceBound(View root) {
+        if (!active || root == null) return;
+        ROOTS.add(root);
+        // Run after the complete native bind, independently of the once-per-Zygote
+        // model reload claim and the order in which the first snapshot arrives.
+        refresh();
+    }
+
+    private static void discover(View view) {
+        if (bubbleClass != null && bubbleClass.isInstance(view) && view instanceof TextView text) {
+            synchronized (VIEWS) { VIEWS.add(text); }
+        }
+        if (view instanceof ViewGroup group)
+            for (int i = 0; i < group.getChildCount(); i++) discover(group.getChildAt(i));
+    }
+
     private static boolean apply(TextView view) {
         try {
             if (!supported(view)) return false;
@@ -109,6 +138,7 @@ final class LauncherIconGapHooks {
     static void cleanup() {
         active = false;
         MAIN.removeCallbacks(UPDATE);
+        ROOTS.clear();
         synchronized (VIEWS) { VIEWS.clear(); lastGap = null; }
     }
     private LauncherIconGapHooks() {}

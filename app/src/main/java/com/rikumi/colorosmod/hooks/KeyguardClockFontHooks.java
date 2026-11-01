@@ -153,7 +153,11 @@ public final class KeyguardClockFontHooks {
                     digitalDefault = false;
                     try {
                         org.json.JSONObject config = new org.json.JSONObject(style);
-                        digitalDefault = "com.oplus.keyguard.clock.base".equals(config.optString("pkg"))
+                        // ColorOS 17 now saves the default digital clock under its own
+                        // package; migrated configurations may still name the base clock.
+                        String pkg = config.optString("pkg");
+                        digitalDefault = ("com.oplus.keyguard.clock.base".equals(pkg)
+                                || "com.oplus.keyguard.clock.digital".equals(pkg))
                                 && new org.json.JSONObject(config.optString("clockStyleConfig")).optInt("clockStyle", -1) == 0;
                     } catch (Exception ignored) { }
                 }
@@ -166,10 +170,11 @@ public final class KeyguardClockFontHooks {
                     && "com.oplus.keyguard.clock.base".equals(XposedHelpers.callMethod(config, "getPkg"))
                     && ((Integer) XposedHelpers.callMethod(clock, "getClockStyle")) == 0;
         }
-        String defaultTheme = (String) XposedHelpers.callStaticMethod(Settings.Secure.class, "getStringForUser",
-                host.getContext().getContentResolver(), "key_user_apply_default_theme", user);
-        // Factory installations may have no explicit theme choice yet.
-        return TextUtils.isEmpty(defaultTheme) || "true".equals(defaultTheme);
+        // ColorOS 17 reports key_user_apply_default_theme=false even while its own clock is
+        // in use, so that setting no longer identifies the default clock. SingleClockView is
+        // only inflated for the system clock provider, and the owner check above already
+        // excludes third-party lock-screen themes.
+        return true;
     }
 
     private static void apply(TextView view, Original original) {
@@ -239,6 +244,10 @@ public final class KeyguardClockFontHooks {
 
     private static void discover(View view) {
         if (HOST.equals(view.getClass().getName())) { track(view); return; }
+        if (DIGITAL_TIME.equals(view.getClass().getName()) && defaultTheme(view)) {
+            DigitalKeyguardFontHooks.track(view);
+            return;
+        }
         if (view instanceof TextView text && pluginText(view)) {
             View host = pluginHost(view);
             if (host != null && defaultTheme(host)) {
@@ -253,6 +262,22 @@ public final class KeyguardClockFontHooks {
         }
         if (view instanceof ViewGroup group)
             for (int i = 0; i < group.getChildCount(); i++) discover(group.getChildAt(i));
+    }
+
+    public static Object captureHotReloadHosts() {
+        ArrayList<View> hosts = new ArrayList<>();
+        for (Original original : views.values()) {
+            View host = original.host.get();
+            if (host != null && !hosts.contains(host)) hosts.add(host);
+        }
+        hosts.addAll(DigitalKeyguardFontHooks.captureHosts());
+        return hosts;
+    }
+
+    public static void restoreHotReloadHosts(Object state) {
+        if (state instanceof java.util.List<?> hosts)
+            for (Object host : hosts) if (host instanceof View view) discover(view);
+        refresh();
     }
 
     static void cleanup() {

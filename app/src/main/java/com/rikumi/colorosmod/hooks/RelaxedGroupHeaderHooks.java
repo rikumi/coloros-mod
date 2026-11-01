@@ -221,6 +221,18 @@ final class RelaxedGroupHeaderHooks {
         } catch (Throwable error) { log("relaxed compact group name failed: " + error); }
     }
 
+    static Object expandableGroup(Object wrapper) {
+        Object row = XposedHelpers.getObjectField(wrapper, "mRow");
+        if (row == null || !XposedHelpers.getBooleanField(row, "mIsSummaryWithChildren")) return null;
+        Object container = XposedHelpers.callMethod(row, "getChildrenContainer");
+        if (container == null || NotificationHooks.isMinimizedGroup(container)
+                || XposedHelpers.getObjectField(container, "mGroupHeader")
+                != XposedHelpers.getObjectField(wrapper, "mView")) return null;
+        java.util.List<?> children = (java.util.List<?>) XposedHelpers.callMethod(container, "getAttachedChildren");
+        int count = ((Number) XposedHelpers.callMethod(container, "getUntruncatedChildCount")).intValue();
+        return Math.max(count, children.size()) > 1 ? container : null;
+    }
+
     private static void refreshModern(View container, Object owner) {
         if (NotificationHooks.isMinimizedGroup(container)) return;
         Object wrapper = XposedHelpers.callMethod(container, "getNotificationHeaderWrapper");
@@ -262,6 +274,12 @@ final class RelaxedGroupHeaderHooks {
                 (RelativeLayout.LayoutParams) saved.buttonParams);
         buttonParams.setMarginEnd(buttonParams.getMarginEnd() + XposedHelpers.getIntField(owner, "contentPaddingEnd"));
         button.setLayoutParams(buttonParams);
+        if (expandableGroup(wrapper) != null) {
+            XposedHelpers.callMethod(wrapper, "updateExpandability", true,
+                    XposedHelpers.getObjectField(container, "mHeaderClickListener"), true);
+            XposedHelpers.callMethod(wrapper, "setExpanded",
+                    XposedHelpers.getBooleanField(container, "mChildrenExpanded"));
+        }
         container.requestLayout();
     }
 

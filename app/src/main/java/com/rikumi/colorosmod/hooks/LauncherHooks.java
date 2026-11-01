@@ -923,6 +923,8 @@ public final class LauncherHooks {
                     "finishBindingItems", XposedHelpers.findClass("com.android.launcher3.util.IntSet", lpparam.classLoader),
                     new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
+                            if (p.thisObject instanceof android.app.Activity activity)
+                                LauncherIconGapHooks.onWorkspaceBound(activity.getWindow().getDecorView());
                             LauncherStartupRefresh.onBound(p.thisObject, lpparam.classLoader);
                             synchronized (sHiddenSettingsLock) {
                                 if (!sModelReloadActive || !sInitialModelReloadPending || sPendingModelReloads > 0) return;

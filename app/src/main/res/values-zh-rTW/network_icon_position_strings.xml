@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_network_icon_position">修改 Wi-Fi 和行動數據圖示位置</string>
+    <string name="ui_network_icon_position_unchanged">不修改</string>
+    <string name="ui_network_icon_position_wifi_left">Wi-Fi 在左側</string>
+    <string name="ui_network_icon_position_mobile_left">行動數據在左側</string>
+</resources>

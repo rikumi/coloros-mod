@@ -109,10 +109,16 @@ final class LegacyFrameworkNotificationHooks {
                             if (readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT) == 1) p.setResult(false);
                         }
                     });
-            XposedHelpers.findAndHookMethod("android.app.Notification$StandardTemplateParams", lp.classLoader,
+            Class<?> templateParams = XposedHelpers.findClass("android.app.Notification$StandardTemplateParams", lp.classLoader);
+            int publicViewType = (Integer) XposedHelpers.getStaticObjectField(templateParams, "VIEW_TYPE_PUBLIC");
+            XposedHelpers.findAndHookMethod(templateParams,
                     "headerless", boolean.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             int mode = readIntCached(KEY_NOTIFICATION_LAYOUT_STYLE, NOTIFICATION_LAYOUT_STYLE_DEFAULT);
+                            // Public inflation keeps the native collapsed XML. Its body
+                            // follows the top line in a vertical column, so expanded
+                            // header spacing would add a second, redundant top inset.
+                            if (mode == 2 && XposedHelpers.getIntField(p.thisObject, "mViewType") == publicViewType) return;
                             if (mode == 1 || mode == 2) p.args[0] = false;
                         }
                     });

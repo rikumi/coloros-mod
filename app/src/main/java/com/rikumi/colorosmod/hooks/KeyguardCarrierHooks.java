@@ -75,6 +75,14 @@ public final class KeyguardCarrierHooks {
         } finally { applying = false; }
     }
 
+    public static Object captureHotReloadHosts() { return new ArrayList<>(views.keySet()); }
+
+    public static void restoreHotReloadHosts(Object state) {
+        if (state instanceof java.util.List<?> hosts)
+            for (Object host : hosts) if (host instanceof View view) track(view);
+        apply();
+    }
+
     static void cleanup() {
         active = false;
         main.removeCallbacksAndMessages(null);

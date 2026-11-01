@@ -327,6 +327,10 @@ private val NOTIF: List<SettingsItem> = listOf(
     SwitchItem("merge_dual_sim_signal", R.string.ui_merge_dual_sim),
     SwitchItem("hide_battery_percent_sign_enabled", R.string.ui_hide_battery_percent),
     SwitchItem("hide_roaming_icon", R.string.ui_hide_roaming),
+    SelectItem(XposedInit.KEY_NETWORK_ICON_POSITION, R.string.ui_network_icon_position,
+        listOf(R.string.ui_network_icon_position_unchanged, R.string.ui_network_icon_position_wifi_left,
+            R.string.ui_network_icon_position_mobile_left),
+        masterManaged = true, masterEnabledValue = 1),
     SelectItem("signal_network_type_mode", R.string.ui_signal_network_type, listOf(R.string.ui_option_default_display, R.string.ui_option_separate_display, R.string.ui_option_hide)),
     SelectItem("status_bar_clock_font", R.string.ui_statusbar_font, listOf(R.string.ui_option_system_default, R.string.ui_font_inter, R.string.ui_font_manrope, R.string.ui_font_rubik, R.string.ui_font_lato)),
     SelectItem("status_bar_clock_weight", R.string.ui_statusbar_weight, listOf(R.string.ui_option_follow_system, R.string.ui_weight_100, R.string.ui_weight_200, R.string.ui_weight_300, R.string.ui_weight_400, R.string.ui_weight_500, R.string.ui_weight_600, R.string.ui_weight_700, R.string.ui_weight_800, R.string.ui_weight_900)),
@@ -540,8 +544,12 @@ private val List<SettingsItem>.switches: List<SwitchItem> get() = filterIsInstan
 
 // 分类/全局顶部“一键启用”所管理的项目；目录屏蔽项也属于可启用功能。
 private val SettingsItem.availableOnDevice: Boolean
-    get() = this !is SwitchItem || key != XposedInit.KEY_TABLET_LANDSCAPE_CUTOUT_INSETS_ENABLED
-            || TabletDevice.isTablet()
+    get() = when {
+        this is SelectItem && key == XposedInit.KEY_NETWORK_ICON_POSITION -> Build.VERSION.SDK_INT >= 37
+        this !is SwitchItem -> true
+        key == XposedInit.KEY_TABLET_LANDSCAPE_CUTOUT_INSETS_ENABLED -> TabletDevice.isTablet()
+        else -> true
+    }
 
 private val List<SettingsItem>.masterItems: List<SettingsItem>
     get() = filter { it.availableOnDevice }.filter {

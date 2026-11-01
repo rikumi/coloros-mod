@@ -25,6 +25,7 @@ final class DigitalKeyguardFontHooks {
     private static boolean textHooked;
     private static final WeakHashMap<TextView, Boolean> fontPadding = new WeakHashMap<>();
     private static final WeakHashMap<TextView, Float> spacingAdjustments = new WeakHashMap<>();
+    private static final WeakHashMap<TextView, String> fontFeatures = new WeakHashMap<>();
 
     static void trackText(View host, TextView text) {
         track(host);
@@ -96,6 +97,11 @@ final class DigitalKeyguardFontHooks {
     }
 
     private static void refreshHost(View host) {
+        // Capture before the native setter changes both visible and animation digits.
+        for (Object digit : (Iterable<?>) XposedHelpers.callMethod(host, "getDigitalTimeViews"))
+            for (String getter : new String[]{"getVisibleTextView", "getInVisibleTextView"})
+                if (XposedHelpers.callMethod(digit, getter) instanceof TextView text
+                        && !fontFeatures.containsKey(text)) fontFeatures.put(text, text.getFontFeatureSettings());
         XposedHelpers.callMethod(host, "applyFontStyle", false, false,
                 XposedHelpers.getIntField(host, "appliedFontWeight"), XposedHelpers.getIntField(host, "appliedFontHeight"));
         // Drop a native typeface retained only for animation measurement.
@@ -114,7 +120,7 @@ final class DigitalKeyguardFontHooks {
                     Boolean padding = fontPadding.remove(text);
                     if (padding != null) {
                         text.setIncludeFontPadding(padding);
-                        text.setText(text.getText().toString());
+                        removeGlyphSpans(text);
                         spacingAdjustments.remove(text);
                     }
                 }
@@ -125,7 +131,8 @@ final class DigitalKeyguardFontHooks {
     }
 
     private static void alignSpacing(View host) {
-        if (readIntCached("keyguard_clock_font", 1) == 0) return;
+        if (!active || !KeyguardClockFontHooks.defaultTheme(host)
+                || readIntCached("keyguard_clock_font", 1) == 0) return;
         ArrayList<View> digits = new ArrayList<>();
         for (Object item : (Iterable<?>) XposedHelpers.callMethod(host, "getDigitalTimeViews"))
             if (item instanceof View digit && digit.getVisibility() == View.VISIBLE && digit.getWidth() > 0) digits.add(digit);
@@ -192,9 +199,28 @@ final class DigitalKeyguardFontHooks {
         if (active) for (View host : new ArrayList<>(hosts.keySet())) refreshHost(host);
     }
 
+    static ArrayList<View> captureHosts() { return new ArrayList<>(hosts.keySet()); }
+
+    private static void removeGlyphSpans(TextView text) {
+        if (!(text.getText() instanceof Spanned spans)) return;
+        GlyphSpan[] glyphs = spans.getSpans(0, spans.length(), GlyphSpan.class);
+        if (glyphs.length == 0) return;
+        SpannableString restored = new SpannableString(spans);
+        for (GlyphSpan glyph : glyphs) restored.removeSpan(glyph);
+        text.setText(restored);
+    }
+
     static void cleanup() {
         active = false;
         for (View host : new ArrayList<>(hosts.keySet())) refreshHost(host);
+        // Animation can retain text views that are no longer returned by the host.
+        // Remove every old-generation span so those views cannot retain its loader.
+        for (var entry : fontPadding.entrySet()) {
+            entry.getKey().setIncludeFontPadding(entry.getValue());
+            removeGlyphSpans(entry.getKey());
+        }
+        for (var entry : fontFeatures.entrySet()) entry.getKey().setFontFeatureSettings(entry.getValue());
+        fontFeatures.clear();
         hosts.clear();
         fontPadding.clear();
         spacingAdjustments.clear();

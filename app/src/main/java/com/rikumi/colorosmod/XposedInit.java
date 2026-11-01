@@ -178,6 +178,7 @@ public class XposedInit extends XposedModule {
     public static final String KEY_QS_FILL_EMPTY = "qs_fill_empty";
     public static final String KEY_SEPARATE_NETWORK_TYPE = "separate_network_type";
     public static final String KEY_HIDE_ROAMING_ICON = "hide_roaming_icon";
+    public static final String KEY_NETWORK_ICON_POSITION = "network_icon_position";
     public static final String KEY_SIGNAL_NETWORK_TYPE_MODE = "signal_network_type_mode";
     public static final String KEY_STATUS_BAR_FONT = "status_bar_clock_font";
     public static final String KEY_STATUS_BAR_FONT_WEIGHT = "status_bar_clock_weight";
@@ -881,7 +882,9 @@ public class XposedInit extends XposedModule {
             return false;
         }
         try {
-            Object[] state = new Object[21];
+            Object[] state = new Object[24];
+            state[22] = com.rikumi.colorosmod.hooks.KeyguardClockFontHooks.captureHotReloadHosts();
+            state[23] = com.rikumi.colorosmod.hooks.KeyguardCarrierHooks.captureHotReloadHosts();
             state[0] = StatusBarLyricHooks.captureHotReloadHost();
             state[1] = NotificationHooks.captureHotReloadHost();
             state[2] = SystemServerHooks.captureHotReloadHost();
@@ -1075,6 +1078,12 @@ public class XposedInit extends XposedModule {
                             if (state.length > 10) SignalHooks.restoreHotReloadHosts(state[10]);
                         } catch (Throwable t) {
                             log("onHotReloaded: restore signal hosts failed: " + t);
+                        }
+                        try {
+                            if (state.length > 22) com.rikumi.colorosmod.hooks.KeyguardClockFontHooks.restoreHotReloadHosts(state[22]);
+                            if (state.length > 23) com.rikumi.colorosmod.hooks.KeyguardCarrierHooks.restoreHotReloadHosts(state[23]);
+                        } catch (Throwable t) {
+                            log("onHotReloaded: restore keyguard clock/carrier views failed: " + t);
                         }
                         try {
                             if (state.length > 11) FoldIdleMediaHooks.restoreHotReloadHosts(state[11]);

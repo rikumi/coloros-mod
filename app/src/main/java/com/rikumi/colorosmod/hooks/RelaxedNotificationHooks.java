@@ -59,10 +59,12 @@ final class RelaxedNotificationHooks {
             XposedHelpers.findAndHookMethod("android.app.Notification$Builder", lp.classLoader,
                     "createContentView", new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (!enabled() || !hasRedundantBigText(p.thisObject)) return;
+                            if (!enabled() || !hasRedundantExpandedContent(p.thisObject)) return;
                             fullReloadNotice.set(true);
                             try {
-                                Object object = XposedHelpers.callMethod(p.thisObject, "createExpandedContentView");
+                                Object object = XposedHelpers.getObjectField(p.thisObject, "mStyle") == null
+                                        ? createFullSimpleContent(p.thisObject)
+                                        : XposedHelpers.callMethod(p.thisObject, "createExpandedContentView");
                                 if (object instanceof android.widget.RemoteViews full) {
                                     android.content.Context context = (android.content.Context) XposedHelpers.getObjectField(p.thisObject, "mContext");
                                     int expand = NotificationResourceIds.get(context.getResources(), "expand_button", "id", "android");
@@ -76,7 +78,7 @@ final class RelaxedNotificationHooks {
                     "createExpandedContentView", new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             if (enabled() && !Boolean.TRUE.equals(fullReloadNotice.get())
-                                    && hasRedundantBigText(p.thisObject)) p.setResult(null);
+                                    && hasRedundantExpandedContent(p.thisObject)) p.setResult(null);
                         }
                     });
             // The inflater's compiled lambda may inline Builder's public wrappers.
@@ -84,7 +86,7 @@ final class RelaxedNotificationHooks {
             XposedHelpers.findAndHookMethod("android.app.Notification$Builder", lp.classLoader,
                     "createBigContentView", new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (enabled() && hasRedundantBigText(p.thisObject)) p.setResult(null);
+                            if (enabled() && hasRedundantExpandedContent(p.thisObject)) p.setResult(null);
                         }
                     });
 
@@ -99,6 +101,15 @@ final class RelaxedNotificationHooks {
                     });
 
             Class<?> params = XposedHelpers.findClass("android.app.Notification$StandardTemplateParams", lp.classLoader);
+            // ColorOS's domestic policy moves expanded/headsup titles into alt_title
+            // in the top line. Keeping the app name visible alone would then put it
+            // beside the title. Retain the full header and body title in relaxed mode.
+            NotificationLayoutCompat.optionalHook(XposedHelpers.findClass("android.app.Notification$Builder", lp.classLoader),
+                    "shouldApplyDomesticAppNamePolicy", params, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            if (enabled()) p.setResult(false);
+                        }
+                    });
             int normal = (Integer) XposedHelpers.getStaticObjectField(params, "VIEW_TYPE_NORMAL");
             int expanded = (Integer) XposedHelpers.getStaticObjectField(params, "VIEW_TYPE_EXPANDED");
             int headsUp = (Integer) XposedHelpers.getStaticObjectField(params, "VIEW_TYPE_HEADS_UP");
@@ -187,6 +198,8 @@ final class RelaxedNotificationHooks {
                     "onMeasure", int.class, int.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             if (!enabled() || RelaxedNotificationSurfaceHooks.isPublicContent((View) p.thisObject)) return;
+                            Object expandedChild = XposedHelpers.getObjectField(p.thisObject, "mExpandedChild");
+                            if (expandedChild instanceof View expandedView) RelaxedMessagingGeometryHooks.adjust(expandedView);
                             Object object = XposedHelpers.getObjectField(p.thisObject, "mContractedChild");
                             if (!(object instanceof View child)) return;
                             int id = NotificationResourceIds.get(child.getResources(), "notification_header", "id", "android");
@@ -207,12 +220,23 @@ final class RelaxedNotificationHooks {
                     });
             XposedHelpers.findAndHookMethod("com.android.systemui.statusbar.notification.row.wrapper.NotificationHeaderViewWrapper", lp.classLoader,
                     "updateExpandability", boolean.class, View.OnClickListener.class, boolean.class, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            if (!enabled()) return;
+                            Object group = RelaxedGroupHeaderHooks.expandableGroup(p.thisObject);
+                            if (group == null) return;
+                            // A summary's content need not expand, but its group does.
+                            // Bind the group listener rather than the summary-content listener.
+                            p.args[0] = true;
+                            p.args[1] = XposedHelpers.getObjectField(group, "mHeaderClickListener");
+                        }
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             if (!enabled()) return;
                             Object root = XposedHelpers.getObjectField(p.thisObject, "mView");
                             if (root instanceof View view && RelaxedNotificationSurfaceHooks.isPublicContent(view)) return;
                             Object row = XposedHelpers.getObjectField(p.thisObject, "mRow");
-                            if (row == null || XposedHelpers.getBooleanField(row, "mIsSummaryWithChildren")) return;
+                            if (row == null) return;
+                            if (XposedHelpers.getBooleanField(row, "mIsSummaryWithChildren")
+                                    && RelaxedGroupHeaderHooks.expandableGroup(p.thisObject) == null) return;
                             Object object = XposedHelpers.getObjectField(p.thisObject, "mExpandButton");
                             if (!(object instanceof View button)) return;
                             LegacyExpandAlignmentHooks.centerArrow(button);
@@ -248,13 +272,36 @@ final class RelaxedNotificationHooks {
         } catch (Throwable error) { log("relaxed notification hook failed: " + error); }
     }
 
-    private static boolean hasRedundantBigText(Object builder) {
+    private static Object createFullSimpleContent(Object builder) {
+        // This is the single contracted slot's appearance, not a second expandable slot.
+        // Do not depend on expandedContentViewRequired(): Android 17 may legitimately
+        // return null for a plain notification, even though relaxed mode needs its full shell.
+        Object params = XposedHelpers.getObjectField(builder, "mParams");
+        XposedHelpers.callMethod(params, "reset");
+        int expanded = (Integer) XposedHelpers.getStaticObjectField(params.getClass(), "VIEW_TYPE_EXPANDED");
+        XposedHelpers.callMethod(params, "viewType", expanded);
+        XposedHelpers.callMethod(params, "allowTextWithProgress", true);
+        XposedHelpers.callMethod(params, "fillTextsFrom", builder);
+        XposedHelpers.callMethod(params, "hideAppName", false);
+        int layout = (Integer) XposedHelpers.callMethod(builder, "getExpandedBaseLayoutResource");
+        return XposedHelpers.callMethod(builder, "applyStandardTemplateWithActions", layout, params, null);
+    }
+
+    private static boolean hasRedundantExpandedContent(Object builder) {
         android.app.Notification notification = (android.app.Notification) XposedHelpers.getObjectField(builder, "mN");
 
         if (notification.contentView != null || notification.bigContentView != null
                 || (notification.actions != null && notification.actions.length != 0)) return false;
+        // Builder actions may not have been copied into mN.actions yet.
+        Object actions = XposedHelpers.getObjectField(builder, "mActions");
+        if (actions instanceof java.util.Collection<?> list && !list.isEmpty()) return false;
         android.os.Bundle extras = notification.extras;
-        if (extras == null || !"android.app.Notification$BigTextStyle".equals(extras.getString("android.template"))) return false;
+        String template = extras == null ? null : extras.getString("android.template");
+        Object style = XposedHelpers.getObjectField(builder, "mStyle");
+        // Android 17 can synthesize an expanded standard template even without any
+        // additional content. Its minimal header is smaller than our relaxed shell.
+        if (style == null && android.text.TextUtils.isEmpty(template)) return true;
+        if (extras == null || !"android.app.Notification$BigTextStyle".equals(template)) return false;
         CharSequence text = extras.getCharSequence(android.app.Notification.EXTRA_TEXT);
         CharSequence big = extras.getCharSequence(android.app.Notification.EXTRA_BIG_TEXT);
         CharSequence bigTitle = extras.getCharSequence(android.app.Notification.EXTRA_TITLE_BIG);
@@ -367,9 +414,49 @@ final class RelaxedNotificationHooks {
             current = parent;
         }
         icon.setTranslationY(collapsed ? requestedTop - icon.getTop() : 0f);
+        centerMessageAppIcon(root, line, icon);
+    }
+
+    private static void centerMessageAppIcon(View root, View line, View icon) {
+        int id = NotificationResourceIds.get(root.getResources(), "app_name_text", "id", "android");
+        View name = id == 0 ? null : line.findViewById(id);
+        if (name == null || name.getVisibility() != View.VISIBLE || name.getWidth() == 0
+                || name.getHeight() == 0 || icon.getWidth() == 0 || icon.getHeight() == 0) return;
+        float nameLeft = positionWithin(name, root, true, true);
+        float nameTop = positionWithin(name, root, false, true);
+        float iconLeft = positionWithin(icon, root, true, false);
+        float iconTop = positionWithin(icon, root, false, false);
+        if (Float.isNaN(nameLeft) || Float.isNaN(nameTop) || Float.isNaN(iconLeft) || Float.isNaN(iconTop)) return;
+        boolean rtl = root.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL;
+        float innerEdge = rtl ? root.getWidth() - root.getPaddingRight() - iconMargin(icon)
+                : root.getPaddingLeft() + iconMargin(icon);
+        float nameEdge = rtl ? nameLeft + name.getWidth() : nameLeft;
+        float targetLeft = (innerEdge + nameEdge - icon.getWidth()) / 2f;
+        float targetTop = nameTop + (name.getHeight() - icon.getHeight()) / 2f;
+        // Use the actual name position, including ancestor offsets. In ConversationLayout
+        // the app icon can be nested inside the avatar badge rather than directly in the header.
+        float x = targetLeft - iconLeft, y = targetTop - iconTop;
+        if (icon.getTranslationX() != x) icon.setTranslationX(x);
+        if (icon.getTranslationY() != y) icon.setTranslationY(y);
+    }
+
+    private static float positionWithin(View view, View root, boolean horizontal, boolean ownTranslation) {
+        float position = 0f;
+        boolean first = true;
+        while (view != root) {
+            position += horizontal ? view.getLeft() : view.getTop();
+            if (!first || ownTranslation)
+                position += horizontal ? view.getTranslationX() : view.getTranslationY();
+            if (!(view.getParent() instanceof View parent)) return Float.NaN;
+            position -= horizontal ? parent.getScrollX() : parent.getScrollY();
+            view = parent;
+            first = false;
+        }
+        return position;
     }
 
     static void cleanup() {
+        RelaxedMessagingGeometryHooks.cleanup();
         compactMessage.remove();
         fullReloadNotice.remove();
         messageRoots.clear();

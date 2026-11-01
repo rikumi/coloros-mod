@@ -1131,16 +1131,7 @@ public final class GestureHooks {
         if (home) {
             if (injectHomeKey()) return;
             if (dispatchNavigationButton(navView, true)) return;
-            try {
-                Class<?> controllerClass = XposedHelpers.findClass(
-                        "com.oplus.systemui.navigationbar.gesture.otherbusiness.GestureHomeHandleEventController",
-                        handle.getContext().getClassLoader());
-                Object controller = XposedHelpers.getStaticObjectField(controllerClass, "INSTANCE");
-                XposedHelpers.callMethod(controller, "onLongClick");
-                return;
-            } catch (Throwable t) {
-                log("mback home dispatch failed: " + t);
-            }
+            log("mback home dispatch was rejected");
             return;
         }
 
@@ -1157,11 +1148,13 @@ public final class GestureHooks {
                     home ? "getHomeButton" : "getBackButton");
             Object buttonView = XposedHelpers.callMethod(dispatcher, "getCurrentView");
             if (buttonView == null) return false;
-            if (home) {
-                Object clicked = XposedHelpers.callMethod(buttonView, "performClick");
-                return Boolean.TRUE.equals(clicked);
-            }
+            // Home 和 Back 都由 KeyButtonView.sendEvent 发送按键；performClick
+            // 只调用点击监听器，不能代替 Home 按键（手势模式下尤其如此）。
+            int expectedCode = home ? android.view.KeyEvent.KEYCODE_HOME
+                    : android.view.KeyEvent.KEYCODE_BACK;
+            if (XposedHelpers.getIntField(buttonView, "mCode") != expectedCode) return false;
             long now = android.os.SystemClock.uptimeMillis();
+            XposedHelpers.setLongField(buttonView, "mDownTime", now);
             XposedHelpers.callMethod(buttonView, "sendEvent", 0, 0, now);
             XposedHelpers.callMethod(buttonView, "sendEvent", 1, 0);
             return true;
@@ -1173,7 +1166,14 @@ public final class GestureHooks {
 
     static boolean injectKey(int code) {
         try {
-            Class<?> inputManagerClass = Class.forName("android.hardware.input.InputManager");
+            // ColorOS 17 的 KeyButtonView 使用 InputManagerGlobal；旧系统保留
+            // InputManager 兼容分支，不能只依赖旧版隐藏的 getInstance() 接口。
+            Class<?> inputManagerClass;
+            try {
+                inputManagerClass = Class.forName("android.hardware.input.InputManagerGlobal");
+            } catch (ClassNotFoundException olderPlatform) {
+                inputManagerClass = Class.forName("android.hardware.input.InputManager");
+            }
             Object inputManager = XposedHelpers.callStaticMethod(inputManagerClass, "getInstance");
             long now = android.os.SystemClock.uptimeMillis();
             int flags = android.view.KeyEvent.FLAG_FROM_SYSTEM
@@ -1192,6 +1192,7 @@ public final class GestureHooks {
             Object upAccepted = XposedHelpers.callMethod(inputManager, "injectInputEvent", up, 0);
             return Boolean.TRUE.equals(downAccepted) && Boolean.TRUE.equals(upAccepted);
         } catch (Throwable t) {
+            log("mback key injection failed for " + code + ": " + t);
             return false;
         }
     }

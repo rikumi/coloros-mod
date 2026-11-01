@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.HashMap;
 import java.util.WeakHashMap;
 import java.lang.reflect.Field;
 
@@ -42,11 +43,16 @@ public final class SignalHooks {
     private static final WeakHashMap<View, Mobile> mobiles = new WeakHashMap<>();
     private static final WeakHashMap<ViewGroup, View.OnAttachStateChangeListener> containers = new WeakHashMap<>();
     private static final ThreadLocal<ViewGroup> layoutContainer = new ThreadLocal<>();
+    private static final ThreadLocal<Boolean> networkOrderApplied = new ThreadLocal<>();
+    private static final HashMap<Integer, Boolean> bottomActivityResources = new HashMap<>();
+    private static int mobileActivityId;
     private static ConnectivityManager connectivity;
     private static ConnectivityManager.NetworkCallback networkCallback;
     private static TelephonyManager telephony;
     private static TelephonyCallback dataCallback;
     private static boolean wifiDefault, changingTypeVisibility;
+    private static boolean active = true;
+    private static final Handler main = new Handler(Looper.getMainLooper());
 
     public static void hookDualSignal(XC_LoadPackage.LoadPackageParam pkg) {
         try {
@@ -113,13 +119,27 @@ public final class SignalHooks {
             });
             XposedHelpers.findAndHookMethod(ImageView.class, "onDraw", Canvas.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    ImageView image = (ImageView) p.thisObject;
+                    Canvas canvas = (Canvas) p.args[0];
+                    if (isBottomActivity(image)) {
+                        Drawable drawable = image.getDrawable();
+                        // O17 的 16 高视口中，箭头顶端约在 8.7；移至信号图标的 2 高度。
+                        // 只移动绘制内容，保留 ImageView 的尺寸、原生着色和显隐更新。
+                        float[] offset = {0, -6.7f * drawable.getBounds().height() / 16f};
+                        image.getImageMatrix().mapVectors(offset);
+                        p.setObjectExtra("activityCanvasSave", canvas.save());
+                        canvas.translate(offset[0], offset[1]);
+                    }
                     Mobile mobile = findSignal(p.thisObject);
                     if (mobile == null || mobile.second == null) return;
-                    Canvas canvas = (Canvas) p.args[0];
                     // 分别保存和恢复两排的画布状态，保证上排裁剪不影响下排。
                     drawUpperSignal(canvas, mobile.signal);
                     drawLowerSignal(canvas, mobile.signal, mobile.second.signal);
                     p.setResult(null);
+                }
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    Object save = p.getObjectExtra("activityCanvasSave");
+                    if (save instanceof Integer count) ((Canvas) p.args[0]).restoreToCount(count);
                 }
             });
             Class<?> mobileView = XposedHelpers.findClass(MOBILE, pkg.classLoader);
@@ -138,9 +158,25 @@ public final class SignalHooks {
                             invalidateMergedActivity(p.thisObject);
                         }
                     });
-            // ColorOS 信号资源和颜色均由这两个 Binder 方法更新。
-            Class<?> binder = XposedHelpers.findClass(
-                    "com.oplus.systemui.statusbar.pipeline.mobile.ui.view.OplusStatusBarMobileViewBinder", pkg.classLoader);
+            // ColorOS 17 将信号和颜色更新迁移到了 Abstract Binder 的 Binding。
+            Class<?> binding = XposedHelpers.findClassIfExists(
+                    "com.oplus.systemui.statusbar.pipeline.mobile.ui.view.AbstractOplusStatusBarMobileViewBinder$Binding",
+                    pkg.classLoader);
+            Class<?> binder = XposedHelpers.findClass(binding != null
+                    ? "com.oplus.systemui.statusbar.pipeline.mobile.ui.view.AbstractOplusStatusBarMobileViewBinder"
+                    : "com.oplus.systemui.statusbar.pipeline.mobile.ui.view.OplusStatusBarMobileViewBinder", pkg.classLoader);
+            if (binding != null && android.os.Build.VERSION.SDK_INT >= 37) {
+                XposedHelpers.findAndHookMethod(CONTAINER + "$StatusIconState", pkg.classLoader,
+                        "applyToView", View.class, new XC_MethodHook() {
+                            @Override protected void beforeHookedMethod(MethodHookParam p) {
+                                ViewGroup root = layoutContainer.get();
+                                if (root == null || ((View) p.args[0]).getParent() != root
+                                        || Boolean.TRUE.equals(networkOrderApplied.get())) return;
+                                networkOrderApplied.set(true);
+                                applyNetworkIconOrder(root);
+                            }
+                        });
+            }
             XposedHelpers.findAndHookMethod(binder, "bindCustEx",
                     XposedHelpers.findClass("com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.LocationBasedMobileViewModel", pkg.classLoader),
                     ViewGroup.class, XposedHelpers.findClass("kotlinx.coroutines.flow.Flow", pkg.classLoader),
@@ -152,7 +188,7 @@ public final class SignalHooks {
             XposedHelpers.findAndHookMethod(ImageView.class, "setImageResource", int.class, new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     invalidateMergedActivity(p.thisObject);
-                    for (Mobile mobile : mobiles.values()) if (mobile.type == p.thisObject) {
+                    for (Mobile mobile : mobiles.values()) if (mobile.type == p.thisObject || mobile.typeImage == p.thisObject) {
                         mobile.rat = ratName(mobile.root.getContext(), (Integer) p.args[0]);
                         requestUpdate();
                         break;
@@ -179,8 +215,9 @@ public final class SignalHooks {
                             return;
                         }
                     }
-                    for (Mobile mobile : mobiles.values()) if (mobile.type == p.thisObject) {
-                        mobile.typeVisibility = (Integer) p.args[0];
+                    for (Mobile mobile : mobiles.values()) if (mobile.type == p.thisObject || mobile.typeImage == p.thisObject) {
+                        if (mobile.type == p.thisObject) mobile.typeVisibility = (Integer) p.args[0];
+                        else mobile.typeImageVisibility = (Integer) p.args[0];
                         if (networkTypeMode(true) != 0) p.args[0] = View.GONE;
                         break;
                     }
@@ -198,18 +235,54 @@ public final class SignalHooks {
                     });
             Class<?> model = XposedHelpers.findClass(
                     "com.android.systemui.statusbar.pipeline.mobile.domain.model.SignalIconModel", pkg.classLoader);
-            XposedHelpers.findAndHookMethod(binder, "bindCustEx$updateSignalIcon", ImageView.class, model,
-                    new XC_MethodHook() {
-                        @Override protected void afterHookedMethod(MethodHookParam p) {
-                            invalidatePrimary(p.args[0]);
-                            if (findSignal(p.args[0]) != null) requestUpdate();
+            if (binding != null) {
+                XposedHelpers.findAndHookMethod(binding, "updateSignalIcon", model, new XC_MethodHook() {
+                    @Override protected void afterHookedMethod(MethodHookParam p) {
+                        Object signal = XposedHelpers.callMethod(p.thisObject, "getIconView");
+                        invalidatePrimary(signal);
+                        if (findSignal(signal) != null) requestUpdate();
+                    }
+                });
+                XposedHelpers.findAndHookMethod(binding, "updateTint", int.class, new XC_MethodHook() {
+                    @Override protected void afterHookedMethod(MethodHookParam p) {
+                        View root = (View) XposedHelpers.callMethod(p.thisObject, "getViewGroup");
+                        Mobile mobile = mobiles.get(root);
+                        if (mobile != null) {
+                            updateTint(mobile);
+                            invalidatePrimary(mobile.signal);
                         }
-                    });
-            XposedHelpers.findAndHookMethod(binder, "bindCustEx$updateTint", ImageView.class, ImageView.class,
-                    ImageView.class, ImageView.class, ImageView.class, int.class, new XC_MethodHook() {
-                        @Override protected void afterHookedMethod(MethodHookParam p) { invalidatePrimary(p.args[3]); }
-                    });
+                    }
+                });
+                Class<?> os17 = XposedHelpers.findClass(
+                        "com.oplus.systemui.statusbar.pipeline.mobile.ui.view.OplusStatusBarMobileViewBinder$Os17Binding",
+                        pkg.classLoader);
+                XposedHelpers.findAndHookMethod(os17, "bindNetworkTypeText", XposedHelpers.findClass(
+                        "com.android.systemui.statusbar.pipeline.mobile.domain.model.OplusNetworkTypeTextModel",
+                        pkg.classLoader), new XC_MethodHook() {
+                    @Override protected void afterHookedMethod(MethodHookParam p) {
+                        View root = (View) XposedHelpers.callMethod(p.thisObject, "getViewGroup");
+                        Mobile mobile = mobiles.get(root);
+                        if (mobile != null) {
+                            mobile.rat = networkTypeText(p.args[0]);
+                            requestUpdate();
+                        }
+                    }
+                });
+            } else {
+                XposedHelpers.findAndHookMethod(binder, "bindCustEx$updateSignalIcon", ImageView.class, model,
+                        new XC_MethodHook() {
+                            @Override protected void afterHookedMethod(MethodHookParam p) {
+                                invalidatePrimary(p.args[0]);
+                                if (findSignal(p.args[0]) != null) requestUpdate();
+                            }
+                        });
+                XposedHelpers.findAndHookMethod(binder, "bindCustEx$updateTint", ImageView.class, ImageView.class,
+                        ImageView.class, ImageView.class, ImageView.class, int.class, new XC_MethodHook() {
+                            @Override protected void afterHookedMethod(MethodHookParam p) { invalidatePrimary(p.args[3]); }
+                        });
+            }
             log("HOOK OK StatusIconContainer / OplusStatusBarMobileViewBinder (dual signal)");
+            main.post(SignalHooks::discoverAttachedHosts);
         } catch (Throwable t) {
             log("HOOK FAIL dual signal: " + t);
         }
@@ -217,8 +290,10 @@ public final class SignalHooks {
 
     private static void enterLayout(XC_MethodHook.MethodHookParam p, ViewGroup root) {
         p.setObjectExtra("previousSignalContainer", layoutContainer.get());
+        p.setObjectExtra("previousNetworkOrderApplied", networkOrderApplied.get());
         p.setObjectExtra("signalLayoutEntered", true);
         layoutContainer.set(root);
+        networkOrderApplied.set(false);
     }
 
     private static void leaveLayout(XC_MethodHook.MethodHookParam p) {
@@ -226,6 +301,41 @@ public final class SignalHooks {
         ViewGroup previous = (ViewGroup) p.getObjectExtra("previousSignalContainer");
         if (previous == null) layoutContainer.remove();
         else layoutContainer.set(previous);
+        Boolean previousOrder = (Boolean) p.getObjectExtra("previousNetworkOrderApplied");
+        if (previousOrder == null) networkOrderApplied.remove();
+        else networkOrderApplied.set(previousOrder);
+    }
+
+    private static void applyNetworkIconOrder(ViewGroup root) {
+        int mode = readIntCached(KEY_NETWORK_ICON_POSITION, 0);
+        if (mode != 1 && mode != 2) return;
+        int tag = id(root, "status_bar_view_state_tag");
+        List<Object> states = new ArrayList<>();
+        List<View> views = new ArrayList<>();
+        for (int i = 0; i < root.getChildCount(); i++) {
+            View view = root.getChildAt(i);
+            Object state = view.getTag(tag);
+            // Underflow-hidden and merged secondary SIM roots do not occupy a visible slot.
+            if (state == null || XposedHelpers.getIntField(state, "visibleState") != 0) continue;
+            states.add(state);
+            views.add(view);
+        }
+        int size = states.size();
+        float[] x = new float[size], widths = new float[size];
+        int[] kinds = new int[size];
+        for (int i = 0; i < size; i++) {
+            View view = views.get(i);
+            x[i] = ((Number) XposedHelpers.callMethod(states.get(i), "getXTranslation")).floatValue();
+            widths[i] = view.getWidth();
+            String name = view.getClass().getName();
+            if (MOBILE.equals(name)) kinds[i] = NetworkIconOrder.MOBILE;
+            else if ("com.oplus.systemui.statusbar.phone.signal.widget.OplusModernStatusBarWifiView".equals(name))
+                kinds[i] = NetworkIconOrder.WIFI;
+        }
+        float[] positions = NetworkIconOrder.positions(x, widths, kinds, mode);
+        for (int i = 0; i < size; i++) {
+            if (positions[i] != x[i]) XposedHelpers.callMethod(states.get(i), "setXTranslation", positions[i]);
+        }
     }
 
     private static void prepare(ViewGroup container) {
@@ -295,7 +405,7 @@ public final class SignalHooks {
                     LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT);
                     // 放在其它状态图标之后、信号组合之前，左侧间距参与实际测量。
-                    params.setMarginStart(Math.round(density(mobile.root)));
+                    params.setMarginStart(Math.round(3 * density(mobile.root)));
                     View combo = mobile.root.findViewById(id(mobile.root, "mobile_combo_real"));
                     int position = combo == null ? group.getChildCount() : group.indexOfChild(combo);
                     group.addView(mobile.label, position, params);
@@ -305,7 +415,7 @@ public final class SignalHooks {
                 Mobile source = mobile.second != null ? data : mobile == data ? mobile : null;
                 mobile.dataOnUpper = mobile.second != null && source == mobile;
                 LinearLayout.LayoutParams labelParams = (LinearLayout.LayoutParams) mobile.label.getLayoutParams();
-                int startMargin = Math.round(density(mobile.root));
+                int startMargin = Math.round(3 * density(mobile.root));
                 if (labelParams.getMarginStart() != startMargin) {
                     labelParams.setMarginStart(startMargin);
                     mobile.label.setLayoutParams(labelParams);
@@ -456,6 +566,11 @@ public final class SignalHooks {
             Object model = captured(oplus,
                     "com.oplus.systemui.statusbar.pipeline.mobile.ui.viewmodel.OplusMobileIconViewModel");
             if (model == null) return;
+            if (mobile.type instanceof TextView) {
+                Object flow = XposedHelpers.callMethod(model, "getNetworkTypeText");
+                mobile.rat = networkTypeText(XposedHelpers.callMethod(flow, "getValue"));
+                return;
+            }
             Object flow = XposedHelpers.callMethod(model, "getNetworkTypeIcon");
             Object icon = XposedHelpers.callMethod(flow, "getValue");
             mobile.rat = icon == null ? "" : ratName(mobile.root.getContext(),
@@ -474,9 +589,20 @@ public final class SignalHooks {
         return null;
     }
 
+    private static String networkTypeText(Object model) {
+        Object text = model == null ? null : XposedHelpers.callMethod(model, "getNetworkTypeText");
+        if (text == null) return "";
+        return (String) XposedHelpers.callMethod(text, "getPrefix")
+                + (String) XposedHelpers.callMethod(text, "getSuffix");
+    }
+
     private static void setTypeVisibility(Mobile mobile, int visibility) {
         changingTypeVisibility = true;
-        try { mobile.type.setVisibility(visibility); }
+        try {
+            mobile.type.setVisibility(visibility);
+            if (mobile.typeImage != null) mobile.typeImage.setVisibility(
+                    networkTypeMode(true) == 0 ? mobile.typeImageVisibility : View.GONE);
+        }
         finally { changingTypeVisibility = false; }
     }
 
@@ -519,12 +645,16 @@ public final class SignalHooks {
             wifiDefault = initial != null && initial.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
             networkCallback = new ConnectivityManager.NetworkCallback() {
                 @Override public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) {
+                    if (!active) return;
                     wifiDefault = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
                     requestUpdate();
                 }
-                @Override public void onLost(Network network) { wifiDefault = false; requestUpdate(); }
+                @Override public void onLost(Network network) {
+                    if (!active) return;
+                    wifiDefault = false; requestUpdate();
+                }
             };
-            connectivity.registerDefaultNetworkCallback(networkCallback, new Handler(Looper.getMainLooper()));
+            connectivity.registerDefaultNetworkCallback(networkCallback, main);
             telephony = context.getSystemService(TelephonyManager.class);
             if (telephony != null) {
                 dataCallback = new DataSubscriptionCallback();
@@ -539,6 +669,7 @@ public final class SignalHooks {
     }
 
     private static void requestUpdate() {
+        if (!active) return;
         for (ViewGroup root : new ArrayList<>(containers.keySet())) root.requestLayout();
     }
 
@@ -561,6 +692,24 @@ public final class SignalHooks {
                 break;
             }
         }
+    }
+
+    private static boolean isBottomActivity(ImageView image) {
+        if (android.os.Build.VERSION.SDK_INT < 37 || image.getDrawable() == null) return false;
+        if (mobileActivityId == 0) {
+            mobileActivityId = id(image, "data_inout");
+        }
+        if (image.getId() == 0 || image.getId() != mobileActivityId)
+            return false;
+        int resource = XposedHelpers.getIntField(image, "mResource");
+        if (resource == 0) return false;
+        Boolean bottom = bottomActivityResources.get(resource);
+        if (bottom == null) {
+            String name = image.getResources().getResourceEntryName(resource);
+            bottom = name.startsWith("stat_signal_activity_") && name.endsWith("_os17");
+            bottomActivityResources.put(resource, bottom);
+        }
+        return bottom;
     }
 
     private static void drawLowerActivity(Canvas canvas, Mobile mobile) {
@@ -631,14 +780,28 @@ public final class SignalHooks {
     }
 
     public static void onSettingsSnapshotPublished() {
-        new Handler(Looper.getMainLooper()).post(() -> {
-            for (ViewGroup container : new ArrayList<>(containers.keySet())) container.requestLayout();
-        });
+        main.post(SignalHooks::requestUpdate);
     }
 
-    public static Object captureHotReloadHosts() { return new ArrayList<>(containers.keySet()); }
+    public static Object captureHotReloadHosts() {
+        ArrayList<Object[]> state = new ArrayList<>();
+        for (Mobile mobile : mobiles.values()) state.add(new Object[]{mobile.root, mobile.rat});
+        return new Object[]{new ArrayList<>(containers.keySet()), state};
+    }
 
     public static void restoreHotReloadHosts(Object state) {
+        if (state instanceof Object[] saved) {
+            // Seed the last bound RAT before prepare() creates the independent label.
+            // The native StateFlow need not emit again when its value is unchanged.
+            if (saved.length > 1 && saved[1] instanceof List<?> items)
+                for (Object item : items) if (item instanceof Object[] entry && entry.length > 1
+                        && entry[0] instanceof View root && entry[1] instanceof String rat) {
+                    Mobile mobile = initialize(root);
+                    if (mobile != null) mobile.rat = rat;
+                }
+            if (saved.length > 0) restoreHotReloadHosts(saved[0]);
+            return;
+        }
         if (!(state instanceof List<?> hosts)) return;
         for (Object host : hosts) if (host instanceof ViewGroup container) {
             prepare(container);
@@ -646,7 +809,30 @@ public final class SignalHooks {
         }
     }
 
+    private static void discoverAttachedHosts() {
+        if (!active) return;
+        try {
+            Object manager = XposedHelpers.callStaticMethod(Class.forName("android.view.WindowManagerGlobal"), "getInstance");
+            for (String name : (String[]) XposedHelpers.callMethod(manager, "getViewRootNames")) {
+                Object root = XposedHelpers.callMethod(manager, "getRootView", name);
+                if (root instanceof View view) discoverHost(view);
+            }
+        } catch (Throwable error) { log("signal host discovery failed: " + error); }
+    }
+
+    private static void discoverHost(View view) {
+        if (!(view instanceof ViewGroup group)) return;
+        if (CONTAINER.equals(view.getClass().getName())) {
+            prepare(group);
+            group.requestLayout();
+            return;
+        }
+        for (int i = 0; i < group.getChildCount(); i++) discoverHost(group.getChildAt(i));
+    }
+
     public static void cleanupForHotReload() {
+        active = false;
+        main.removeCallbacksAndMessages(null);
         for (Mobile mobile : mobiles.values()) restoreMobile(mobile);
         for (ViewGroup root : containers.keySet()) root.removeOnAttachStateChangeListener(containers.get(root));
         try {
@@ -660,6 +846,9 @@ public final class SignalHooks {
         mobiles.clear();
         containers.clear();
         layoutContainer.remove();
+        networkOrderApplied.remove();
+        bottomActivityResources.clear();
+        mobileActivityId = 0;
     }
 
     private static void restoreMobile(Mobile mobile) {
@@ -675,23 +864,29 @@ public final class SignalHooks {
             ((ViewGroup) mobile.group).removeView(mobile.roamingLabel);
             mobile.roamingLabel = null;
         }
-        if (mobile.type != null) setTypeVisibility(mobile, mobile.typeVisibility);
+        if (mobile.type != null) {
+            setTypeVisibility(mobile, mobile.typeVisibility);
+            changingTypeVisibility = true;
+            try {
+                if (mobile.typeImage != null) mobile.typeImage.setVisibility(mobile.typeImageVisibility);
+            } finally { changingTypeVisibility = false; }
+        }
         setRoamingVisibility(mobile, false);
         mobile.root.removeOnLayoutChangeListener(mobile.layoutListener);
     }
 
     private static final class Mobile {
-        final View root, group, roaming, roamingSpace;
+        final View root, group, roaming, roamingSpace, type;
         final ViewGroup combo;
         final int originalComboMinWidth;
         int reservedComboWidth;
         boolean reservedTypeSlot, reservedActivitySlot;
         final View.OnLayoutChangeListener layoutListener;
         int roamingVisibility, roamingSpaceVisibility;
-        final ImageView signal, type, inout;
+        final ImageView signal, typeImage, inout;
         final float inoutTranslationX;
         TextView label, roamingLabel;
-        int typeVisibility;
+        int typeVisibility, typeImageVisibility;
         String rat = "";
         final float groupAlpha;
         final int groupMarginEnd;
@@ -706,13 +901,17 @@ public final class SignalHooks {
             originalComboMinWidth = combo == null ? 0 : combo.getMinimumWidth();
             groupMarginEnd = group.getLayoutParams() instanceof ViewGroup.MarginLayoutParams params
                     ? params.getMarginEnd() : 0;
-            roaming = root.findViewById(id(root, "mobile_roaming"));
+            View roamingIcon = root.findViewById(id(root, "mobile_roaming"));
+            roaming = roamingIcon != null ? roamingIcon : root.findViewById(id(root, "mobile_roaming_text"));
             roamingSpace = root.findViewById(id(root, "mobile_roaming_space"));
             roamingVisibility = roaming == null ? View.GONE : roaming.getVisibility();
             roamingSpaceVisibility = roamingSpace == null ? View.GONE : roamingSpace.getVisibility();
             layoutListener = (view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> alignNetworkLabel(this);
             root.addOnLayoutChangeListener(layoutListener);
-            type = root.findViewById(id(root, "mobile_type"));
+            View legacyType = root.findViewById(id(root, "mobile_type"));
+            type = legacyType != null ? legacyType : root.findViewById(id(root, "mobile_type_text"));
+            typeImage = root.findViewById(id(root, "mobile_type_image"));
+            typeImageVisibility = typeImage == null ? View.GONE : typeImage.getVisibility();
             inout = root.findViewById(id(root, "data_inout"));
             inoutTranslationX = inout == null ? 0f : inout.getTranslationX();
             typeVisibility = type == null ? View.GONE : type.getVisibility();
@@ -731,7 +930,7 @@ public final class SignalHooks {
             for (int i = 0; i < combo.getChildCount(); i++) {
                 View child = combo.getChildAt(i);
                 // 无制式显示时不保留其资源宽度，否则 Wi-Fi 等状态会留下额外空白。
-                if (child == type && !includeType || child == inout && !includeActivity) continue;
+                if ((child == type || child == typeImage) && !includeType || child == inout && !includeActivity) continue;
                 // 合并漫游标记已由外部 R1/R2 文字显示，不保留原生漫游图标占位。
                 if (child == roaming) continue;
                 ViewGroup.LayoutParams params = child.getLayoutParams();
