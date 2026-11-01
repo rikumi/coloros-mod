@@ -10,9 +10,6 @@ import android.net.Uri;
 
 public class SettingsProvider extends ContentProvider {
     public static final String AUTHORITY = "com.rikumi.colorosmod.settings";
-    public static final String LAUNCHER_STARTUP_CLAIM = "launcher_startup_claim";
-    public static final String LAUNCHER_STARTUP_RELEASE = "launcher_startup_release";
-    private static final Object LAUNCHER_STARTUP_LOCK = new Object();
     public static final String PREF_NAME = "settings";
     // 一次性取回全部设置的特殊键, 供被 hook 进程后台预热(见 XposedInit#startSettingsLoader)。
     public static final String KEY_ALL = "__all__";
@@ -72,34 +69,16 @@ public class SettingsProvider extends ContentProvider {
 
     @Override
     public android.os.Bundle call(String method, String arg, android.os.Bundle extras) {
-        if (!LAUNCHER_STARTUP_CLAIM.equals(method) && !LAUNCHER_STARTUP_RELEASE.equals(method))
+        if (!FolderGridSettings.NATIVE_GRID.equals(method))
             return super.call(method, arg, extras);
         Context context = getContext();
         if (context == null) return null;
         String[] callers = context.getPackageManager().getPackagesForUid(android.os.Binder.getCallingUid());
         if (callers == null || !java.util.Arrays.asList(callers).contains("com.android.launcher"))
             throw new SecurityException("Launcher lifecycle calls require Launcher UID");
-        if (arg == null || !arg.matches("[1-9][0-9]*(?::[0-9]+)?")) return null;
-        int boot = android.provider.Settings.Global.getInt(context.getContentResolver(), "boot_count", -1);
-        if (boot < 0) return null;
-        String epoch = boot + ":" + arg;
-        SharedPreferences lifecycle = context.createDeviceProtectedStorageContext()
-                .getSharedPreferences("launcher_lifecycle", Context.MODE_PRIVATE);
-        synchronized (LAUNCHER_STARTUP_LOCK) {
-            String previous = lifecycle.getString("refreshed_zygote", "");
-            boolean claimed = false;
-            if (LAUNCHER_STARTUP_CLAIM.equals(method)) {
-                if (!epoch.equals(previous)) {
-                    if (!lifecycle.edit().putString("refreshed_zygote", epoch).commit()) return null;
-                    claimed = true;
-                }
-            } else if (epoch.equals(previous)) {
-                lifecycle.edit().remove("refreshed_zygote").commit();
-            }
-            android.os.Bundle result = new android.os.Bundle();
-            result.putBoolean("claimed", claimed);
-            return result;
-        }
+        if (extras != null) FolderGridSettings.recordNative(context,
+                extras.getInt(FolderGridSettings.ROWS), extras.getInt(FolderGridSettings.COLUMNS));
+        return new android.os.Bundle();
     }
 
     @Override

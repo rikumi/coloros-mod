@@ -55,6 +55,7 @@ public final class LauncherHooks {
     public static void onSettingsSnapshotPublished(java.util.Map<String, Integer> settings) {
         TaskbarGestureHooks.onSettingsSnapshotPublished();
         LauncherIconGapHooks.onSettingsSnapshotPublished(settings);
+        FolderGridHooks.onSettingsSnapshotPublished(settings);
         LauncherPopupBrightnessHooks.refresh();
         LauncherStartupRefresh.onSettingsSnapshotPublished();
         DrawerInstallTimeHooks.onSettingsSnapshotPublished(settings);
@@ -159,7 +160,7 @@ public final class LauncherHooks {
         }
     }
 
-    static void refreshAfterZygote(Object model) {
+    static void refreshAfterStartup(Object model) {
         synchronized (sHiddenSettingsLock) {
             sNeedsInitialModelReload = false;
             sInitialModelReloadPending = false;
@@ -712,6 +713,7 @@ public final class LauncherHooks {
         TaskbarGestureHooks.cleanupForHotReload();
         LauncherStartupRefresh.cleanup();
         LauncherIconGapHooks.cleanup();
+        FolderGridHooks.cleanup();
         LauncherPopupBrightnessHooks.cleanup();
         LauncherIdleRefresh.cleanup();
         LauncherIconClarityHooks.cleanup();
@@ -945,6 +947,8 @@ public final class LauncherHooks {
 
         try { LauncherIconGapHooks.hook(lpparam); }
         catch (Throwable error) { log("launcher icon-label spacing hooks unavailable: " + error); }
+        try { FolderGridHooks.hook(lpparam); }
+        catch (Throwable error) { log("launcher folder grid hooks unavailable: " + error); }
         hookDrawerLayout(lpparam);
 
         // 字母索引滚动定位: 始终注入, 运行时按 KEY_DRAWER_LETTER_SCROLL_ENABLED 门控。

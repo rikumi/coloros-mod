@@ -858,7 +858,7 @@ private fun SettingsSwitchRow(
         if (item.rootBacked) {
             if (overrideValue != null) {
                 checked = overrideValue
-                rootValue = item.sliderDefault
+                rootValue = if (overrideValue) item.sliderDefault else null
                 return@LaunchedEffect
             }
             val result = withContext(Dispatchers.IO) { readSystemSetting(item.key) }
@@ -946,27 +946,35 @@ private fun SettingsSwitchRow(
     }
     // 带滑条的设置项: 数值显示在标题行右侧, 滑条默认折叠; 单独开启功能时自动展开。
     var expanded by remember(item.key) { mutableStateOf(false) }
-    var intVal by remember(item.sliderKey, item.sliderMin, item.sliderMax, rowVersion, rowOverride) {
-        mutableStateOf((rootValue ?: prefs.getInt(item.sliderKey, item.sliderDefault)).coerceIn(item.sliderMin, item.sliderMax))
+    var intVal by remember(item.sliderKey, item.sliderMin, item.sliderMax, item.sliderDefault, rowVersion, rowOverride) {
+        // 关闭时不读取滑条设置，也不取功能默认值；0 仅为不显示的 UI 占位。
+        val value = if (checked) {
+            val stored = rootValue ?: prefs.getInt(item.sliderKey, if (item.sliderFollowsSystem) 0 else item.sliderDefault)
+            (if (item.sliderFollowsSystem && stored == 0) item.sliderDefault else stored)
+                .coerceIn(item.sliderMin, item.sliderMax)
+        } else 0
+        mutableStateOf(value)
     }
     LaunchedEffect(rootValue) {
-        if (item.rootBacked && rootValue != null) intVal = rootValue!!
+        if (checked && item.rootBacked && rootValue != null) intVal = rootValue!!
     }
     val stepCount = ((item.sliderMax - item.sliderMin) / item.sliderStep).coerceAtLeast(1)
     Column(modifier = Modifier.fillMaxWidth()) {
         SettingsSwitchPreference(
             checked = checked,
             onCheckedChange = {
+                if (it) {
+                    val stored = if (item.rootBacked) item.sliderDefault
+                        else prefs.getInt(item.sliderKey, if (item.sliderFollowsSystem) 0 else item.sliderDefault)
+                    intVal = (if (item.sliderFollowsSystem && stored == 0) item.sliderDefault else stored)
+                        .coerceIn(item.sliderMin, item.sliderMax)
+                    if (item.rootBacked) rootValue = intVal
+                }
                 checked = it
                 expanded = it
                 if (!item.rootBacked) setBool(ctx, item.key, it)
-                if (item.rootBacked) rootValue = item.sliderDefault
-                if (!it) {
-                    intVal = item.sliderDefault
-                    if (!item.rootBacked) setInt(ctx, item.sliderKey, item.sliderDefault)
-                }
                 scope.launch(Dispatchers.IO) {
-                    applySystemSetting(item.key, it, item.sliderDefault)
+                    applySystemSetting(item.key, it, if (it) intVal else 0)
                 }
                 onItemChanged()
             },

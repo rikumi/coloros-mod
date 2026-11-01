@@ -205,4 +205,6 @@
     <string name="ui_recents_hide_closed_freeform">Hide closed floating window from Recents</string>
     <string name="ui_disabled_apps_continue">I understand the risks, continue</string>
     <string name="ui_fingerprint_ring">Replace fingerprint icon with a plain ring</string>
+    <string name="ui_folder_rows">Change folder rows</string>
+    <string name="ui_folder_columns">Change folder columns</string>
 </resources>

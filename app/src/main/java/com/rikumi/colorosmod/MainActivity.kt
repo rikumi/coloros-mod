@@ -226,12 +226,21 @@ internal data class SwitchItem(
     val masterManaged: Boolean = true,
     val masterEnableAllowed: Boolean = true,
     val defaultEnabled: Boolean = false,
+    val sliderFollowsSystem: Boolean = false,
 ) : SettingsItem
 
-private fun SettingsItem.forDevice(isPad: Boolean): SettingsItem =
-    if (isPad && this is SwitchItem) {
+private fun SettingsItem.forDevice(ctx: Context, isPad: Boolean): SettingsItem =
+    if (this is SwitchItem) {
         when (key) {
-            XposedInit.KEY_QS_MERGED_LANDSCAPE_SWAP -> copy(label = R.string.qs_merged_landscape_split_tablet)
+            XposedInit.KEY_QS_MERGED_LANDSCAPE_SWAP ->
+                if (isPad) copy(label = R.string.qs_merged_landscape_split_tablet) else this
+            FolderGridSettings.ROWS_ENABLED -> copy(sliderMin = 3,
+                sliderMax = FolderGridSettings.maxRows(),
+                sliderDefault = FolderGridSettings.nativeRows(ctx).coerceIn(3, FolderGridSettings.maxRows()))
+            FolderGridSettings.COLUMNS_ENABLED -> copy(sliderMin = FolderGridSettings.minColumns(),
+                sliderMax = FolderGridSettings.maxColumns(),
+                sliderDefault = FolderGridSettings.displayColumns(ctx).coerceIn(
+                    FolderGridSettings.minColumns(), FolderGridSettings.maxColumns()))
             else -> this
         }
     } else this
@@ -275,6 +284,12 @@ private val DESKTOP: List<SettingsItem> = listOf(
     SwitchItem("popup_dynamic_blur_enabled", R.string.ui_popup_blur),
     SwitchItem("desktop_popup_bg_brightness_enabled", R.string.ui_popup_brightness, sliderKey = "desktop_popup_bg_brightness", sliderMax = 10, sliderDefault = 0, sliderUnit = ""),
     GroupTitleItem(R.string.ui_folders),
+    SwitchItem(FolderGridSettings.ROWS_ENABLED, R.string.ui_folder_rows,
+        sliderKey = FolderGridSettings.ROWS, sliderMin = 3, sliderMax = 6, sliderDefault = 4,
+        sliderUnit = "", sliderFollowsSystem = true),
+    SwitchItem(FolderGridSettings.COLUMNS_ENABLED, R.string.ui_folder_columns,
+        sliderKey = FolderGridSettings.COLUMNS, sliderMin = 3, sliderMax = 4, sliderDefault = 3,
+        sliderUnit = "", sliderFollowsSystem = true),
     SwitchItem("folder_bg_transparent_enabled", R.string.ui_folder_transparent),
     SwitchItem("folder_anim_duration_enabled", R.string.ui_folder_duration, sliderKey = "folder_anim_duration_ms", sliderMax = 500, sliderDefault = 300, sliderUnit = "ms", sliderMin = 100),
 )
@@ -675,7 +690,7 @@ fun SettingsScreen(resumeRequest: Int = 0) {
     // 主开关: scope = null 作用于全部功能(首页), 否则只作用于该分类的设置项。
     val onMasterChange: (String?, Boolean) -> Unit = { targetScope, target ->
         val items = (targetScope?.let { id -> CATEGORIES.first { it.id == id }.items.masterItems }
-            ?: CATEGORIES.flatMap { it.items.masterItems }).map { it.forDevice(isPad) }
+            ?: CATEGORIES.flatMap { it.items.masterItems }).map { it.forDevice(ctx, isPad) }
         masterOverride = MasterOverride(targetScope, target)
         version++
         scope.launch {
@@ -694,10 +709,17 @@ fun SettingsScreen(resumeRequest: Int = 0) {
                             if (target && (!item.masterEnableAllowed || item.key == AppNavigationSettings.ENABLED
                                     || (item.key == HomeControlsTileSettings.KEY && !enableHomeControls))) return@forEach
                             if (item.rootBacked) {
-                                applySystemSetting(item.key, target, item.sliderDefault)
+                                applySystemSetting(item.key, target, if (target) item.sliderDefault else 0)
                             } else {
+                                if (target) item.sliderKey?.let { sliderKey ->
+                                    val default = when (item.key) {
+                                        FolderGridSettings.ROWS_ENABLED -> 4
+                                        FolderGridSettings.COLUMNS_ENABLED -> FolderGridSettings.masterColumns(ctx)
+                                        else -> item.sliderDefault
+                                    }
+                                    setInt(ctx, sliderKey, default)
+                                }
                                 setBool(ctx, item.key, target)
-                                if (!target) item.sliderKey?.let { setInt(ctx, it, item.sliderDefault) }
                                 // 一键启用“彻底隐藏应用”时, 默认补上电话本与 Gboard(若已安装)。
                                 if (target && item.key == HiddenLauncherApps.ENABLED) addDefaultHiddenApps(ctx)
                             }
@@ -985,7 +1007,7 @@ private fun CategoryScreen(
     val isPad = LocalConfiguration.current.smallestScreenWidthDp >= 600
     // 按 GroupTitleItem 切分: 每段一张卡片, 段与段之间自然留出 group 间距。
     val groups = remember(category, version, overrideValue, isPad) {
-        category.items.filter { it.availableOnDevice }.map { it.forDevice(isPad) }.filterNot {
+        category.items.filter { it.availableOnDevice }.map { it.forDevice(ctx, isPad) }.filterNot {
             it is SwitchItem && it.key == "drawer_letter_scroll_enabled"
                     && prefs.getBoolean("drawer_install_time_sort_enabled", false)
         }.splitByDivider()

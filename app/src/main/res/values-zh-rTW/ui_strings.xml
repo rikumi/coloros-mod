@@ -205,4 +205,6 @@
     <string name="ui_drawer_install_time_sort">抽屜按安裝時間排序</string>
     <string name="ui_disabled_apps_continue">已了解風險，繼續</string>
     <string name="ui_fingerprint_ring">指紋圖示替換為普通環形</string>
+    <string name="ui_folder_rows">修改資料夾行數</string>
+    <string name="ui_folder_columns">修改資料夾列數</string>
 </resources>
