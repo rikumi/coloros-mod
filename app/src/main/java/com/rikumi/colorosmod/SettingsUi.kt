@@ -165,7 +165,7 @@ fun SettingsLargeTitle(
     SmallTopAppBar(
         title = title, subtitle = subtitle.orEmpty(), modifier = modifier,
         scrollBehavior = scrollBehavior, actions = actions,
-        titlePadding = LocalSettingsTitlePadding.current,
+        titlePadding = LocalSettingsTitlePadding.current + 4.dp,
     )
 }
 

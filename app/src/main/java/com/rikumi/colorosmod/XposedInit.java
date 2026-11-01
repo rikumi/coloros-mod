@@ -83,6 +83,7 @@ public class XposedInit extends XposedModule {
     public static final String KEY_QS_TOPMARGIN_ENABLED = "qs_topmargin_enabled";
     public static final String KEY_NOTIFICATION_SUBTITLE_ENABLED = "notification_subtitle_enabled";
     public static final String KEY_NOTIFICATION_PADDING_ENABLED = "notification_padding_enabled";
+    public static final String KEY_NOTIFICATION_ROUND_CLEAR_ALL_ENABLED = "notification_round_clear_all_enabled";
     public static final String KEY_NOTIFICATION_LAYOUT_STYLE =
             "notification_layout_style";
     public static final int NOTIFICATION_LAYOUT_STYLE_DEFAULT = 2;
@@ -539,9 +540,11 @@ public class XposedInit extends XposedModule {
             com.rikumi.colorosmod.hooks.AppNavigationHooks.onSettingsChanged();
             com.rikumi.colorosmod.hooks.LegacyNotificationLayoutHooks.onSettingsSnapshotPublished();
             QsHooks.onCornerRadiusSettingsChanged();
+            com.rikumi.colorosmod.hooks.SliderActiveCornersHooks.refresh();
             SignalHooks.onSettingsSnapshotPublished();
             StatusBarLyricHooks.onSettingsSnapshotPublished();
             com.rikumi.colorosmod.hooks.PasswordDialHooks.refresh();
+            com.rikumi.colorosmod.hooks.BouncerBackgroundBrightnessHooks.refresh();
             FoldIdleMediaHooks.refresh();
             StatusBarFontHooks.refresh();
             MergedCardRatioHooks.refresh();
@@ -550,6 +553,8 @@ public class XposedInit extends XposedModule {
             MergedSettingsRotationHooks.refresh();
             StatusBarExtrasHooks.refresh();
             MonochromeNotificationHooks.refresh();
+            com.rikumi.colorosmod.hooks.NotificationBackgroundBrightnessHooks.refresh();
+            com.rikumi.colorosmod.hooks.RoundNotificationClearAllHooks.refresh();
             com.rikumi.colorosmod.hooks.KeyguardCarrierHooks.refresh();
             com.rikumi.colorosmod.hooks.KeyguardClockFontHooks.refresh();
         }
@@ -754,6 +759,9 @@ public class XposedInit extends XposedModule {
             SettingsHooks.cleanupForHotReload();
         }
         if ("com.android.systemui".equals(sHookedPackageName)) {
+            com.rikumi.colorosmod.hooks.NotificationBackgroundBrightnessHooks.cleanupForHotReload();
+            com.rikumi.colorosmod.hooks.RoundNotificationClearAllHooks.cleanupForHotReload();
+            com.rikumi.colorosmod.hooks.BouncerBackgroundBrightnessHooks.cleanup();
             com.rikumi.colorosmod.hooks.LegacyNotificationLayoutHooks.cleanupForHotReload();
             try { AncTileHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("anc hot reload cleanup failed: " + t); }
@@ -882,9 +890,12 @@ public class XposedInit extends XposedModule {
             return false;
         }
         try {
-            Object[] state = new Object[24];
+            Object[] state = new Object[26];
+            state[25] = com.rikumi.colorosmod.hooks.RoundNotificationClearAllHooks.capture();
+            state[24] = com.rikumi.colorosmod.hooks.SliderActiveCornersHooks.capture();
             state[22] = com.rikumi.colorosmod.hooks.KeyguardClockFontHooks.captureHotReloadHosts();
             state[23] = com.rikumi.colorosmod.hooks.KeyguardCarrierHooks.captureHotReloadHosts();
+            state[21] = com.rikumi.colorosmod.hooks.NotificationBackgroundBrightnessHooks.capture();
             state[0] = StatusBarLyricHooks.captureHotReloadHost();
             state[1] = NotificationHooks.captureHotReloadHost();
             state[2] = SystemServerHooks.captureHotReloadHost();
@@ -1061,6 +1072,9 @@ public class XposedInit extends XposedModule {
                         }
                         try {
                             if (state.length > 5) NotificationHooks.restoreHotReloadViews(state[5]);
+                            if (state.length > 21) com.rikumi.colorosmod.hooks.NotificationBackgroundBrightnessHooks.restore(state[21]);
+                            if (state.length > 24) com.rikumi.colorosmod.hooks.SliderActiveCornersHooks.restore(state[24]);
+                            if (state.length > 25) com.rikumi.colorosmod.hooks.RoundNotificationClearAllHooks.restore(state[25]);
                         } catch (Throwable t) {
                             log("onHotReloaded: restore notification views failed: " + t);
                         }

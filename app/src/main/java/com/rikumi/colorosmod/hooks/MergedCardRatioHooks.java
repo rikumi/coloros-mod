@@ -24,12 +24,19 @@ import java.util.WeakHashMap;
 
 public final class MergedCardRatioHooks {
     private static Class<?> containerClass, constraintParamsClass, highlightClass, mediaClass, roundRectClass, iconClass, normalTileClass;
+    private static Class<?> mediaBackdropClass;
+    private static float lastMediaRadiusDiagnostic = Float.NaN;
+    private static final WeakHashMap<View, Boolean> mediaHosts = new WeakHashMap<>();
+    private static final WeakHashMap<View, WeakReference<View>> mediaUnitCards = new WeakHashMap<>();
     private static final WeakHashMap<ViewGroup, Boolean> hosts = new WeakHashMap<>();
     private static final WeakHashMap<ViewGroup, MediaTilePlacement> mediaTilePlacements = new WeakHashMap<>();
     private static final WeakHashMap<View, Boolean> nativeLabelPadding = new WeakHashMap<>();
     private static final WeakHashMap<View, Boolean> layoutListeners = new WeakHashMap<>();
     private static final View.OnLayoutChangeListener layoutListener = (view, l, t, r, b, ol, ot, or, ob) -> {
-        if (!ratioEnabled(view)) return;
+        if (!ratioEnabled(view)) {
+            if (mediaClass != null && mediaClass.isInstance(view) && customHighlightRadius(view) != null) applyOutline(view);
+            return;
+        }
         if (containerClass.isInstance(view)) refreshPaths((ViewGroup) view);
         else adjustLayout(view);
     };
@@ -101,6 +108,13 @@ public final class MergedCardRatioHooks {
             mediaClass = XposedHelpers.findClassIfExists("com.oplus.systemui.qs.media.OplusQsBaseMediaPanelView", pkg.classLoader);
             if (mediaClass == null)
                 mediaClass = XposedHelpers.findClass("com.oplus.systemui.qs.media.OplusQsMediaPanelView", pkg.classLoader);
+            mediaBackdropClass = XposedHelpers.findClassIfExists("com.oplus.systemui.qs.media.multilight.OplusQsMediaBackgroundDrawable", pkg.classLoader);
+            NotificationLayoutCompat.optionalHook(mediaClass, "getContainerCornerRadius", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    Float radius = customHighlightRadius((View) p.thisObject);
+                    if (radius != null) p.setResult(radius);
+                }
+            });
             roundRectClass = XposedHelpers.findClassIfExists("com.oplusos.systemui.common.outline.RoundRectOutlineProvider", pkg.classLoader);
             XC_MethodHook iconMeasure = new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
@@ -228,14 +242,15 @@ public final class MergedCardRatioHooks {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     p.setObjectExtra("previousOutlineOwner", outlineOwner.get());
                     View view = (View) p.thisObject;
-                    if (mergedRoot(view) != null && (ratioEnabled(view) || customHighlightRadius(view) != null)) outlineOwner.set(view);
+                    if (mediaClass.isInstance(view)) { mediaHosts.put(view, true); ensureLayoutListener(view); }
+                    if ((mergedRoot(view) != null && ratioEnabled(view)) || customHighlightRadius(view) != null) outlineOwner.set(view);
                 }
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     View previous = (View) p.getObjectExtra("previousOutlineOwner");
                     if (previous != null) outlineOwner.set(previous); else outlineOwner.remove();
                     View view = (View) p.thisObject;
-                    if (!p.hasThrowable() && mergedRoot(view) != null
-                            && (ratioEnabled(view) || customHighlightRadius(view) != null)) applyOutline(view);
+                    if (!p.hasThrowable() && ((mergedRoot(view) != null && ratioEnabled(view))
+                            || customHighlightRadius(view) != null)) applyOutline(view);
                 }
             };
             XposedHelpers.findAndHookDeclaredMethod(highlightClass, "onOutlineUpdate", java.util.List.class, outlineChanged);
@@ -823,8 +838,40 @@ public final class MergedCardRatioHooks {
     }
 
     private static Float customHighlightRadius(View view) {
-        return highlightClass.isInstance(view) && mergedRoot(view) != null
-                ? QsHooks.resolveQsCornerRadiusPx(view) : null;
+        if (mediaClass.isInstance(view)) return mediaCornerRadius(view);
+        return highlightClass.isInstance(view) && mergedRoot(view) != null ? QsHooks.resolveQsCornerRadiusPx(view) : null;
+    }
+
+    private static Float mediaCornerRadius(View media) {
+        Integer percent = QsHooks.qsCornerRadiusPercent();
+        if (percent == null) return null;
+        WeakReference<View> reference = mediaUnitCards.get(media);
+        View unit = reference == null ? null : reference.get();
+        if (unit == null || !unit.isAttachedToWindow() || unit.getRootView() != media.getRootView()) {
+            unit = findUnitCardBackground(media.getRootView());
+            if (unit != null) mediaUnitCards.put(media, new WeakReference<>(unit));
+        }
+        int width = unit == null ? 0 : unit.getWidth();
+        if (width <= 0) {
+            // The expanded 1x1 tile uses type 0 in OplusQSTileBaseViewImpl.
+            // This also works before its grid has completed the first layout.
+            Class<?> sizes = XposedHelpers.findClassIfExists("com.oplus.systemui.qs.helper.OplusQSTileSizeHelper", media.getClass().getClassLoader());
+            if (sizes != null) width = ((Number) XposedHelpers.callStaticMethod(sizes, "getQsTileSize", media.getContext(), 0)).intValue();
+        }
+        return width > 0 ? width * percent / 100f : null;
+    }
+
+    private static View findUnitCardBackground(View view) {
+        if (normalTileClass.isInstance(view) && !highlightClass.isInstance(view) && view.isShown()) {
+            View background = field(view, "mBg");
+            if (background != null && background.getWidth() > 0
+                    && Math.abs(background.getWidth() - background.getHeight()) <= 1) return background;
+        }
+        if (view instanceof ViewGroup group) for (int i = 0; i < group.getChildCount(); i++) {
+            View background = findUnitCardBackground(group.getChildAt(i));
+            if (background != null) return background;
+        }
+        return null;
     }
 
     private static Object outlineProvider(View view, Object source) {
@@ -840,13 +887,14 @@ public final class MergedCardRatioHooks {
     }
 
     private static void refreshHighlightRadii(View view) {
-        if (highlightClass.isInstance(view) && customHighlightRadius(view) != null) applyOutline(view);
+        if ((highlightClass.isInstance(view) || mediaClass.isInstance(view)) && customHighlightRadius(view) != null) applyOutline(view);
         if (view instanceof ViewGroup group)
             for (int i = 0; i < group.getChildCount(); i++) refreshHighlightRadii(group.getChildAt(i));
     }
 
     private static void applyOutline(View view) {
         if (roundRectClass == null) return;
+        if (mediaClass.isInstance(view)) { mediaHosts.put(view, true); ensureLayoutListener(view); }
         Object drawable = XposedHelpers.getObjectField(view, (highlightClass.isInstance(view) || normalTileClass.isInstance(view)) ? "mBgDrawable" : "transitionDrawable");
         Object current = XposedHelpers.callMethod(drawable, "getPathProvider");
         RadiusState state = radii.get(view);
@@ -858,17 +906,32 @@ public final class MergedCardRatioHooks {
         if (state != null && state.drawable.get() == drawable && current == state.installed
                 && source == state.source && Float.compare(state.radius, scaled) == 0) return;
         XposedHelpers.callMethod(drawable, "setPathProvider", provider);
+        updateMediaLightCorners(view, drawable, provider);
         radii.put(view, new RadiusState(drawable, source, provider, scaled));
-        view.invalidate();
+        view.invalidateOutline(); view.invalidate();
+    }
+
+    private static void updateMediaLightCorners(View view, Object drawable, Object provider) {
+        if (mediaClass.isInstance(view) && mediaBackdropClass != null && mediaBackdropClass.isInstance(drawable)) {
+            float radius = ((Number) XposedHelpers.callMethod(provider, "getCornerRadius")).floatValue();
+            XposedHelpers.callMethod(drawable, "setCornerParams",
+                    radius, XposedHelpers.callMethod(provider, "getCornerWeight"));
+            if (Float.compare(radius, lastMediaRadiusDiagnostic) != 0) {
+                lastMediaRadiusDiagnostic = radius;
+                XposedBridge.log("qs media corner radius applied: radius=" + radius);
+            }
+        }
     }
 
     private static void restoreRadius(View view) {
         RadiusState state = radii.remove(view);
         if (state != null) {
             Object drawable = state.drawable.get();
-            if (drawable != null && XposedHelpers.callMethod(drawable, "getPathProvider") == state.installed)
+            if (drawable != null && XposedHelpers.callMethod(drawable, "getPathProvider") == state.installed) {
                 XposedHelpers.callMethod(drawable, "setPathProvider", state.source);
-            view.invalidate();
+                updateMediaLightCorners(view, drawable, state.source);
+            }
+            view.invalidateOutline(); view.invalidate();
         }
         if (sliderRadii.remove(view) != null) {
             restoringRadius.set(true);
@@ -983,6 +1046,14 @@ public final class MergedCardRatioHooks {
 
     public static void refresh() {
         handler.post(() -> {
+            // A visible separated media panel may predate hot reload and is not
+            // contained in the merged QS hosts restored by older module versions.
+            try {
+                Object global = XposedHelpers.callStaticMethod(Class.forName("android.view.WindowManagerGlobal"), "getInstance");
+                Object roots = XposedHelpers.getObjectField(global, "mViews");
+                if (roots instanceof java.util.Collection<?> list) for (Object root : new ArrayList<>(list))
+                    if (root instanceof View view) collectMediaHosts(view);
+            } catch (Throwable error) { log("qs media radius discovery failed: " + error); }
             MergedSplitShadeHooks.refresh();
             MergedLandscapeHooks.refresh();
             MergedTileGridHooks.refresh();
@@ -997,13 +1068,23 @@ public final class MergedCardRatioHooks {
                 else refreshHighlightRadii(root);
                 root.requestLayout();
             }
+            for (View media : new ArrayList<>(mediaHosts.keySet())) if (media != null) {
+                if (customHighlightRadius(media) != null || (mergedRoot(media) != null && ratioEnabled(media))) applyOutline(media);
+                else restoreRadius(media);
+            }
         });
+    }
+
+    private static void collectMediaHosts(View view) {
+        if (mediaClass.isInstance(view)) { mediaHosts.put(view, true); ensureLayoutListener(view); return; }
+        if (view instanceof ViewGroup group) for (int i = 0; i < group.getChildCount(); i++) collectMediaHosts(group.getChildAt(i));
     }
 
     public static Object captureHotReloadHosts() {
         ArrayList<Object> views = new ArrayList<>(hosts.keySet());
         views.addAll(MergedTileGridHooks.capture());
         views.addAll(MergedSplitShadeHooks.capture());
+        views.addAll(mediaHosts.keySet());
         return views;
     }
     public static void restoreHotReloadHosts(Object state) {
@@ -1011,6 +1092,9 @@ public final class MergedCardRatioHooks {
             MergedSplitShadeHooks.restoreHosts(views);
             MergedTileGridHooks.restoreHosts(views);
             for (Object view : views) if (view instanceof ViewGroup root && containerClass.isInstance(root)) hosts.put(root, true);
+            for (Object view : views) if (view instanceof View media && mediaClass.isInstance(media)) {
+                mediaHosts.put(media, true); ensureLayoutListener(media);
+            }
         }
         refresh();
     }
@@ -1026,6 +1110,9 @@ public final class MergedCardRatioHooks {
         layoutListeners.clear(); nativeLabelPadding.clear();
         MergedTileGridHooks.cleanup();
         for (ViewGroup root : new ArrayList<>(hosts.keySet())) if (root != null) restore(root);
+        for (View media : new ArrayList<>(mediaHosts.keySet())) if (media != null) restoreRadius(media);
+        mediaHosts.clear();
+        mediaUnitCards.clear();
         MergedPhoneCardLayout.cleanup();
         cardScales.clear(); gridCards.clear(); geometryPasses.clear();
         hosts.clear(); originals.clear(); radii.clear(); sliderRadii.clear(); geometry.clear(); iconSizes.clear(); iconTransforms.clear();

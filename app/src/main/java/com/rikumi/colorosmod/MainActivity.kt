@@ -281,6 +281,12 @@ private val DESKTOP: List<SettingsItem> = listOf(
 private val QS: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_qs_general),
     SwitchItem("qs_scrim_translucent_enabled", R.string.ui_qs_brightness, sliderKey = "qs_scrim_brightness", sliderMax = 20, sliderDefault = 0, sliderUnit = "%"),
+    SwitchItem("qs_bg_brightness_enabled", R.string.ui_qs_bg_brightness,
+        sliderKey = "qs_bg_brightness_percent", sliderMin = 50, sliderMax = 100, sliderDefault = 75, sliderStep = 5, sliderUnit = "%"),
+    SwitchItem("qs_bg_opacity_enabled", R.string.ui_qs_bg_opacity,
+        subtitle = R.string.ui_background_opacity_hint,
+        sliderKey = "qs_bg_opacity_percent", sliderMin = 0, sliderMax = 100,
+        sliderDefault = 50, sliderStep = 5, sliderUnit = "%"),
     SwitchItem("qs_blur_radius_enabled", R.string.ui_qs_blur_radius, sliderKey = "qs_blur_radius", sliderMax = 80, sliderDefault = 40, sliderUnit = ""),
     SwitchItem("qs_blur_scale_enabled", R.string.ui_qs_blur_scale, sliderKey = "qs_blur_scale", sliderMax = 100, sliderDefault = 50, sliderUnit = "%"),
     SwitchItem("qs_carrier_enabled", R.string.ui_qs_carrier),
@@ -290,7 +296,8 @@ private val QS: List<SettingsItem> = listOf(
     SwitchItem("qs_tile_name_ellipsis_enabled", R.string.ui_qs_tile_ellipsis),
     SwitchItem("fold_idle_media", R.string.ui_fold_idle_media),
     SwitchItem("qs_fill_empty", R.string.ui_qs_fill_empty),
-    SwitchItem("qs_corner_radius_enabled", R.string.ui_qs_normal_corner, subtitle = R.string.ui_qs_corner_hint, sliderKey = "qs_corner_radius_percent", sliderMin = 20, sliderMax = 50, sliderDefault = 25, sliderUnit = "%"),
+    SwitchItem("qs_corner_radius_enabled", R.string.ui_qs_normal_corner, sliderKey = "qs_corner_radius_percent", sliderMin = 10, sliderMax = 50, sliderDefault = 30, sliderUnit = "%"),
+    SwitchItem("slider_active_top_corners", R.string.ui_slider_active_top_corners),
     SwitchItem("qs_clock_no_expand_anim_enabled", R.string.ui_qs_clock_single_line),
     SwitchItem(HomeControlsTileSettings.KEY, R.string.ui_module_home_controls_tile, R.string.ui_module_home_controls_tile_hint),
     SwitchItem("anc_tile_enabled", R.string.ui_anc_tile),
@@ -314,6 +321,14 @@ private val NOTIF: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_notif_settings),
     SwitchItem("notification_swipe_to_dismiss_enabled", R.string.ui_notification_swipe),
     SwitchItem("notification_pull_expand_enabled", R.string.ui_notification_pull),
+    SwitchItem(XposedInit.KEY_NOTIFICATION_ROUND_CLEAR_ALL_ENABLED, R.string.ui_notification_round_clear_all),
+    SwitchItem("notification_bg_brightness_enabled", R.string.ui_notification_bg_brightness,
+        sliderKey = "notification_bg_brightness_percent", sliderMin = 50, sliderMax = 100,
+        sliderDefault = 75, sliderStep = 5, sliderUnit = "%"),
+    SwitchItem("notification_bg_opacity_enabled", R.string.ui_notification_bg_opacity,
+        subtitle = R.string.ui_background_opacity_hint,
+        sliderKey = "notification_bg_opacity_percent", sliderMin = 0, sliderMax = 100,
+        sliderDefault = 50, sliderStep = 5, sliderUnit = "%"),
     SwitchItem("notification_subtitle_enabled", R.string.ui_notification_subtitle, sliderKey = "notification_subtitle_sp", sliderMax = 16, sliderDefault = 8, sliderUnit = "sp"),
     SwitchItem("notification_padding_enabled", R.string.ui_notification_padding, sliderKey = "notification_padding_dp", sliderMax = 8, sliderDefault = 4),
     SwitchItem("notification_real_app_name_enabled", R.string.ui_notification_real_app_name),
@@ -547,6 +562,8 @@ private val SettingsItem.availableOnDevice: Boolean
     get() = when {
         this is SelectItem && key == XposedInit.KEY_NETWORK_ICON_POSITION -> Build.VERSION.SDK_INT >= 37
         this !is SwitchItem -> true
+        key == "qs_bg_brightness_enabled" || key == "qs_bg_opacity_enabled" -> Build.VERSION.SDK_INT >= 37
+        key == XposedInit.KEY_NOTIFICATION_ROUND_CLEAR_ALL_ENABLED -> Build.VERSION.SDK_INT >= 37
         key == XposedInit.KEY_TABLET_LANDSCAPE_CUTOUT_INSETS_ENABLED -> TabletDevice.isTablet()
         else -> true
     }
@@ -724,25 +741,23 @@ fun SettingsScreen(resumeRequest: Int = 0) {
                     .weight(TABLET_LEFT_PANE_WEIGHT)
                     .fillMaxHeight(),
             ) {
-                CompositionLocalProvider(LocalSettingsTitlePadding provides (LocalSettingsTitlePadding.current + 4.dp)) {
-                    HomeScreen(
-                        cardStyle = cardStyle,
-                        bannerCache = bannerCache,
-                        missingScopes = missingScopes,
-                        masterChecked = masterOverride.valueFor(null) ?: anyEnabled,
-                        onMasterChange = { onMasterChange(null, it) },
-                        // 桌面设置是右栏默认页, 点击它回到 null 以保持返回键能退出。
-                        onOpenCategory = { id -> navigate(if (id == "desktop") null else id) },
-                        selectedCategoryId = when (openCategoryId) {
-                            HIDDEN_LAUNCHER_APPS_ID -> "hidden_apps"
-                            NAVIGATION_APPS_ID -> "navigation"
-                            FONT_APPS_ID -> "system_fonts"
-                            LICENSES_PAGE -> ABOUT_PAGE
-                            else -> openCategoryId ?: "desktop"
-                        },
-                        showRestartMenu = false,
-                    )
-                }
+                HomeScreen(
+                    cardStyle = cardStyle,
+                    bannerCache = bannerCache,
+                    missingScopes = missingScopes,
+                    masterChecked = masterOverride.valueFor(null) ?: anyEnabled,
+                    onMasterChange = { onMasterChange(null, it) },
+                    // 桌面设置是右栏默认页, 点击它回到 null 以保持返回键能退出。
+                    onOpenCategory = { id -> navigate(if (id == "desktop") null else id) },
+                    selectedCategoryId = when (openCategoryId) {
+                        HIDDEN_LAUNCHER_APPS_ID -> "hidden_apps"
+                        NAVIGATION_APPS_ID -> "navigation"
+                        FONT_APPS_ID -> "system_fonts"
+                        LICENSES_PAGE -> ABOUT_PAGE
+                        else -> openCategoryId ?: "desktop"
+                    },
+                    showRestartMenu = false,
+                )
             }
             Box(
                 Modifier

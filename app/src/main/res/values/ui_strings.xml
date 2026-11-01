@@ -29,12 +29,12 @@
     <string name="ui_fold_idle_media">"无媒体播放时隐藏播放控件"</string>
     <string name="ui_qs_fill_empty">"分离控制中心空缺位置用磁贴补位"</string>
     <string name="ui_qs_normal_corner">调整长形磁贴圆角比例</string>
-    <string name="ui_qs_corner_hint" formatted="false">50% 为 OxygenOS 样式</string>
     <string name="ui_qs_clock_single_line">"合并版时间日期固定单行"</string>
     <string name="ui_anc_tile">"音量条显示切换降噪模式图标"</string>
     <string name="ui_notif_settings">"通知中心设置"</string>
     <string name="ui_notification_swipe">"通知左滑直接清除"</string>
     <string name="ui_notification_pull">"通知下滑展开"</string>
+    <string name="ui_notification_round_clear_all">恢复圆形清空通知按钮</string>
     <string name="ui_notification_subtitle">"缩小通知静默区域副标题"</string>
     <string name="ui_notification_padding">"增加通知上下内边距"</string>
     <string name="ui_statusbar_settings">"状态栏设置"</string>

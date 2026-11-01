@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_slider_active_top_corners">Round the top corners of active volume/brightness tracks</string>
+</resources>

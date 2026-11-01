@@ -29,12 +29,12 @@
     <string name="ui_fold_idle_media">"Hide media controls when not playing"</string>
     <string name="ui_qs_fill_empty">"Fill spaces with tiles in separate CC"</string>
     <string name="ui_qs_normal_corner">Adjust long tile corner radius</string>
-    <string name="ui_qs_corner_hint" formatted="false">50% gives the OxygenOS style</string>
     <string name="ui_qs_clock_single_line">"Force one-line header in combined shade"</string>
     <string name="ui_anc_tile">"Noise control switch on volume slider"</string>
     <string name="ui_notif_settings">"Notification Center settings"</string>
     <string name="ui_notification_swipe">"Swipe to dismiss noti. for CN models"</string>
     <string name="ui_notification_pull">"Swipe down to expand for CN models"</string>
+    <string name="ui_notification_round_clear_all">Restore circular clear notifications button</string>
     <string name="ui_notification_subtitle">"Smaller silent notification subtitle"</string>
     <string name="ui_notification_padding">"Increase vertical padding"</string>
     <string name="ui_statusbar_settings">"Status bar settings"</string>

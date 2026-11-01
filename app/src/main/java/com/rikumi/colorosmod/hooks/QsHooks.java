@@ -637,6 +637,16 @@ public final class QsHooks {
     public static void hookQsNormalCornerRadius(final XC_LoadPackage.LoadPackageParam lpparam) {
 
         try {
+            Class<?> layout = XposedHelpers.findClass("com.oplus.systemui.qs.base.seek.OplusQsBaseToggleSliderLayout", lpparam.classLoader);
+            NotificationLayoutCompat.optionalHook(layout, "getRoundParams", float.class, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam param) {
+                    if (qsCornerRadiusPercent() != null)
+                        param.setResult(naturalSliderRoundParams((View) param.thisObject, (Float) param.args[0]));
+                }
+            });
+        } catch (Throwable t) { log("qs_radius natural curve hook failed: " + t); }
+
+        try {
             XposedHelpers.findAndHookMethod(
                     "com.oplus.systemui.qs.base.seek.OplusQsBaseToggleSliderLayout",
                     lpparam.classLoader, "setCornerRadius", float.class,
@@ -654,6 +664,30 @@ public final class QsHooks {
                             } catch (Throwable t) {
                                 log("qs_radius slider fail: " + t);
                             }
+                        }
+                        @Override protected void afterHookedMethod(MethodHookParam param) {
+                            if (param.hasThrowable() || qsCornerRadiusPercent() == null) return;
+                            try {
+                                View layout = (View) param.thisObject;
+                                Object slider = XposedHelpers.getObjectField(layout, "slider");
+                                if (slider == null) return;
+                                Object natural = naturalSliderRoundParams(layout, (Float) param.args[0]);
+                                float radius = ((Number) XposedHelpers.callMethod(natural, "getRadius")).floatValue();
+                                float weight = ((Number) XposedHelpers.callMethod(natural, "getWeight")).floatValue();
+                                // Global themes and full-corner shapes can force weight 0/1.
+                                // Restore the same natural curve consumed by the native clipping
+                                // and blur/stroke paths, without changing the selected size.
+                                if (XposedHelpers.getFloatField(slider, "mBackgroundRoundCornerWeight") == weight
+                                        && XposedHelpers.getFloatField(slider, "mBackgroundRadius") == radius) return;
+                                XposedHelpers.callMethod(slider, "setBackgroundRoundCornerWeight", weight);
+                                XposedHelpers.callMethod(slider, "setBackgroundRadius", radius);
+                                XposedHelpers.callMethod(slider, "setPaddingVertical", radius);
+                                Object listener = XposedHelpers.getObjectField(layout, "onRadiusUpdateListener");
+                                if (listener != null) XposedHelpers.callMethod(listener, "invoke", param.args[0], natural);
+                                if (android.os.Build.VERSION.SDK_INT >= 37)
+                                    XposedHelpers.callMethod(slider, "updateBaseMixColorDrawableRadius", XposedHelpers.getFloatField(slider, "mCurProgressRadius"));
+                                else XposedHelpers.callMethod(slider, "updateBaseMixColorDrawableRadius");
+                            } catch (Throwable t) { log("qs_radius natural curve update failed: " + t); }
                         }
                     });
             log("HOOK OK OplusQsBaseToggleSliderLayout#setCornerRadius");
@@ -694,6 +728,17 @@ public final class QsHooks {
                 + "SepQSTileResInteractor$startHighlightTileOutlineCollection$2");
 
         hookQsHighlightRadius(lpparam);
+    }
+
+    private static Object naturalSliderRoundParams(View layout, float requestedRadius) {
+        ClassLoader loader = layout.getClass().getClassLoader();
+        Class<?> helper = XposedHelpers.findClass("com.oplusos.systemui.common.util.OplusQsSmoothRoundUtil", loader);
+        Object params = XposedHelpers.callStaticMethod(helper, "getRoundParams", layout.getContext(), requestedRadius);
+        Class<?> type = XposedHelpers.findClass("com.oplusos.systemui.common.util.OplusRoundParams", loader);
+        float radius = params == null ? requestedRadius : ((Number) XposedHelpers.callMethod(params, "getRadius")).floatValue();
+        float radiusDp = radius / layout.getResources().getDisplayMetrics().density;
+        // Native natural round rectangles use weight 3; do not mutate cached system params.
+        return XposedHelpers.newInstance(type, radiusDp, radius, 3f, false);
     }
 
     // 旧版 ROM 的磁贴圆角入口: 直接改返回的半径(px), 比替换 outline provider 更靠上游。

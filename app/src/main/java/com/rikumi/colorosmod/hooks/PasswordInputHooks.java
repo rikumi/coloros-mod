@@ -154,6 +154,7 @@ public final class PasswordInputHooks {
 
     public static void hookBouncerBackgroundBrightness(
             final XC_LoadPackage.LoadPackageParam lpparam) {
+        BouncerBackgroundBrightnessHooks.hook(lpparam);
         try {
             XposedHelpers.findAndHookMethod(
                     CLS_PANEL_BLUR_EX_KT, lpparam.classLoader,
