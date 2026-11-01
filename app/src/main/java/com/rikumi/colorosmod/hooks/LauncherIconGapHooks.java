@@ -28,7 +28,7 @@ final class LauncherIconGapHooks {
             if (apply(view)) changed++;
             // Binding can set the correct padding while mDisableRelayout suppresses
             // requestLayout(). Revisit layout even if the numeric value is unchanged.
-            view.requestLayout();
+            requestGapLayout(view);
             view.invalidate();
         }
         XposedBridge.log("launcher icon-label spacing refreshed: tracked=" + views.length
@@ -38,13 +38,24 @@ final class LauncherIconGapHooks {
     static void hook(XC_LoadPackage.LoadPackageParam lp) {
         Class<?> bubble = XposedHelpers.findClass("com.android.launcher3.BubbleTextView", lp.classLoader);
         bubbleClass = bubble;
-        XposedHelpers.findAndHookMethod(bubble, "getRegularCompoundDrawablePadding", new XC_MethodHook() {
+        XC_MethodHook paddingHook = new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam p) {
                 if (!active || p.hasThrowable() || !(p.thisObject instanceof TextView view)
                         || !(p.getResult() instanceof Integer padding) || !supported(view)) return;
                 p.setResult(padding + extraPadding(view));
             }
-        });
+        };
+        XposedHelpers.findAndHookMethod(bubble, "getRegularCompoundDrawablePadding", paddingHook);
+        try {
+            Class<?> oplus = XposedHelpers.findClass("com.android.launcher3.OplusBubbleTextView", lp.classLoader);
+            // Both classes declare a PRIVATE method: this is not an override.
+            // Reflective refresh resolves the subclass declaration, whereas native
+            // updateIconBounds calls the base declaration after a press/visibility change.
+            oplus.getDeclaredMethod("getRegularCompoundDrawablePadding");
+            XposedHelpers.findAndHookMethod(oplus, "getRegularCompoundDrawablePadding", paddingHook);
+        } catch (NoSuchMethodException | XposedHelpers.ClassNotFoundError ignored) {
+            // Some Launcher versions only declare the base implementation.
+        }
         XposedBridge.hookAllMethods(bubble, "onAttachedToWindow", new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam p) {
                 if (active && p.thisObject instanceof TextView view) {
@@ -107,12 +118,22 @@ final class LauncherIconGapHooks {
             int padding = (Integer) XposedHelpers.callMethod(view, "getRegularCompoundDrawablePadding");
             if (view.getCompoundDrawablePadding() != padding) {
                 view.setCompoundDrawablePadding(padding);
-                view.requestLayout();
+                requestGapLayout(view);
                 view.invalidate();
                 return true;
             }
         } catch (Throwable error) { log("launcher icon-label spacing update failed: " + error); }
         return false;
+    }
+
+    private static void requestGapLayout(TextView view) {
+        boolean disabled = XposedHelpers.getBooleanField(view, "mDisableRelayout");
+        try {
+            if (disabled) XposedHelpers.setBooleanField(view, "mDisableRelayout", false);
+            view.requestLayout();
+        } finally {
+            if (disabled) XposedHelpers.setBooleanField(view, "mDisableRelayout", true);
+        }
     }
 
     private static boolean supported(TextView view) {

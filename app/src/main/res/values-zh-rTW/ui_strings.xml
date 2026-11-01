@@ -2,6 +2,7 @@
 <resources>
     <string name="ui_desktop_layout">"桌面佈局"</string>
     <string name="ui_icon_gap">"增加圖示與名稱間距"</string>
+    <string name="ui_drawer">"桌面抽屜"</string>
     <string name="ui_drawer_columns">"調整抽屜圖示大小與間距"</string>
     <string name="ui_drawer_letter_scroll">"字母索引捲動定位"</string>
     <string name="ui_drawer_letter_scroll_hint">"點右側字母條捲動到對應位置，而不是彈出圖示"</string>
@@ -24,7 +25,8 @@
     <string name="ui_qs_carrier">"控制中心隱藏電信業者"</string>
     <string name="ui_qs_topmargin">"隱藏頂部狀態圖示簇"</string>
     <string name="ui_qs_panel_switch">"分離版左右平移切換"</string>
-    <string name="ui_qs_settings">"控制中心設定"</string>
+    <string name="ui_qs_tile_visual">磁貼視覺</string>
+    <string name="ui_qs_tile_behavior">磁貼行為</string>
     <string name="ui_qs_tile_ellipsis">"Wi-Fi / 藍芽名稱單行省略"</string>
     <string name="ui_fold_idle_media">"無媒體播放時隱藏播放控制項"</string>
     <string name="ui_qs_fill_empty">"分離控制中心空缺位置用磁貼補位"</string>
@@ -202,4 +204,5 @@
     <string name="ui_reload_timed_out">"超時 %1$d"</string>
     <string name="ui_drawer_install_time_sort">抽屜按安裝時間排序</string>
     <string name="ui_disabled_apps_continue">已了解風險，繼續</string>
+    <string name="ui_fingerprint_ring">指紋圖示替換為普通環形</string>
 </resources>

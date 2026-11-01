@@ -13,6 +13,7 @@ public final class SystemUiHooks {
         HomeControlsTileHooks.hook(lpparam);
         KeyguardCarrierHooks.hook(lpparam);
         KeyguardClockFontHooks.hook(lpparam);
+        FingerprintRingHooks.hook(lpparam);
 
         // Feature 5 — 隐藏运营商名: 始终注入, 运行时按 KEY_QS_CARRIER_ENABLED 门控(见内部)。
         QsHooks.hookQsHideCarrier(lpparam);

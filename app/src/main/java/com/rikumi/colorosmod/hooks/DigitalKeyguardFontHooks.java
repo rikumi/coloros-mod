@@ -24,7 +24,7 @@ final class DigitalKeyguardFontHooks {
     private static boolean active = true;
     private static boolean textHooked;
     private static final WeakHashMap<TextView, Boolean> fontPadding = new WeakHashMap<>();
-    private static final WeakHashMap<TextView, Float> spacingAdjustments = new WeakHashMap<>();
+    private static final ThreadLocal<View> layoutClock = new ThreadLocal<>();
     private static final WeakHashMap<TextView, String> fontFeatures = new WeakHashMap<>();
 
     static void trackText(View host, TextView text) {
@@ -55,14 +55,7 @@ final class DigitalKeyguardFontHooks {
                         }
                     });
                 }
-                Class<?> clockClass = host.getClass();
-                XposedHelpers.findAndHookMethod(clockClass, "onLayout", boolean.class, int.class, int.class,
-                        int.class, int.class, new XC_MethodHook() {
-                    @Override protected void afterHookedMethod(MethodHookParam p) {
-                        if (active && p.thisObject.getClass() == clockClass && hosts.containsKey(p.thisObject))
-                            alignSpacing((View) p.thisObject);
-                    }
-                });
+                hookNativeSpacing(host.getClass().getClassLoader());
                 for (var method : digit.getDeclaredMethods()) {
                     if (!method.getName().equals("setFontStyle") && !method.getName().equals("setFixedFontStyle")) continue;
                     if (method.getParameterCount() < 4 || method.getParameterTypes()[3] != Typeface.class) continue;
@@ -121,40 +114,99 @@ final class DigitalKeyguardFontHooks {
                     if (padding != null) {
                         text.setIncludeFontPadding(padding);
                         removeGlyphSpans(text);
-                        spacingAdjustments.remove(text);
                     }
                 }
             }
         }
+        host.getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+            @Override public boolean onPreDraw() {
+                if (host.getViewTreeObserver().isAlive()) host.getViewTreeObserver().removeOnPreDrawListener(this);
+                if (active) try { relayoutNative(host); }
+                catch (Throwable error) { log("digital clock native relayout failed: " + error); }
+                return true;
+            }
+        });
         host.requestLayout();
         host.invalidate();
     }
 
-    private static void alignSpacing(View host) {
-        if (!active || !KeyguardClockFontHooks.defaultTheme(host)
-                || readIntCached("keyguard_clock_font", 1) == 0) return;
-        ArrayList<View> digits = new ArrayList<>();
-        for (Object item : (Iterable<?>) XposedHelpers.callMethod(host, "getDigitalTimeViews"))
-            if (item instanceof View digit && digit.getVisibility() == View.VISIBLE && digit.getWidth() > 0) digits.add(digit);
-        digits.sort(java.util.Comparator.comparingInt(View::getLeft));
-        if (digits.size() < 2 || digits.get(1).getLeft() <= digits.get(0).getLeft()) return;
-        // Native handlers keep a negative gap intended for OPPOSans. Measure that
-        // actual gap, then replace it with the user's tracking, without changing prefs.
-        float nativeGap = digits.get(1).getLeft() - digits.get(0).getRight();
-        if (Math.abs(digits.get(1).getTop() - digits.get(0).getTop()) > 2) return;
-        float tracking = (Math.max(-6, Math.min(14, readIntCached("keyguard_clock_spacing", 0))) - 4) / 100f;
-        for (View digit : digits) {
-            for (String getter : new String[]{"getVisibleTextView", "getInVisibleTextView"}) {
-                if (!(XposedHelpers.callMethod(digit, getter) instanceof TextView text)) continue;
-                float correction = readBoolCached("keyguard_clock_spacing_enabled", true)
-                        ? text.getTextSize() * tracking - nativeGap : 0f;
-                Float previous = spacingAdjustments.put(text, correction);
-                if (previous == null || Math.abs(previous - correction) > .5f) {
-                    prepareText(text);
-                    text.setText(text.getText().toString());
-                    text.requestLayout();
+    private static final String PIPELINE = "com.oplus.keyguard.clock.digital.ui.pipeline.";
+
+    private static void hookNativeSpacing(ClassLoader loader) {
+        Class<?> scenes = XposedHelpers.findClass("com.oplus.keyguard.clock.digital.domain.state.Scene", loader);
+        String[][] handlers = {{"KeyguardBigViewLayoutHandler", "KEYGUARD_BIG"},
+                {"KeyguardSmallViewLayoutHandler", "KEYGUARD_SMALL"}, {"AodViewLayoutHandler", "AOD"}};
+        for (String[] handler : handlers) {
+            Class<?> type = XposedHelpers.findClass(PIPELINE + "handler." + handler[0], loader);
+            Object scene = XposedHelpers.getStaticObjectField(scenes, handler[1]);
+            for (String name : new String[]{"applyCenterHorizontalLayout", "applyStartHorizontalLayout", "applyCenterVerticalLayout"})
+                XposedBridge.hookAllMethods(type, name, new XC_MethodHook() {});
+            XposedBridge.hookAllMethods(type, "applyClockStyleLayout", new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    p.setObjectExtra("previousClockSpacing", layoutClock.get());
+                    layoutClock.remove();
+                    if (!active || readIntCached("keyguard_clock_font", 1) == 0) return;
+                    Object map = XposedHelpers.callMethod(p.args[0], "getSceneViewMap");
+                    Object entry = ((java.util.Map<?, ?>) map).get(scene);
+                    if (entry == null) return;
+                    Object single = XposedHelpers.callMethod(entry, "getSingleClockView");
+                    Object clock = single == null ? null : XposedHelpers.callMethod(single, "getClockTimeView");
+                    if (clock instanceof View view && KeyguardClockFontHooks.defaultTheme(view)) layoutClock.set(view);
                 }
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    Object previous = p.getObjectExtra("previousClockSpacing");
+                    if (previous instanceof View view) layoutClock.set(view); else layoutClock.remove();
+                }
+            });
+            String gapMethod = handler[0].startsWith("Aod") ? "getAodTimeGap" : "getClockTimeMargin";
+            XposedBridge.hookAllMethods(type, gapMethod, new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    Float gap = nativeGap();
+                    if (gap != null && !p.hasThrowable()) {
+                        if (gapMethod.equals("getAodTimeGap")) p.setResult(Math.round(gap));
+                        else p.setResult(gap);
+                    }
+                }
+            });
+        }
+        XposedBridge.hookAllMethods(XposedHelpers.findClass(PIPELINE + "RenderPipelineContext", loader),
+                "getDimenSize", new XC_MethodHook() {
+            @Override protected void afterHookedMethod(MethodHookParam p) {
+                View clock = layoutClock.get();
+                Float gap = nativeGap();
+                if (clock == null || gap == null || p.hasThrowable()) return;
+                String name = clock.getResources().getResourceEntryName((Integer) p.args[0]);
+                if (name.startsWith("digital_clock_") && name.contains("_time_margin_start"))
+                    p.setResult(Math.round(gap));
             }
+        });
+    }
+
+    private static Float nativeGap() {
+        View clock = layoutClock.get();
+        if (!active || clock == null || !readBoolCached("keyguard_clock_spacing_enabled", true)) return null;
+        for (Object digit : (Iterable<?>) XposedHelpers.callMethod(clock, "getDigitalTimeViews"))
+            if (XposedHelpers.callMethod(digit, "getVisibleTextView") instanceof TextView text) {
+                float tracking = (Math.max(-6, Math.min(14, readIntCached("keyguard_clock_spacing", 0))) - 4) / 100f;
+                return text.getTextSize() * tracking;
+            }
+        return null;
+    }
+
+    private static void relayoutNative(View host) {
+        for (View parent = host; parent != null; parent = parent.getParent() instanceof View view ? view : null) {
+            if (!parent.getClass().getName().equals("com.oplus.keyguard.clock.digital.ui.view.ClockViewRoot")) continue;
+            Object state = XposedHelpers.callMethod(parent, "getRenderedViewState");
+            if (state == null) return;
+            ClassLoader loader = parent.getClass().getClassLoader();
+            Object context = XposedHelpers.newInstance(XposedHelpers.findClass(PIPELINE + "RenderPipelineContext", loader),
+                    parent, state, state, false, state);
+            for (String name : new String[]{"KeyguardBigViewLayoutHandler", "KeyguardSmallViewLayoutHandler", "AodViewLayoutHandler"}) {
+                Class<?> type = XposedHelpers.findClass(PIPELINE + "handler." + name, loader);
+                XposedHelpers.callMethod(XposedHelpers.getStaticObjectField(type, "INSTANCE"),
+                        "runTransitionSyncLayout$KeyguardPersonalityClocks_release", context);
+            }
+            return;
         }
     }
 
@@ -170,7 +222,6 @@ final class DigitalKeyguardFontHooks {
     private static final class GlyphSpan extends ReplacementSpan {
         final java.lang.ref.WeakReference<TextView> owner;
         GlyphSpan(TextView text) { owner = new java.lang.ref.WeakReference<>(text); }
-        private float spacing() { return spacingAdjustments.getOrDefault(owner.get(), 0f); }
         @Override public int getSize(Paint paint, CharSequence text, int start, int end, Paint.FontMetricsInt fm) {
             if (fm != null) {
                 Rect bounds = new Rect();
@@ -179,7 +230,7 @@ final class DigitalKeyguardFontHooks {
                 fm.bottom = fm.descent = bounds.bottom;
                 fm.leading = 0;
             }
-            return Math.max(1, Math.round(paint.measureText(text, start, end) + spacing()));
+            return Math.max(1, Math.round(paint.measureText(text, start, end)));
         }
         @Override public void draw(Canvas canvas, CharSequence text, int start, int end,
                 float x, int top, int y, int bottom, Paint paint) {
@@ -191,7 +242,7 @@ final class DigitalKeyguardFontHooks {
                 paint.getTextBounds(glyph, 0, glyph.length(), colon);
                 offset = digits.exactCenterY() - colon.exactCenterY();
             }
-            canvas.drawText(glyph, x + spacing() / 2f, y + offset, paint);
+            canvas.drawText(glyph, x, y + offset, paint);
         }
     }
 
@@ -223,6 +274,5 @@ final class DigitalKeyguardFontHooks {
         fontFeatures.clear();
         hosts.clear();
         fontPadding.clear();
-        spacingAdjustments.clear();
     }
 }

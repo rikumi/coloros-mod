@@ -3026,8 +3026,19 @@ public final class LauncherHooks {
                                 PopupBlurTarget target = popupBlurTarget(view);
                                 ObjectAnimator origin = param.getResult() instanceof ObjectAnimator
                                         ? (ObjectAnimator) param.getResult() : null;
+                                Object previous = XposedHelpers.getAdditionalInstanceField(view,
+                                        "colorosmod_popup_blur_animator");
+                                if (previous instanceof ObjectAnimator) ((ObjectAnimator) previous).cancel();
+                                if (open && !target.sourceReady) target.progress = 0f;
                                 ObjectAnimator anim = ObjectAnimator.ofFloat(target,
                                         POPUP_BLUR_PROGRESS, target.progress, open ? 1f : 0f);
+                                if (open) anim.addListener(new android.animation.AnimatorListenerAdapter() {
+                                    @Override public void onAnimationStart(android.animation.Animator animation) {
+                                        // Do not consume the opening animation while GPU snapshots
+                                        // are still pending, then reveal an already blurred frame.
+                                        if (!target.sourceReady) animation.pause();
+                                    }
+                                });
                                 if (origin != null) {
                                     anim.setDuration(origin.getDuration());
                                     if (origin.getInterpolator() != null) {
@@ -3036,7 +3047,7 @@ public final class LauncherHooks {
                                 }
 
                                 target.opening = open;
-                                view.setAlpha(open ? 1f : target.progress);
+                                view.setAlpha(open ? (target.sourceReady ? 1f : 0f) : target.progress);
                                 applyPopupBgEffect(view, target.progress);
                                 XposedHelpers.setAdditionalInstanceField(view,
                                         "colorosmod_popup_blur_animator", anim);
@@ -3063,6 +3074,8 @@ public final class LauncherHooks {
         public final View view;
         public float progress;
         public boolean opening = false;
+        public boolean sourceReady = true;
+        public Object sourceRequest;
 
         PopupBlurTarget(View view) {
             this.view = view;
@@ -3081,9 +3094,33 @@ public final class LauncherHooks {
                     target.progress = value;
                     applyPopupBgEffect(target.view, value);
 
-                    target.view.setAlpha(target.opening ? 1f : value);
+                    target.view.setAlpha(target.opening ? (target.sourceReady ? 1f : 0f) : value);
                 }
             };
+
+    static void onPopupBlurSourceLoading(View view, Object request) {
+        PopupBlurTarget target = popupBlurTarget(view);
+        target.sourceRequest = request;
+        target.sourceReady = false;
+        target.progress = 0f;
+        view.setAlpha(0f);
+        applyPopupBgEffect(view, 0f);
+    }
+
+    static void onPopupBlurSourceReady(View view, Object request) {
+        PopupBlurTarget target = popupBlurTarget(view);
+        if (target.sourceRequest != request) return;
+        target.sourceReady = true;
+        Object value = XposedHelpers.getAdditionalInstanceField(view, "colorosmod_popup_blur_animator");
+        if (target.opening && value instanceof ObjectAnimator) {
+            ObjectAnimator animator = (ObjectAnimator) value;
+            if (animator.isPaused()) {
+                animator.setCurrentPlayTime(0L);
+                animator.resume();
+            }
+            view.setAlpha(1f);
+        }
+    }
 
     private static PopupBlurTarget popupBlurTarget(View view) {
         PopupBlurTarget target = (PopupBlurTarget) XposedHelpers.getAdditionalInstanceField(

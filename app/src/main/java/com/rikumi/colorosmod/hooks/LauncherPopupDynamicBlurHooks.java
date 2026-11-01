@@ -3,6 +3,7 @@ package com.rikumi.colorosmod.hooks;
 import static com.rikumi.colorosmod.XposedInit.*;
 
 import android.graphics.Bitmap;
+import android.view.View;
 import java.util.WeakHashMap;
 import com.rikumi.colorosmod.xposed.*;
 
@@ -10,7 +11,21 @@ import com.rikumi.colorosmod.xposed.*;
 final class LauncherPopupDynamicBlurHooks {
     private static final ThreadLocal<Integer> loading = new ThreadLocal<>();
     private static final ThreadLocal<Integer> delivering = new ThreadLocal<>();
-    private static final WeakHashMap<Object, Boolean> clearCallbacks = new WeakHashMap<>();
+    private static final WeakHashMap<Object, SourceRequest> clearCallbacks = new WeakHashMap<>();
+    private static final ThreadLocal<SourceRequest> sourceRequest = new ThreadLocal<>();
+
+    private static final class SourceRequest {
+        final java.lang.ref.WeakReference<View> view;
+        int pending;
+        boolean loadingFinished;
+        SourceRequest(View view) { this.view = new java.lang.ref.WeakReference<>(view); }
+        void notifyIfReady() {
+            View target = view.get();
+            if (loadingFinished && pending == 0 && target != null) {
+                target.post(() -> LauncherHooks.onPopupBlurSourceReady(target, this));
+            }
+        }
+    }
 
     static boolean hook(XC_LoadPackage.LoadPackageParam lp) {
         try {
@@ -34,9 +49,24 @@ final class LauncherPopupDynamicBlurHooks {
 
             XposedHelpers.findAndHookMethod(helper, "loadPopupBlurBg", launcher, popup, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    if (readBoolCached(KEY_POPUP_DYNAMIC_BLUR_ENABLED, false)) enter(p, loading);
+                    if (!readBoolCached(KEY_POPUP_DYNAMIC_BLUR_ENABLED, false)) return;
+                    SourceRequest request = new SourceRequest((View) p.args[1]);
+                    p.setObjectExtra("previousPopupRequest", sourceRequest.get());
+                    p.setObjectExtra("popupRequest", request);
+                    sourceRequest.set(request);
+                    LauncherHooks.onPopupBlurSourceLoading((View) p.args[1], request);
+                    enter(p, loading);
                 }
-                @Override protected void afterHookedMethod(MethodHookParam p) { leave(p, loading); }
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    leave(p, loading);
+                    Object value = p.getObjectExtra("popupRequest");
+                    if (!(value instanceof SourceRequest request)) return;
+                    sourceRequest.set((SourceRequest) p.getObjectExtra("previousPopupRequest"));
+                    synchronized (clearCallbacks) {
+                        request.loadingFinished = true;
+                        request.notifyIfReady();
+                    }
+                }
             });
             XposedHelpers.findAndHookMethod(defaults, "a", renderer, float.class, float.class,
                     float.class, int.class, new XC_MethodHook() {
@@ -58,19 +88,31 @@ final class LauncherPopupDynamicBlurHooks {
             XposedHelpers.findAndHookMethod(callback, "setBlurEffect", effect, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     if (depth(loading) > 0) synchronized (clearCallbacks) {
-                        clearCallbacks.put(p.thisObject, true);
+                        SourceRequest request = sourceRequest.get();
+                        if (request != null && !clearCallbacks.containsKey(p.thisObject)) {
+                            clearCallbacks.put(p.thisObject, request);
+                            request.pending++;
+                        }
                     }
                 }
             });
             XposedHelpers.findAndHookMethod(callback, "onEffectDone", Bitmap.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    boolean clear;
-                    synchronized (clearCallbacks) { clear = clearCallbacks.remove(p.thisObject) != null; }
+                    SourceRequest request;
+                    synchronized (clearCallbacks) { request = clearCallbacks.remove(p.thisObject); }
+                    p.setObjectExtra("completedPopupRequest", request);
                     // Rendering completes asynchronously, possibly after switch-off.
                     // Carry the request's identity rather than re-reading the switch.
-                    if (clear) enter(p, delivering);
+                    if (request != null) enter(p, delivering);
                 }
-                @Override protected void afterHookedMethod(MethodHookParam p) { leave(p, delivering); }
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    leave(p, delivering);
+                    Object value = p.getObjectExtra("completedPopupRequest");
+                    if (value instanceof SourceRequest request) synchronized (clearCallbacks) {
+                        request.pending--;
+                        request.notifyIfReady();
+                    }
+                }
             });
             XposedHelpers.findAndHookMethod(cache, "d", Bitmap.class, boolean.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {

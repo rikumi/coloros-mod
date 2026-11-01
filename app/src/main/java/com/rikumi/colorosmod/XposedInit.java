@@ -292,6 +292,9 @@ public class XposedInit extends XposedModule {
     public static final String KEY_UNLOCKED_SHUTDOWN_NOVERIFY_ENABLED =
             "unlocked_shutdown_noverify_enabled";
 
+    public static final String KEY_KEYGUARD_FINGERPRINT_RING_ENABLED =
+            "keyguard_fingerprint_ring_enabled";
+
     public static final String KEY_KEYGUARD_FINGERPRINT_FAILURE_DELAY_ENABLED =
             "keyguard_fingerprint_failure_delay_enabled";
 
@@ -536,6 +539,7 @@ public class XposedInit extends XposedModule {
             LauncherHooks.onSettingsSnapshotPublished(all);
         }
         if ("com.android.systemui".equals(sHookedPackageName)) {
+            com.rikumi.colorosmod.hooks.FingerprintRingHooks.refresh();
             GestureHooks.onGestureTouchSettingsChanged();
             com.rikumi.colorosmod.hooks.AppNavigationHooks.onSettingsChanged();
             com.rikumi.colorosmod.hooks.LegacyNotificationLayoutHooks.onSettingsSnapshotPublished();

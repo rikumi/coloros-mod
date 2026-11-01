@@ -2,6 +2,7 @@
 <resources>
     <string name="ui_desktop_layout">"Home screen layout"</string>
     <string name="ui_icon_gap">"Increase icon-label spacing"</string>
+    <string name="ui_drawer">"Home screen drawer"</string>
     <string name="ui_drawer_columns">"Adjust drawer icon size and spacing"</string>
     <string name="ui_drawer_letter_scroll">"Scroll with alphabet index"</string>
     <string name="ui_drawer_letter_scroll_hint">"instead of showing icon popup"</string>
@@ -24,7 +25,8 @@
     <string name="ui_qs_carrier">"Hide carrier in Control Center"</string>
     <string name="ui_qs_topmargin">"Hide top status icon cluster"</string>
     <string name="ui_qs_panel_switch">"Slide animation between shades"</string>
-    <string name="ui_qs_settings">"Control Center settings"</string>
+    <string name="ui_qs_tile_visual">Tile appearance</string>
+    <string name="ui_qs_tile_behavior">Tile behavior</string>
     <string name="ui_qs_tile_ellipsis">"One-line Wi-Fi / BT names with ellipsis"</string>
     <string name="ui_fold_idle_media">"Hide media controls when not playing"</string>
     <string name="ui_qs_fill_empty">"Fill spaces with tiles in separate CC"</string>
@@ -202,4 +204,5 @@
     <string name="ui_drawer_install_time_sort">Sort drawer by install time</string>
     <string name="ui_recents_hide_closed_freeform">Hide closed floating window from Recents</string>
     <string name="ui_disabled_apps_continue">I understand the risks, continue</string>
+    <string name="ui_fingerprint_ring">Replace fingerprint icon with a plain ring</string>
 </resources>

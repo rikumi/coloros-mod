@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="qs_merged_modernization">Modernize combined control center</string>
     <string name="qs_merged_hollow">Rounded activation for combined CC</string>
     <string name="qs_merged_radiant">Multi-color style in combined CC</string>
     <string name="qs_merged_landscape_swap">Swap combined CC sides in landscape</string>
