@@ -31,6 +31,7 @@ public final class MonochromeNotificationHooks {
     private static boolean replaying;
     private static boolean lastEnabled;
     private static WeakReference<Object> lastManager = new WeakReference<>(null);
+    private static final ThreadLocal<Object> statusBarEntry = new ThreadLocal<>();
 
     private static final class State {
         final WeakReference<Object> manager;
@@ -62,7 +63,8 @@ public final class MonochromeNotificationHooks {
                                 lastManager = new WeakReference<>(p.thisObject);
                                 Object pack = XposedHelpers.callMethod(p.args[0], "getIcons");
                                 if (p.args[2] != XposedHelpers.callMethod(pack, "getStatusBarIcon")
-                                        && p.args[2] != XposedHelpers.callMethod(pack, "getStatusBarChipIcon")) return;
+                                        && p.args[2] != XposedHelpers.callMethod(pack, "getStatusBarChipIcon")
+                                        && statusBarEntry.get() != p.args[0]) return;
                                 View target = (View) p.args[2];
                                 State state = new State(p.thisObject, p.args[0], p.args[1], null);
                                 STATES.put(target, state);
@@ -86,6 +88,25 @@ public final class MonochromeNotificationHooks {
                             }
                         }
                     });
+            // ColorOS 17 creates per-display status-bar views outside IconPack.
+            // Scope setIcon interception to the two native status-bar entry points;
+            // shelf and AOD views must keep their original descriptors.
+            Class<?> manager = XposedHelpers.findClass(MANAGER, param.classLoader);
+            try {
+                manager.getDeclaredMethod("createSbIconView", Context.class, entry);
+                XC_MethodHook scope = new XC_MethodHook() {
+                    @Override protected void beforeHookedMethod(MethodHookParam p) {
+                        p.setObjectExtra("previousStatusBarEntry", statusBarEntry.get());
+                        statusBarEntry.set(p.args[p.args[0] instanceof Context ? 1 : 0]);
+                    }
+                    @Override protected void afterHookedMethod(MethodHookParam p) {
+                        Object previous = p.getObjectExtra("previousStatusBarEntry");
+                        if (previous == null) statusBarEntry.remove(); else statusBarEntry.set(previous);
+                    }
+                };
+                XposedHelpers.findAndHookMethod(manager, "createSbIconView", Context.class, entry, scope);
+                XposedHelpers.findAndHookMethod(manager, "updateSbIcon", entry, view, scope);
+            } catch (NoSuchMethodException legacy) { /* Legacy views live in IconPack. */ }
             // createIcons installs IconPack only AFTER the first four setIcon calls.
             XposedHelpers.findAndHookMethod(MANAGER, param.classLoader, "createIcons", entry,
                     new XC_MethodHook() {

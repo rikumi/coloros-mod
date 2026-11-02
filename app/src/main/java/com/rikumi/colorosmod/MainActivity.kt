@@ -212,7 +212,8 @@ internal data class FontAppsItem(val title: Int) : SettingsItem
 internal data class SwitchItem(
     val key: String,
     val label: Int,
-    val subtitle: Int? = null,
+    // 禁止擅自添加副标题；仅允许开发者明确确认，并以具名参数传入。
+    val developerConfirmedSubtitle: Int? = null,
     val sliderKey: String? = null,
     val sliderMax: Int = 0,
     val sliderDefault: Int = 0,
@@ -261,7 +262,8 @@ internal data class SelectItem(
     val masterManaged: Boolean = false,
     val masterEnabledValue: Int = 1,
     val optionValues: List<Int>? = null,
-    val subtitle: Int? = null,
+    // 禁止擅自添加副标题；仅允许开发者明确确认，并以具名参数传入。
+    val developerConfirmedSubtitle: Int? = null,
 ) : SettingsItem
 
 private val DESKTOP: List<SettingsItem> = listOf(
@@ -274,7 +276,7 @@ private val DESKTOP: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_drawer),
     SwitchItem("drawer_columns_enabled", R.string.ui_drawer_columns),
     SwitchItem("drawer_install_time_sort_enabled", R.string.ui_drawer_install_time_sort),
-    SwitchItem("drawer_letter_scroll_enabled", R.string.ui_drawer_letter_scroll, R.string.ui_drawer_letter_scroll_hint),
+    SwitchItem("drawer_letter_scroll_enabled", R.string.ui_drawer_letter_scroll, developerConfirmedSubtitle = R.string.ui_drawer_letter_scroll_hint),
     GroupTitleItem(R.string.ui_icon_pack),
     SwitchItem("system_application_icon_pack", R.string.ui_system_application_icon_pack),
     SwitchItem("launcher_icon_pack_clarity_enabled", R.string.ui_launcher_icon_pack_clarity),
@@ -286,10 +288,10 @@ private val DESKTOP: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_folders),
     SwitchItem(FolderGridSettings.ROWS_ENABLED, R.string.ui_folder_rows,
         sliderKey = FolderGridSettings.ROWS, sliderMin = 3, sliderMax = 6, sliderDefault = 4,
-        sliderUnit = "", sliderFollowsSystem = true),
+        sliderUnit = "", sliderFollowsSystem = true, masterEnableAllowed = false),
     SwitchItem(FolderGridSettings.COLUMNS_ENABLED, R.string.ui_folder_columns,
         sliderKey = FolderGridSettings.COLUMNS, sliderMin = 3, sliderMax = 4, sliderDefault = 3,
-        sliderUnit = "", sliderFollowsSystem = true),
+        sliderUnit = "", sliderFollowsSystem = true, masterEnableAllowed = false),
     SwitchItem("folder_bg_transparent_enabled", R.string.ui_folder_transparent),
     SwitchItem("folder_anim_duration_enabled", R.string.ui_folder_duration, sliderKey = "folder_anim_duration_ms", sliderMax = 500, sliderDefault = 300, sliderUnit = "ms", sliderMin = 100),
 )
@@ -310,9 +312,8 @@ private val QS: List<SettingsItem> = listOf(
     SwitchItem("qs_bg_brightness_enabled", R.string.ui_qs_bg_brightness,
         sliderKey = "qs_bg_brightness_percent", sliderMin = 50, sliderMax = 100, sliderDefault = 75, sliderStep = 5, sliderUnit = "%"),
     SwitchItem("qs_bg_opacity_enabled", R.string.ui_qs_bg_opacity,
-        subtitle = R.string.ui_background_opacity_hint,
-        sliderKey = "qs_bg_opacity_percent", sliderMin = 0, sliderMax = 100,
-        sliderDefault = 50, sliderStep = 5, sliderUnit = "%"),
+        sliderKey = "qs_bg_opacity_percent", sliderMin = 40, sliderMax = 100,
+        sliderDefault = 70, sliderStep = 5, sliderUnit = "%"),
     SwitchItem("qs_tile_name_ellipsis_enabled", R.string.ui_qs_tile_ellipsis),
     SwitchItem("qs_corner_radius_enabled", R.string.ui_qs_normal_corner, sliderKey = "qs_corner_radius_percent", sliderMin = 10, sliderMax = 50, sliderDefault = 30, sliderUnit = "%"),
     SwitchItem("slider_active_top_corners", R.string.ui_slider_active_top_corners),
@@ -329,7 +330,7 @@ private val QS: List<SettingsItem> = listOf(
     SwitchItem("qs_merged_tile_clip_animation", R.string.qs_merged_tile_clip_animation),
     SwitchItem("fold_idle_media", R.string.ui_fold_idle_media),
     SwitchItem("qs_fill_empty", R.string.ui_qs_fill_empty),
-    SwitchItem(HomeControlsTileSettings.KEY, R.string.ui_module_home_controls_tile, R.string.ui_module_home_controls_tile_hint),
+    SwitchItem(HomeControlsTileSettings.KEY, R.string.ui_module_home_controls_tile, developerConfirmedSubtitle = R.string.ui_module_home_controls_tile_hint),
     SwitchItem("anc_tile_enabled", R.string.ui_anc_tile),
     SwitchItem(XposedInit.KEY_QS_MERGED_MEDIA_TILES_ON_TOP, R.string.qs_merged_media_tiles_on_top),
 )
@@ -340,11 +341,10 @@ private val NOTIF: List<SettingsItem> = listOf(
     SwitchItem(XposedInit.KEY_NOTIFICATION_ROUND_CLEAR_ALL_ENABLED, R.string.ui_notification_round_clear_all),
     SwitchItem("notification_bg_brightness_enabled", R.string.ui_notification_bg_brightness,
         sliderKey = "notification_bg_brightness_percent", sliderMin = 50, sliderMax = 100,
-        sliderDefault = 75, sliderStep = 5, sliderUnit = "%"),
-    SwitchItem("notification_bg_opacity_enabled", R.string.ui_notification_bg_opacity,
-        subtitle = R.string.ui_background_opacity_hint,
-        sliderKey = "notification_bg_opacity_percent", sliderMin = 0, sliderMax = 100,
         sliderDefault = 50, sliderStep = 5, sliderUnit = "%"),
+    SwitchItem("notification_bg_opacity_enabled", R.string.ui_notification_bg_opacity,
+        sliderKey = "notification_bg_opacity_percent", sliderMin = 40, sliderMax = 100,
+        sliderDefault = 70, sliderStep = 5, sliderUnit = "%"),
     SwitchItem("notification_subtitle_enabled", R.string.ui_notification_subtitle, sliderKey = "notification_subtitle_sp", sliderMax = 16, sliderDefault = 8, sliderUnit = "sp"),
     SwitchItem("notification_padding_enabled", R.string.ui_notification_padding, sliderKey = "notification_padding_dp", sliderMax = 8, sliderDefault = 4),
     SwitchItem("notification_real_app_name_enabled", R.string.ui_notification_real_app_name),
@@ -369,7 +369,7 @@ private val NOTIF: List<SettingsItem> = listOf(
         listOf(R.string.ui_lyric_mode_off, R.string.ui_lyric_mode_notification),
         masterManaged = true, masterEnabledValue = 1),
     SwitchItem("fluid_cloud_lyric_enabled", R.string.fluid_cloud_lyric, masterManaged = false),
-    SwitchItem("statusbar_lyric_avoid_third_party_enabled", R.string.ui_statusbar_lyric_avoid, R.string.ui_statusbar_lyric_avoid_hint),
+    SwitchItem("statusbar_lyric_avoid_third_party_enabled", R.string.ui_statusbar_lyric_avoid, developerConfirmedSubtitle = R.string.ui_statusbar_lyric_avoid_hint),
     SwitchItem("fluid_cloud_keep_percent_enabled", R.string.ui_fluid_cloud_percent),
 )
 private val HIDDEN: List<SettingsItem> = listOf(
@@ -392,18 +392,18 @@ private val FLOATWINDOW: List<SettingsItem> = listOf(
     SwitchItem("float_window_edge_hang_mute_enabled", R.string.ui_float_edge_mute),
     GroupTitleItem(R.string.ui_float_visual),
     SwitchItem("float_window_edge_hang_white_bar_enabled", R.string.ui_float_white_bar),
-    SwitchItem("float_window_landscape_keep_ratio_enabled", R.string.ui_float_landscape_ratio, R.string.ui_float_landscape_ratio_hint),
+    SwitchItem("float_window_landscape_keep_ratio_enabled", R.string.ui_float_landscape_ratio, developerConfirmedSubtitle = R.string.ui_float_landscape_ratio_hint),
     SwitchItem("float_window_edge_size_optimize_enabled", R.string.ui_float_edge_size),
     SwitchItem("shrink_caption_bar_enabled", R.string.ui_shrink_caption),
 )
 
 private val NAV: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_gesture_behavior),
-    SwitchItem(XposedInit.KEY_TABLET_LANDSCAPE_CUTOUT_INSETS_ENABLED, R.string.ui_tablet_landscape_cutout_insets, R.string.ui_tablet_landscape_cutout_insets_hint),
-    SwitchItem("gesture_bar_height_enabled", R.string.ui_gesture_bar_height, R.string.ui_gesture_bar_height_hint, "gesture_bar_height_dp", 24, 12),
-    SwitchItem("mback_enabled", R.string.ui_mback, R.string.ui_mback_hint),
+    SwitchItem(XposedInit.KEY_TABLET_LANDSCAPE_CUTOUT_INSETS_ENABLED, R.string.ui_tablet_landscape_cutout_insets, developerConfirmedSubtitle = R.string.ui_tablet_landscape_cutout_insets_hint),
+    SwitchItem("gesture_bar_height_enabled", R.string.ui_gesture_bar_height, developerConfirmedSubtitle = R.string.ui_gesture_bar_height_hint, sliderKey = "gesture_bar_height_dp", sliderMax = 24, sliderDefault = 12),
+    SwitchItem("mback_enabled", R.string.ui_mback, developerConfirmedSubtitle = R.string.ui_mback_hint),
     SwitchItem("gesture_touch_through_enabled", R.string.ui_gesture_touch_through),
-    SwitchItem("rotation_button_fixed_position_enabled", R.string.ui_rotation_button, R.string.ui_rotation_button_hint),
+    SwitchItem("rotation_button_fixed_position_enabled", R.string.ui_rotation_button, developerConfirmedSubtitle = R.string.ui_rotation_button_hint),
     SwitchItem("disable_rotation_suggestions", R.string.ui_disable_rotation_suggestions, rootBacked = true,
         masterEnableAllowed = false),
     SwitchItem("long_press_timeout_enabled", R.string.ui_long_press_timeout, sliderKey = "long_press_timeout_ms", sliderMax = 600, sliderDefault = 300, sliderUnit = "ms", sliderMin = 100, sliderStep = 50, rootBacked = true),
@@ -412,21 +412,21 @@ private val NAV: List<SettingsItem> = listOf(
     SwitchItem(AppNavigationSettings.ENABLED, R.string.ui_app_immersive_navigation, masterManaged = false),
     NavigationAppsItem(R.string.ui_navigation_apps),
     SwitchItem("gesture_bar_width_enabled", R.string.ui_gesture_bar_width, sliderKey = "gesture_bar_width_dp", sliderMax = 120, sliderDefault = 100, sliderUnit = "dp", sliderMin = 80),
-    SwitchItem("gesture_bar_long_press_disable_enabled", R.string.ui_gesture_bar_animation, R.string.ui_gesture_bar_animation_hint),
+    SwitchItem("gesture_bar_long_press_disable_enabled", R.string.ui_gesture_bar_animation, developerConfirmedSubtitle = R.string.ui_gesture_bar_animation_hint),
     GroupTitleItem(R.string.ui_recents_switching),
     SwitchItem("power_save_keep_locked_tasks_enabled", R.string.ui_power_save_locked),
     SwitchItem("recents_bg_transparent_enabled", R.string.ui_recents_transparent),
     SwitchItem("recents_hide_not_running_enabled", R.string.ui_recents_hide_not_running),
-    SwitchItem("recents_swipe_up_kill_enabled", R.string.ui_recents_swipe_kill, R.string.ui_zygote_hint),
-    SwitchItem("recents_swipe_up_kill_subsidiary_enabled", R.string.ui_recents_kill_subsidiary, R.string.ui_recents_kill_subsidiary_hint),
+    SwitchItem("recents_swipe_up_kill_enabled", R.string.ui_recents_swipe_kill, developerConfirmedSubtitle = R.string.ui_zygote_hint),
+    SwitchItem("recents_swipe_up_kill_subsidiary_enabled", R.string.ui_recents_kill_subsidiary, developerConfirmedSubtitle = R.string.ui_recents_kill_subsidiary_hint),
 )
 
 private val LOCKSCREEN: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_lock_behavior),
-    SwitchItem("unlocked_shutdown_noverify_enabled", R.string.ui_shutdown_noverify, R.string.ui_shutdown_noverify_hint),
+    SwitchItem("unlocked_shutdown_noverify_enabled", R.string.ui_shutdown_noverify, developerConfirmedSubtitle = R.string.ui_shutdown_noverify_hint),
     SwitchItem("keyguard_fingerprint_failure_delay_enabled", R.string.ui_fingerprint_failure_delay),
     SwitchItem("keyguard_slide_input_enabled", R.string.ui_slide_input),
-    SwitchItem("keyguard_bouncer_swipe_back_enabled", R.string.ui_bouncer_swipe_back, R.string.ui_bouncer_swipe_back_hint),
+    SwitchItem("keyguard_bouncer_swipe_back_enabled", R.string.ui_bouncer_swipe_back, developerConfirmedSubtitle = R.string.ui_bouncer_swipe_back_hint),
     GroupTitleItem(R.string.ui_lock_visual),
     SelectItem("keyguard_clock_font", R.string.ui_keyguard_clock_font,
         listOf(R.string.ui_option_system_default, R.string.ui_font_inter, R.string.ui_font_manrope, R.string.ui_font_rubik, R.string.ui_font_lato),
@@ -440,7 +440,7 @@ private val LOCKSCREEN: List<SettingsItem> = listOf(
             R.string.ui_weight_400, R.string.ui_weight_500, R.string.ui_weight_600, R.string.ui_weight_700, R.string.ui_weight_800, R.string.ui_weight_900),
         defaultValue = 3, masterManaged = true, masterEnabledValue = 3),
     SwitchItem("keyguard_hide_carrier_enabled", R.string.ui_keyguard_hide_carrier),
-    SwitchItem("keyguard_no_light_effect_enabled", R.string.ui_keyguard_no_light, R.string.ui_keyguard_no_light_hint),
+    SwitchItem("keyguard_no_light_effect_enabled", R.string.ui_keyguard_no_light, developerConfirmedSubtitle = R.string.ui_keyguard_no_light_hint),
     SwitchItem("keyguard_no_digit_shake_enabled", R.string.ui_keyguard_no_digit_shake),
     SwitchItem("keyguard_bouncer_brightness_enabled", R.string.ui_keyguard_brightness, sliderKey = "keyguard_bouncer_brightness", sliderMax = 5, sliderDefault = 0, sliderUnit = "%"),
     SwitchItem("keyguard_notification_offset_enabled", R.string.ui_keyguard_notification_offset, sliderKey = "keyguard_notification_offset_dp", sliderMax = 40, sliderDefault = 20),
@@ -454,7 +454,7 @@ private val PURIFICATION: List<SettingsItem> = listOf(
         listOf(R.string.ui_about_card_default, R.string.ui_about_card_coloros17, R.string.ui_about_card_coloros161, R.string.ui_about_card_coloros16, R.string.ui_about_card_coloros15,
             R.string.ui_about_card_oxygenos, R.string.ui_about_card_oxygenos15, R.string.ui_about_card_realme16, R.string.ui_about_card_realme15, R.string.ui_about_card_mod),
         optionValues = listOf(0, 9, 6, 1, 2, 3, 5, 8, 7, 4),
-        subtitle = R.string.ui_about_device_card_hint),
+        developerConfirmedSubtitle = R.string.ui_about_device_card_hint),
     SwitchItem("about_device_hide_marketing_enabled", R.string.ui_about_device_hide_marketing),
     SwitchItem("settings_disabled_module_spacing", R.string.ui_settings_disabled_module_spacing),
     GroupTitleItem(R.string.installer_group),
@@ -508,7 +508,7 @@ private val SYSTEM_FONTS: List<SettingsItem> = listOf(
     SelectItem("system_font_latin", R.string.ui_system_font_latin, listOf(R.string.ui_font_default, R.string.ui_font_inter, R.string.ui_font_manrope, R.string.ui_font_custom)),
     SelectItem("system_font_mono", R.string.ui_system_font_mono, listOf(R.string.ui_font_default, R.string.ui_font_maple, R.string.ui_font_jetbrains, R.string.ui_font_fira, R.string.ui_font_cascadia, R.string.ui_font_custom), defaultValue = -1, optionValues = listOf(-1, 0, 1, 2, 3, 4)),
     SelectItem("system_font_emoji", R.string.ui_system_font_emoji, listOf(R.string.ui_font_default, R.string.ui_font_emoji_apple, R.string.ui_font_emoji_joypixels, R.string.ui_font_emoji_twitter, R.string.ui_font_emoji_samsung)),
-    SwitchItem("system_font_disable_replacement", R.string.ui_system_font_disable_replacement, subtitle = R.string.ui_system_font_disable_replacement_hint),
+    SwitchItem("system_font_disable_replacement", R.string.ui_system_font_disable_replacement, developerConfirmedSubtitle = R.string.ui_system_font_disable_replacement_hint),
     SwitchItem("system_font_mount_enabled", R.string.ui_system_font_mount_enabled, masterManaged = false),
     FontAppsItem(R.string.ui_system_font_mount_apps),
 )
@@ -529,7 +529,8 @@ private data class Category(
     val title: Int,
     val icon: ImageVector,
     val items: List<SettingsItem>,
-    val subtitle: Int? = null,
+    // 禁止擅自添加副标题；仅允许开发者明确确认，并以具名参数传入。
+    val developerConfirmedSubtitle: Int? = null,
     val hint: Int? = null,
 )
 
@@ -921,7 +922,7 @@ private fun HomeScreen(
                     checked = masterChecked,
                     title = ctx.getString(if (masterChecked) HOME_MASTER_TITLE_ON else MASTER_TITLE_OFF),
                     // 启用后无需再解释, 仅未启用时提示。
-                    subtitle = if (masterChecked) null else ctx.getString(HOME_MASTER_HINT),
+                    developerConfirmedSubtitle = if (masterChecked) null else ctx.getString(HOME_MASTER_HINT),
                     onCheckedChange = onMasterChange,
                     // 机型横幅作为第一张卡片的首项, 只裁顶部两角(下方与开关行相接)。
                     aboveContent = {
@@ -951,7 +952,7 @@ private fun HomeScreen(
                             SettingsCategoryRow(
                                 icon = category.icon,
                                 title = ctx.getString(category.title),
-                                subtitle = category.subtitle?.let(ctx::getString),
+                                developerConfirmedSubtitle = category.developerConfirmedSubtitle?.let(ctx::getString),
                                 onClick = { onOpenCategory(category.id) },
                                 selected = selectedCategoryId?.let { it == category.id },
                             )
@@ -1077,7 +1078,7 @@ private fun CategoryScreen(
                         onOpenNavigationApps = onOpenNavigationApps,
                         onOpenFontApps = onOpenFontApps,
                         footerContent = if (group.items.any { it is SwitchItem && it.key == "hidden_launcher_apps_enabled" }) {
-                            { SettingsCategoryRow(null, ctx.getString(R.string.ui_hidden_apps_list), onOpenHiddenApps) }
+                            { SettingsCategoryRow(icon = null, title = ctx.getString(R.string.ui_hidden_apps_list), onClick = onOpenHiddenApps) }
                         } else null,
                     )
                 }
@@ -1117,7 +1118,7 @@ private fun HideLauncherIconRow(ctx: Context) {
             setLauncherIconHidden(ctx, it)
         },
         title = ctx.getString(R.string.ui_hide_module_icon),
-        subtitle = ctx.getString(R.string.ui_hide_module_icon_hint),
+        developerConfirmedSubtitle = ctx.getString(R.string.ui_hide_module_icon_hint),
     )
 }
 

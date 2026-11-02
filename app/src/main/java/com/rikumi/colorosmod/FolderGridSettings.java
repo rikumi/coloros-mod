@@ -26,7 +26,7 @@ public final class FolderGridSettings {
     }
 
     public static int maxRows() { return tabletOnly() ? 5 : 6; }
-    public static int minColumns() { return tabletOnly() ? 4 : 3; }
+    public static int minColumns() { return 3; }
     public static int maxColumns() { return tabletOnly() || isFoldable() ? 8 : 4; }
     private static boolean tabletOnly() { return TabletDevice.isTablet() && !isFoldable(); }
     public static int rows(int value, int nativeValue) {
@@ -34,6 +34,11 @@ public final class FolderGridSettings {
     }
     public static int columns(int value, int nativeValue) {
         return value == 0 ? nativeValue : Math.max(minColumns(), Math.min(maxColumns(), value));
+    }
+
+    public static boolean beyondDefaultColumns(int columns, int nativeColumns) {
+        int defaultColumns = isFoldable() ? nativeColumns : (tabletOnly() ? 6 : 3);
+        return columns > defaultColumns;
     }
 
     private static SharedPreferences metrics(Context context) {

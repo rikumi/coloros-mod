@@ -22,10 +22,11 @@ public final class NotificationBackgroundBrightnessHooks {
     private static String lastSetting;
     public static final String ENABLED = "notification_bg_brightness_enabled";
     public static final String VALUE = "notification_bg_brightness_percent";
-    public static final int DEFAULT = 75;
+    public static final int DEFAULT = 50;
     public static final String OPACITY_ENABLED = "notification_bg_opacity_enabled";
     public static final String OPACITY_VALUE = "notification_bg_opacity_percent";
-    public static final int OPACITY_DEFAULT = 50;
+    public static final int OPACITY_DEFAULT = 70;
+    public static final int OPACITY_MIN = 40;
 
     public static void hook(XC_LoadPackage.LoadPackageParam lp) {
         restoring = false;
@@ -147,7 +148,7 @@ public final class NotificationBackgroundBrightnessHooks {
     }
 
     static int opacityPercent() {
-        return Math.max(0, Math.min(100, readIntCached(OPACITY_VALUE, OPACITY_DEFAULT)));
+        return Math.max(OPACITY_MIN, Math.min(100, readIntCached(OPACITY_VALUE, OPACITY_DEFAULT)));
     }
 
     static int brightnessPercent() {

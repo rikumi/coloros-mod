@@ -158,12 +158,12 @@ fun SettingsSmallTitle(
 fun SettingsLargeTitle(
     title: String,
     modifier: Modifier = Modifier,
-    subtitle: String? = null,
+    developerConfirmedSubtitle: String? = null,
     scrollBehavior: ScrollBehavior? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     SmallTopAppBar(
-        title = title, subtitle = subtitle.orEmpty(), modifier = modifier,
+        title = title, subtitle = developerConfirmedSubtitle.orEmpty(), modifier = modifier,
         scrollBehavior = scrollBehavior, actions = actions,
         titlePadding = LocalSettingsTitlePadding.current + 4.dp,
     )
@@ -269,7 +269,7 @@ internal fun SettingsCategoryRow(
     title: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    subtitle: String? = null,
+    developerConfirmedSubtitle: String? = null,
     selected: Boolean? = null,
 ) {
     ArrowPreference(
@@ -277,7 +277,7 @@ internal fun SettingsCategoryRow(
         modifier = modifier.then(if (selected != null) Modifier.semantics { this.selected = selected } else Modifier),
         holdDownState = selected == true,
         startAction = icon?.let { image -> { Icon(imageVector = image, contentDescription = null, modifier = Modifier.size(SETTINGS_CATEGORY_ICON_SIZE)) } },
-        endActions = { if (subtitle != null) Text(text = subtitle, color = settingsSummaryTextColor()) },
+        endActions = { if (developerConfirmedSubtitle != null) Text(text = developerConfirmedSubtitle, color = settingsSummaryTextColor()) },
     )
 }
 
@@ -483,7 +483,7 @@ fun SettingsSwitchPreference(
     onCheckedChange: (Boolean) -> Unit,
     title: String,
     modifier: Modifier = Modifier,
-    subtitle: String? = null,
+    developerConfirmedSubtitle: String? = null,
     onTitleClick: (() -> Unit)? = null,
     leftTrailingContent: @Composable RowScope.() -> Unit = {},
     showDivider: Boolean = false,
@@ -492,13 +492,13 @@ fun SettingsSwitchPreference(
     if (onTitleClick == null) {
         SwitchPreference(
             checked = checked, onCheckedChange = onCheckedChange, title = title,
-            summary = subtitle, summaryColor = settingsSummaryColors(), modifier = modifier, enabled = enabled,
+            summary = developerConfirmedSubtitle, summaryColor = settingsSummaryColors(), modifier = modifier, enabled = enabled,
             endActions = leftTrailingContent,
         )
     } else {
         // Expandable settings keep title clicks separate from the switch action.
         BasicComponent(
-            title = title, summary = subtitle, summaryColor = settingsSummaryColors(), modifier = modifier, enabled = enabled,
+            title = title, summary = developerConfirmedSubtitle, summaryColor = settingsSummaryColors(), modifier = modifier, enabled = enabled,
             onClick = onTitleClick,
             endActions = {
                 leftTrailingContent()
@@ -728,7 +728,7 @@ private fun SettingsSelectRow(
         items = item.options.map { androidx.compose.ui.res.stringResource(it) },
         selectedIndex = displayedSelection,
         title = androidx.compose.ui.res.stringResource(item.label),
-        summary = item.subtitle?.let { androidx.compose.ui.res.stringResource(it) },
+        summary = item.developerConfirmedSubtitle?.let { androidx.compose.ui.res.stringResource(it) },
         summaryColor = settingsSummaryColors(),
         enabled = !importing,
         onSelectedIndexChange = { index ->
@@ -769,7 +769,7 @@ fun SettingsMasterToggle(
     title: String,
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
-    subtitle: String? = null,
+    developerConfirmedSubtitle: String? = null,
     // 主开关上方追加的内容(如首页的机型横幅), 与主开关同卡片、以分割线隔开。
     aboveContent: (@Composable ColumnScope.() -> Unit)? = null,
     // 主开关下方追加的内容(如首页的隐藏桌面图标开关), 与主开关同卡片、以分割线隔开。
@@ -777,7 +777,7 @@ fun SettingsMasterToggle(
 ) {
     SettingsCard(modifier = modifier) {
         aboveContent?.invoke(this)
-        SettingsSwitchPreference(checked = checked, onCheckedChange = onCheckedChange, title = title, subtitle = subtitle)
+        SettingsSwitchPreference(checked = checked, onCheckedChange = onCheckedChange, title = title, developerConfirmedSubtitle = developerConfirmedSubtitle)
         if (belowContent != null) {
             SettingsItemDivider()
             belowContent()
@@ -940,7 +940,7 @@ private fun SettingsSwitchRow(
                 onItemChanged()
             },
             title = label,
-            subtitle = item.subtitle?.let { androidx.compose.ui.res.stringResource(it) },
+            developerConfirmedSubtitle = item.developerConfirmedSubtitle?.let { androidx.compose.ui.res.stringResource(it) },
         )
         return
     }
@@ -979,7 +979,7 @@ private fun SettingsSwitchRow(
                 onItemChanged()
             },
             title = label,
-            subtitle = item.subtitle?.let { androidx.compose.ui.res.stringResource(it) },
+            developerConfirmedSubtitle = item.developerConfirmedSubtitle?.let { androidx.compose.ui.res.stringResource(it) },
             onTitleClick = if (checked) {
                 { expanded = !expanded }
             } else {

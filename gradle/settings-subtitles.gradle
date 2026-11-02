@@ -1,0 +1,42 @@
+// Optional setting arguments must be named. In particular, a subtitle requires
+// the explicit spelling developerConfirmedSubtitle = ... at its call site.
+def settingsSources = fileTree('src/main/java') { include '**/*.kt' }
+def subtitleCheck = tasks.register('checkSettingsSubtitles') {
+    inputs.files(settingsSources)
+    doLast {
+        def positionalLimits = [SwitchItem: 2, SelectItem: 3, Category: 4,
+                                SettingsSwitchPreference: 3, SettingsMasterToggle: 3,
+                                SettingsCategoryRow: 3, SettingsLargeTitle: 1]
+        inputs.files.each { source ->
+            // Mask comments and quoted literals while preserving source offsets.
+            def code = source.getText('UTF-8').replaceAll(
+                    /(?s)\/\*.*?\*\/|\/\/[^\r\n]*|""".*?"""|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/) {
+                def masked = it.replaceAll(/[^\r\n]/, ' ')
+                it.startsWith('/') ? masked : '0' + masked.substring(1)
+            }
+            def calls = code =~ /\b(SwitchItem|SelectItem|Category|SettingsSwitchPreference|SettingsMasterToggle|SettingsCategoryRow|SettingsLargeTitle)\s*\(/
+            while (calls.find()) {
+                def prefix = code.substring(Math.max(0, calls.start() - 20), calls.start())
+                if (prefix =~ /(?:class|fun)\s*$/) continue
+                int start = calls.end(), depth = 1, index = 0
+                for (int cursor = start; cursor < code.length(); cursor++) {
+                    char token = code.charAt(cursor)
+                    if ('([{'.indexOf((int) token) >= 0) depth++
+                    if (')]}'.indexOf((int) token) >= 0) depth--
+                    if ((token == ',' && depth == 1) || depth == 0) {
+                        def argument = code.substring(start, cursor).trim()
+                        if (!argument.isEmpty() && index >= positionalLimits[calls.group(1)]
+                                && !(argument =~ /^\w+\s*=(?!=)/)) {
+                            int line = code.substring(0, start).count('\n') + 1
+                            throw new GradleException("${source.name}:${line}: optional setting arguments must be named; subtitles require developerConfirmedSubtitle = ...")
+                        }
+                        index++
+                        start = cursor + 1
+                    }
+                    if (depth == 0) break
+                }
+            }
+        }
+    }
+}
+tasks.named('preBuild').configure { dependsOn(subtitleCheck) }

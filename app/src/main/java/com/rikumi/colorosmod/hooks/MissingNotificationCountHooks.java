@@ -36,6 +36,7 @@ public final class MissingNotificationCountHooks {
     private static boolean active = true, ownWrite;
     private static int missing;
     private static volatile boolean showSilent = true;
+    private static boolean iconModels;
 
     private static final class Area {
         final WeakReference<View> badge, icons;
@@ -58,6 +59,8 @@ public final class MissingNotificationCountHooks {
     public static void hook(XC_LoadPackage.LoadPackageParam param) {
         loader = param.classLoader;
         try {
+            iconModels = XposedHelpers.findClassIfExists(
+                    "com.android.systemui.statusbar.notification.icon.domain.interactor.ActiveNotificationIconModel", loader) != null;
             XposedBridge.hookAllConstructors(XposedHelpers.findClass(
                     "com.android.systemui.statusbar.notification.icon.domain.interactor.NotificationIconsInteractor", loader),
                     new XC_MethodHook() {
@@ -73,11 +76,11 @@ public final class MissingNotificationCountHooks {
                     });
             Class<?> filter = XposedHelpers.findClass(
                     "com.android.systemui.statusbar.notification.icon.domain.interactor.NotificationIconsInteractor", loader);
-            // DEX, not JADX's reconstructed default arguments: status-bar call uses mask 96.
+            // Verified DEX masks: ColorOS 16 uses 96, ColorOS 17 uses 48.
             XposedHelpers.findAndHookMethod(filter, "filteredNotifSet$default", filter,
                     boolean.class, boolean.class, int.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if ((Integer) p.args[3] == 96) showSilent = (Boolean) p.args[1];
+                            if ((Integer) p.args[3] == (iconModels ? 48 : 96)) showSilent = (Boolean) p.args[1];
                         }
                     });
             // Input is the native filtered SET, before the domestic ROM's package deduplication.
@@ -149,7 +152,8 @@ public final class MissingNotificationCountHooks {
                             if (active && area != null) recolor(area);
                         }
                     });
-            XposedHelpers.findAndHookMethod(
+            // ColorOS 17 no longer has this heads-up isolated-icon pipeline.
+            if (!iconModels) XposedHelpers.findAndHookMethod(
                     "com.android.systemui.statusbar.notification.icon.ui.viewbinder.NotificationIconContainerViewBinder$bindIsolatedIcon$2$2$invokeSuspend$$inlined$collectTracingEach$1",
                     loader, "emit", Object.class, XposedHelpers.findClass("kotlin.coroutines.Continuation", loader),
                     new XC_MethodHook() {
@@ -220,17 +224,35 @@ public final class MissingNotificationCountHooks {
     private static Object data(Object nativeData) {
         Object interactor = iconsInteractor.get();
         if (interactor == null) return nativeData;
-        Object activeInteractor = XposedHelpers.getObjectField(interactor, "activeNotificationsInteractor");
-        Object repository = XposedHelpers.getObjectField(activeInteractor, "repository");
+        Object repository = iconModels ? XposedHelpers.getObjectField(interactor, "activeNotificationsRepository")
+                : XposedHelpers.getObjectField(XposedHelpers.getObjectField(interactor, "activeNotificationsInteractor"), "repository");
         Object store = XposedHelpers.callMethod(XposedHelpers.callMethod(repository, "getActiveNotifications"), "getValue");
         Map<?, ?> groups = (Map<?, ?>) XposedHelpers.callMethod(store, "getGroups");
-        Object headsUp = XposedHelpers.getObjectField(interactor, "headsUpNotificationIconInteractor");
-        Object isolated = XposedHelpers.callMethod(XposedHelpers.callMethod(headsUp, "getIsolatedNotification"), "getValue");
+        Object isolated = null;
+        if (!iconModels) {
+            Object headsUp = XposedHelpers.getObjectField(interactor, "headsUpNotificationIconInteractor");
+            isolated = XposedHelpers.callMethod(XposedHelpers.callMethod(headsUp, "getIsolatedNotification"), "getValue");
+        }
         Object keyguard = XposedHelpers.getObjectField(interactor, "keyguardViewStateRepository");
         boolean fullyHidden = (Boolean) XposedHelpers.callMethod(
                 XposedHelpers.callMethod(keyguard, "getAreNotificationsFullyHidden"), "getValue");
         Map<String, Object> children = new LinkedHashMap<>();
-        java.util.Set<Object> candidates = new LinkedHashSet<>(representatives);
+        java.util.Set<Object> candidates = new LinkedHashSet<>();
+        if (iconModels) {
+            Map<?, ?> individuals = (Map<?, ?>) XposedHelpers.callMethod(store, "getIndividuals");
+            Map<?, ?> bundles = (Map<?, ?>) XposedHelpers.callMethod(store, "getBundles");
+            for (Object icon : representatives) {
+                String key = (String) XposedHelpers.callMethod(icon, "getNotifKey");
+                Object model = individuals.get(key);
+                if (model != null) candidates.add(model);
+                else if (bundles.get(key) != null) {
+                    for (Object child : (List<?>) XposedHelpers.callMethod(bundles.get(key), "getChildren")) {
+                        if (groups.containsValue(child)) candidates.add(XposedHelpers.callMethod(child, "getSummary"));
+                        else candidates.add(child);
+                    }
+                }
+            }
+        } else candidates.addAll(representatives);
 
         for (Object group : groups.values()) {
             Object summary = XposedHelpers.callMethod(group, "getSummary");
@@ -247,11 +269,17 @@ public final class MissingNotificationCountHooks {
                 break;
             }
             for (Object child : NotificationIconPartition.leaves(representative, leaves)) {
-                // Native mask-96 flags, current silent preference, isolated key and CTS exception.
-                boolean eligible = child == representative || (Boolean) XposedHelpers.callStaticMethod(interactor.getClass(),
+                // Use each ROM's native filtering flags and CTS exception. Bundles
+                // in ColorOS 17 were filtered as a whole, so recheck every leaf.
+                boolean eligible = (!iconModels && child == representative) || (iconModels
+                        ? (Boolean) XposedHelpers.callStaticMethod(interactor.getClass(),
+                            "access$shouldShowNotificationIcon", interactor, child,
+                            false, showSilent || XposedHelpers.getBooleanField(child, "isCtsTest"),
+                            false, false, true, null, fullyHidden)
+                        : (Boolean) XposedHelpers.callStaticMethod(interactor.getClass(),
                         "access$shouldShowNotificationIcon", interactor, child,
                         true, false, showSilent || XposedHelpers.getBooleanField(child, "isCtsTest"),
-                        false, false, true, isolated, null, fullyHidden);
+                        false, false, true, isolated, null, fullyHidden));
                 if (eligible) children.put((String) XposedHelpers.callMethod(child, "getKey"), child);
             }
         }
@@ -274,7 +302,10 @@ public final class MissingNotificationCountHooks {
             Object pack = XposedHelpers.callMethod(entry, "getIcons");
             Object iconView = XposedHelpers.callMethod(pack, "getStatusBarIcon");
             Object icon = XposedHelpers.callMethod(iconView, "getSourceIcon");
-            Object info = XposedHelpers.callStaticMethod(toInfo, "toIconInfo", item.getValue(), icon);
+            Object info = iconModels ? (icon == null ? null : XposedHelpers.newInstance(XposedHelpers.findClass(
+                    "com.android.systemui.statusbar.notification.icon.ui.viewmodel.NotificationIconInfo", loader),
+                    icon, item.getKey(), XposedHelpers.callMethod(item.getValue(), "getGroupKey")))
+                    : XposedHelpers.callStaticMethod(toInfo, "toIconInfo", item.getValue(), icon);
             items.add(new NotificationIconPartition.Item<>(item.getKey(),
                     sbn.getUserId() + ":" + sbn.getPackageName(), info != null, info));
         }

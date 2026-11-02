@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="ui_background_opacity_hint" formatted="false">Native OS16 = 70%, OS17 = 10%</string>
     <string name="ui_qs_bg_brightness">Custom tile background brightness</string>
     <string name="ui_qs_bg_opacity">Custom tile background opacity</string>
     <string name="ui_notification_bg_brightness">Custom notification background brightness</string>

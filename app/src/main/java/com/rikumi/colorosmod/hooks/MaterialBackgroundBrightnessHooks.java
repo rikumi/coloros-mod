@@ -310,7 +310,8 @@ final class MaterialBackgroundBrightnessHooks {
     }
 
     private static int tileOpacityPercent() {
-        return Math.max(0, Math.min(100, readIntCached("qs_bg_opacity_percent", NotificationBackgroundBrightnessHooks.OPACITY_DEFAULT)));
+        return Math.max(NotificationBackgroundBrightnessHooks.OPACITY_MIN,
+                Math.min(100, readIntCached("qs_bg_opacity_percent", NotificationBackgroundBrightnessHooks.OPACITY_DEFAULT)));
     }
 
     private static int adjustTileColor(int color, int layer) {

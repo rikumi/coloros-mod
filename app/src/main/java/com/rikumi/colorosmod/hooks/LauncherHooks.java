@@ -521,6 +521,7 @@ public final class LauncherHooks {
     public static Object captureHotReloadHosts() {
         java.util.ArrayList<Object> saved = new java.util.ArrayList<>();
         saved.add(new Object[] { "idleRefreshActivity", LauncherIdleRefresh.captureActivity() });
+        saved.add(new Object[] { "folderGrid", FolderGridHooks.captureHost() });
         saved.add(new Object[] { "iconGapViews", LauncherIconGapHooks.captureViews() });
         saved.add(new Object[] { "taskbarGestureControllers", TaskbarGestureHooks.captureControllers() });
         synchronized (sDrawerIconStates) {
@@ -587,9 +588,14 @@ public final class LauncherHooks {
 
     public static void restoreHotReloadHosts(Object saved) {
         if (!(saved instanceof Object[])) return;
+        Object folderGrid = null;
         for (Object value : (Object[]) saved) {
             if (!(value instanceof Object[])) continue;
             Object[] state = (Object[]) value;
+            if (state.length >= 2 && "folderGrid".equals(state[0])) {
+                folderGrid = state[1];
+                continue;
+            }
             if (state.length >= 2 && "taskbarGestureControllers".equals(state[0])) {
                 TaskbarGestureHooks.restoreControllers(state[1]);
                 continue;
@@ -696,6 +702,8 @@ public final class LauncherHooks {
                 log("launcher drawer icon restore failed: " + t);
             }
         }
+        // Queue the rebuild only after the idle-refresh activity has been restored.
+        FolderGridHooks.restoreHost(folderGrid);
     }
 
     public static boolean prepareHotReloadListeners() {
@@ -714,6 +722,7 @@ public final class LauncherHooks {
         LauncherStartupRefresh.cleanup();
         LauncherIconGapHooks.cleanup();
         FolderGridHooks.cleanup();
+        FolderGridCenteringHooks.cleanup();
         LauncherPopupBrightnessHooks.cleanup();
         LauncherIdleRefresh.cleanup();
         LauncherIconClarityHooks.cleanup();
@@ -949,6 +958,8 @@ public final class LauncherHooks {
         catch (Throwable error) { log("launcher icon-label spacing hooks unavailable: " + error); }
         try { FolderGridHooks.hook(lpparam); }
         catch (Throwable error) { log("launcher folder grid hooks unavailable: " + error); }
+        try { FolderGridCenteringHooks.hook(lpparam); }
+        catch (Throwable error) { log("launcher folder grid centering hooks unavailable: " + error); }
         hookDrawerLayout(lpparam);
 
         // 字母索引滚动定位: 始终注入, 运行时按 KEY_DRAWER_LETTER_SCROLL_ENABLED 门控。

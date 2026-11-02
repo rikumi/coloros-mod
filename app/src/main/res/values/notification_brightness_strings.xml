@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="ui_background_opacity_hint" formatted="false">原生 OS16 = 70%，OS17 = 10%</string>
     <string name="ui_qs_bg_brightness">自定义磁贴背景亮度</string>
     <string name="ui_qs_bg_opacity">自定义磁贴背景不透明度</string>
     <string name="ui_notification_bg_brightness">自定义通知背景亮度</string>

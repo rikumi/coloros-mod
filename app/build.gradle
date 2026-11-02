@@ -3,6 +3,8 @@ plugins {
     id 'org.jetbrains.kotlin.plugin.compose'
 }
 
+apply from: rootProject.file('gradle/settings-subtitles.gradle')
+
 // Both variants use an explicit, persistent key; never fall back to a runner-generated key.
 def signingPropertiesFile = rootProject.file(
         System.getenv('ANDROID_SIGNING_PROPERTIES') ?: 'signing.properties')
