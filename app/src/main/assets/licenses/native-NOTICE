@@ -1,0 +1,5 @@
+LLVM libc++ and libc++abi
+These runtimes are linked into the native font bridge through c++_static.
+The following notices are copied without modification from Android NDK
+21.4.7075529 sources/cxx-stl/llvm-libc++/NOTICE and llvm-libc++abi/NOTICE.
+Source: https://github.com/llvm/llvm-project

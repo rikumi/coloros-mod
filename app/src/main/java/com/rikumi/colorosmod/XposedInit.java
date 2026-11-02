@@ -1012,6 +1012,7 @@ public class XposedInit extends XposedModule {
 
         if (sIsSystemServer) {
             com.rikumi.colorosmod.hooks.SystemIconPackHooks.hook(sSystemServerClassLoader);
+            com.rikumi.colorosmod.hooks.PlayStoreUpdateHooks.hook(systemServerLpparam());
             SystemServerHooks.hookFloatWindowEdgeHangSystemServer(systemServerLpparam());
             SystemServerHooks.hookFloatWindowEdgeHangMute(systemServerLpparam());
             com.rikumi.colorosmod.hooks.SystemFontHooks.hook(systemServerLpparam());
@@ -1271,6 +1272,7 @@ public class XposedInit extends XposedModule {
         } else if ("com.android.providers.media.module".equals(lpparam.packageName)) {
             MediaProviderHooks.hookMediaProvider(lpparam);
         } else if ("android".equals(lpparam.packageName)) {
+            com.rikumi.colorosmod.hooks.PlayStoreUpdateHooks.hook(lpparam);
             com.rikumi.colorosmod.hooks.SystemFontHooks.hook(lpparam);
             // system_server: 承载"贴边最小化"的真正提交逻辑(com.android.server.wm.FlexibleTaskController)
             SystemServerHooks.hookFloatWindowEdgeHangSystemServer(lpparam);

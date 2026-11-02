@@ -1,0 +1,5 @@
+libxposed service and interface 102.0.0
+License: Apache-2.0
+Source: https://github.com/libxposed/service/tree/102.0.0
+The libxposed API and annotation artifacts are compile-only dependencies;
+the service and interface artifacts are included in the application.

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_preserve_play_store_update">阻止 Google Play 商店回退為預載版本</string>
+    <string name="ui_play_store_update_restart">設定已儲存，重新啟動 Zygote 後生效</string>
+    <string name="ui_play_store_update_failed">設定失敗，請檢查 root 授權</string>
+</resources>

@@ -557,6 +557,7 @@ internal fun SettingsGroup(
                             NotificationLayoutTestRow(ctx)
                         }
                     }
+                    is RefreshIconCacheItem -> RefreshIconCacheRow(ctx)
                     is GroupTitleItem -> Unit
                     is FontAppsItem -> SettingsCategoryRow(
                         icon = null,
@@ -586,6 +587,7 @@ private val SettingsItem.keyForCompose: String
         is GroupTitleItem -> "group:$title"
         is NavigationAppsItem -> "navigation_apps"
         is FontAppsItem -> "font_mount_apps"
+        is RefreshIconCacheItem -> "refresh_icon_cache"
     }
 
 @Composable
@@ -841,6 +843,10 @@ private fun SettingsSwitchRow(
     overrideValue: Boolean?,
     onItemChanged: () -> Unit,
 ) {
+    if (item.key == PlayStoreUpdatePolicy.KEY) {
+        PlayStoreUpdateRow(ctx, onItemChanged)
+        return
+    }
     if (item.key == InstallerSettings.RESTORE) {
         InstallerRestoreRow(ctx, onItemChanged)
         return

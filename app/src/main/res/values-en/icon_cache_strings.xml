@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_refresh_icon_cache">Refresh icon cache</string>
+    <string name="ui_refresh_icon_cache_running">Refreshing icon cache…</string>
+    <string name="ui_refresh_icon_cache_done">Icon caches refreshed. Related apps will reload.</string>
+    <string name="ui_refresh_icon_cache_failed">Refresh failed. Check root access and whether the module is loaded in Launcher.</string>
+</resources>

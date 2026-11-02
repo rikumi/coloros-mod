@@ -1,0 +1,17 @@
+Twemoji emoji artwork
+Copyright 2020 Twitter, Inc and other contributors
+Source: https://github.com/twitter/twemoji
+Artwork license: Creative Commons Attribution 4.0 International (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+
+The Twitter Emoji option downloads a third-party Android font conversion of
+Twemoji 15, rather than the Twemoji JavaScript library. The artwork license is
+CC BY 4.0; the JavaScript library's MIT license does not replace that license.
+Conversion source:
+https://github.com/EmojiReplacer/Emoji-Replacer/blob/4778cd5032978d286d5175a734f43cce6abe4a92/Emoji/Twemoji15.ttf
+The artwork has been converted to Android color-font format by third parties.
+ColorOS Mod downloads the pinned font without modifying its contents.
+This attribution covers the Twemoji artwork; the specific font conversion's
+additional rights and licensing remain to be verified separately.
+No endorsement by Twitter or the contributors is implied. The artwork is
+provided without warranties as set out in the license below.

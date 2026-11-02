@@ -1,0 +1,27 @@
+ColorOS Mod — third-party licenses and attribution
+
+The root LICENSE applies to original ColorOS Mod code. It does not relicense
+third-party libraries, fonts, graphics, or vendor resources under MIT.
+
+License texts and attribution notices are tracked in app/src/main/assets/licenses/
+and displayed in About > Open-source licenses. The project MIT license is
+also packaged there as coloros-mod-LICENSE for binary redistribution.
+
+- COUI 1.1.0: Apache-2.0 (coui-LICENSE).
+- AndroidX / Jetpack Compose: Apache-2.0 (androidx-NOTICE, Apache-2.0).
+- Kotlin / kotlinx / JetBrains Compose: Apache-2.0 (kotlin-NOTICE, Apache-2.0).
+- libxposed service / interface 102.0.0: Apache-2.0 (libxposed-NOTICE, Apache-2.0).
+- Other JVM runtime components: Apache-2.0 (runtime-NOTICE, Apache-2.0).
+- MaterialKolor 5.0.0: MIT plus Apache-2.0 for included Google code
+  (materialkolor-NOTICE, materialkolor-LICENSE, Apache-2.0).
+- LLVM libc++ / libc++abi: original NDK notices including their license terms
+  (native-NOTICE, llvm-libc++-NOTICE, llvm-libc++abi-NOTICE).
+- Twemoji artwork: CC BY 4.0 (twemoji-NOTICE, twemoji-LICENSE-GRAPHICS).
+  The downloaded third-party font conversion requires separate verification.
+- Bundled fonts: SIL OFL 1.1. Retain the *-OFL.txt notices in
+  app/src/main/assets/clock_fonts/ and system_fonts/ alongside the fonts.
+
+Apple, JoyPixels and Samsung Emoji and extracted vendor resources remain
+pending authorization review. Adding these notices does not grant rights to
+those materials or resolve the pending review. Download choices and resource
+behavior are unchanged by this attribution update.

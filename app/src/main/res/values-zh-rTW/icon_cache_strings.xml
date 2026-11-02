@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_refresh_icon_cache">重新整理圖示快取</string>
+    <string name="ui_refresh_icon_cache_running">正在重新整理圖示快取…</string>
+    <string name="ui_refresh_icon_cache_done">圖示快取已重新整理，相關應用程式將重新載入</string>
+    <string name="ui_refresh_icon_cache_failed">重新整理失敗，請檢查 root 授權及桌面模組是否已載入</string>
+</resources>

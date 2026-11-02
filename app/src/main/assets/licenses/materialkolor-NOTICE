@@ -1,0 +1,12 @@
+MaterialKolor material-color-utilities 5.0.0
+Source: https://github.com/jordond/MaterialKolor/tree/5.0.0
+The upstream project license is MIT; its text follows this notice.
+
+The source artifact also includes Google Material Color Utilities code under
+Apache-2.0. Copyright notices retained from the 5.0.0 source artifact:
+Copyright 2021 Google LLC
+Copyright 2022 Google LLC
+Copyright 2023 Google LLC
+Copyright 2025 Google LLC
+Source artifact: https://repo.maven.apache.org/maven2/com/materialkolor/material-color-utilities/5.0.0/material-color-utilities-5.0.0-sources.jar
+The Apache-2.0 text is also included after the MIT license.

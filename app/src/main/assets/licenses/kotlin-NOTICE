@@ -1,0 +1,18 @@
+Kotlin standard library 2.4.10
+Copyright JetBrains s.r.o. and Kotlin Programming Language contributors.
+License: Apache-2.0
+Source: https://github.com/JetBrains/kotlin/tree/v2.4.10/libraries/stdlib
+
+kotlinx.coroutines 1.9.0 and kotlinx.serialization 1.7.3
+Copyright JetBrains s.r.o. and respective contributors.
+License: Apache-2.0
+Sources:
+https://github.com/Kotlin/kotlinx.coroutines/tree/1.9.0
+https://github.com/Kotlin/kotlinx.serialization/tree/v1.7.3
+
+Compose Multiplatform and JetBrains AndroidX runtime components
+Copyright JetBrains s.r.o. and respective contributors.
+License: Apache-2.0
+Sources:
+https://github.com/JetBrains/compose-multiplatform
+https://github.com/JetBrains/compose-multiplatform-core

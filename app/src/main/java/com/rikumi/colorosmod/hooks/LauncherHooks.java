@@ -720,6 +720,7 @@ public final class LauncherHooks {
     public static void cleanupForHotReload() {
         TaskbarGestureHooks.cleanupForHotReload();
         LauncherStartupRefresh.cleanup();
+        LauncherIconCacheRefreshHooks.cleanup();
         LauncherIconGapHooks.cleanup();
         FolderGridHooks.cleanup();
         FolderGridCenteringHooks.cleanup();
@@ -925,6 +926,8 @@ public final class LauncherHooks {
         catch (Throwable error) { log("taskbar gesture hooks unavailable: " + error); }
         try { LauncherIconClarityHooks.hook(lpparam); }
         catch (Throwable error) { log("launcher icon clarity unavailable: " + error); }
+        try { LauncherIconCacheRefreshHooks.hook(lpparam); }
+        catch (Throwable error) { log("icon cache refresh hooks unavailable: " + error); }
         sLauncherClassLoader = lpparam.classLoader;
         try { LauncherIdleRefresh.hook(lpparam); }
         catch (Throwable error) { log("launcher idle refresh hooks unavailable: " + error); }

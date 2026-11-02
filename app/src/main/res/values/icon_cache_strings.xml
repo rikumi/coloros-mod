@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_refresh_icon_cache">刷新图标缓存</string>
+    <string name="ui_refresh_icon_cache_running">正在刷新图标缓存…</string>
+    <string name="ui_refresh_icon_cache_done">图标缓存已刷新，相关应用将重新加载</string>
+    <string name="ui_refresh_icon_cache_failed">刷新失败，请检查 root 授权及桌面模块是否已加载</string>
+</resources>

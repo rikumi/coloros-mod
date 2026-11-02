@@ -1,0 +1,7 @@
+AndroidX and Jetpack Compose
+Copyright The Android Open Source Project and respective contributors.
+License: Apache-2.0
+Source: https://android.googlesource.com/platform/frameworks/support/
+Includes AndroidX AppCompat, Core, Activity, NavigationEvent, Compose and their
+AndroidX runtime dependencies. Existing packaged per-artifact license files
+are retained in META-INF/androidx/.

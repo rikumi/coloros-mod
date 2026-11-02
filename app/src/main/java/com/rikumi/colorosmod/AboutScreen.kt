@@ -96,10 +96,17 @@ private fun AboutLinkRow(title: String, summary: String, url: String) {
         onClick = { openAboutLink(context, url) })
 }
 
-private data class OpenSourceComponent(val name: String, val url: String, val licenseAsset: String)
+private class OpenSourceComponent(val name: String, val url: String, vararg val licenseAssets: String)
 
 private val OPEN_SOURCE_COMPONENTS = listOf(
     OpenSourceComponent("COUI", "https://github.com/suqi8/coui", "licenses/coui-LICENSE"),
+    OpenSourceComponent("AndroidX / Jetpack Compose", "https://android.googlesource.com/platform/frameworks/support/", "licenses/androidx-NOTICE", "licenses/Apache-2.0"),
+    OpenSourceComponent("Kotlin / kotlinx / Compose Multiplatform", "https://github.com/JetBrains/kotlin", "licenses/kotlin-NOTICE", "licenses/Apache-2.0"),
+    OpenSourceComponent("libxposed", "https://github.com/libxposed/service", "licenses/libxposed-NOTICE", "licenses/Apache-2.0"),
+    OpenSourceComponent("JVM runtime dependencies", "https://github.com/rikumi/coloros-mod/blob/master/THIRD_PARTY_NOTICES", "licenses/runtime-NOTICE", "licenses/Apache-2.0"),
+    OpenSourceComponent("MaterialKolor", "https://github.com/jordond/MaterialKolor/tree/5.0.0", "licenses/materialkolor-NOTICE", "licenses/materialkolor-LICENSE", "licenses/Apache-2.0"),
+    OpenSourceComponent("LLVM libc++ / libc++abi", "https://github.com/llvm/llvm-project", "licenses/native-NOTICE", "licenses/llvm-libc++-NOTICE", "licenses/llvm-libc++abi-NOTICE"),
+    OpenSourceComponent("Twemoji", "https://github.com/twitter/twemoji", "licenses/twemoji-NOTICE", "licenses/twemoji-LICENSE-GRAPHICS"),
     OpenSourceComponent("Inter", "https://github.com/rsms/inter", "clock_fonts/inter-OFL.txt"),
     OpenSourceComponent("Lato", "https://github.com/latofonts/lato-source", "clock_fonts/lato-OFL.txt"),
     OpenSourceComponent("Manrope", "https://github.com/googlefonts/manrope", "clock_fonts/manrope-OFL.txt"),
@@ -118,7 +125,9 @@ internal fun OpenSourceScreen(onBack: () -> Unit) {
     LaunchedEffect(Unit) {
         licenses = withContext(Dispatchers.IO) {
             OPEN_SOURCE_COMPONENTS.associate { component ->
-                component.licenseAsset to context.assets.open(component.licenseAsset).bufferedReader().use { it.readText() }
+                component.name to component.licenseAssets.joinToString("\n\n") { asset ->
+                    context.assets.open(asset).bufferedReader().use { it.readText() }
+                }
             }
         }
     }
@@ -136,7 +145,7 @@ internal fun OpenSourceScreen(onBack: () -> Unit) {
                             AboutLinkRow(component.name, component.url, component.url)
                             SettingsItemDivider()
                             SelectionContainer {
-                                Text(text = licenses.orEmpty().getValue(component.licenseAsset),
+                                Text(text = licenses.orEmpty().getValue(component.name),
                                     style = COUITheme.textStyles.body2,
                                     color = COUITheme.colorScheme.onSurface,
                                     modifier = Modifier.padding(16.dp))

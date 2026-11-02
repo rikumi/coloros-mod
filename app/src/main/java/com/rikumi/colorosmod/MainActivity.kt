@@ -208,6 +208,7 @@ internal data class GroupTitleItem(val title: Int) : SettingsItem
 
 internal data class NavigationAppsItem(val title: Int) : SettingsItem
 internal data class FontAppsItem(val title: Int) : SettingsItem
+internal data object RefreshIconCacheItem : SettingsItem
 
 internal data class SwitchItem(
     val key: String,
@@ -280,6 +281,7 @@ private val DESKTOP: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_icon_pack),
     SwitchItem("system_application_icon_pack", R.string.ui_system_application_icon_pack),
     SwitchItem("launcher_icon_pack_clarity_enabled", R.string.ui_launcher_icon_pack_clarity),
+    RefreshIconCacheItem,
     GroupTitleItem(R.string.ui_long_press_menu),
     SwitchItem("disable_launcher_secondary_menu_enabled", R.string.ui_disable_secondary_menu),
     SwitchItem("shrink_popup_menu", R.string.ui_shrink_popup, sliderKey = "popup_scale_percent", sliderMax = 20, sliderDefault = 10, sliderUnit = "%"),
@@ -456,6 +458,8 @@ private val LOCKSCREEN: List<SettingsItem> = listOf(
 
 private val PURIFICATION: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_system_settings_group),
+    SwitchItem(PlayStoreUpdatePolicy.KEY, R.string.ui_preserve_play_store_update,
+        rootBacked = true, masterManaged = false),
     SelectItem("about_device_card_style", R.string.ui_about_device_card,
         listOf(R.string.ui_about_card_default, R.string.ui_about_card_coloros17, R.string.ui_about_card_coloros161, R.string.ui_about_card_coloros16, R.string.ui_about_card_coloros15,
             R.string.ui_about_card_oxygenos, R.string.ui_about_card_oxygenos15, R.string.ui_about_card_realme16, R.string.ui_about_card_realme15, R.string.ui_about_card_mod),
@@ -589,6 +593,7 @@ private val SettingsItem.availableOnDevice: Boolean
         key == "qs_bg_brightness_enabled" || key == "qs_bg_opacity_enabled"
                 || key == TileBackgroundEnhancement.ENABLED
                 || key == TileBackgroundEnhancement.NOTIFICATION_ENABLED -> Build.VERSION.SDK_INT >= 37
+        key == PlayStoreUpdatePolicy.KEY -> Build.VERSION.SDK_INT >= 37
         key == XposedInit.KEY_NOTIFICATION_ROUND_CLEAR_ALL_ENABLED -> Build.VERSION.SDK_INT >= 37
         key == XposedInit.KEY_TABLET_LANDSCAPE_CUTOUT_INSETS_ENABLED -> TabletDevice.isTablet()
         else -> true
@@ -606,7 +611,7 @@ private fun SettingsItem.isEnabledInMaster(prefs: SharedPreferences): Boolean = 
     is SwitchItem -> prefs.getBoolean(settingKey, false)
     is FolderBlockItem -> prefs.getBoolean(settingKey, false)
     is SelectItem -> prefs.getInt(key, 0) != 0
-    is GroupTitleItem, is NavigationAppsItem, is FontAppsItem -> false
+    is GroupTitleItem, is NavigationAppsItem, is FontAppsItem, is RefreshIconCacheItem -> false
 }
 
 private val SettingsItem.settingKey: String
@@ -614,7 +619,7 @@ private val SettingsItem.settingKey: String
         is SwitchItem -> key
         is FolderBlockItem -> key
         is SelectItem -> key
-        is GroupTitleItem, is NavigationAppsItem, is FontAppsItem -> ""
+        is GroupTitleItem, is NavigationAppsItem, is FontAppsItem, is RefreshIconCacheItem -> ""
     }
 
 private fun List<SettingsItem>.splitByDivider(): List<SwitchGroup> {
@@ -634,6 +639,7 @@ private fun List<SettingsItem>.splitByDivider(): List<SwitchGroup> {
             is SelectItem -> current.add(item)
             is NavigationAppsItem -> current.add(item)
             is FontAppsItem -> current.add(item)
+            is RefreshIconCacheItem -> current.add(item)
         }
     }
     if (current.isNotEmpty()) result.add(SwitchGroup(desc, current))

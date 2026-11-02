@@ -1,0 +1,8 @@
+Additional JVM runtime dependencies
+All components listed here are licensed under Apache-2.0.
+Copyright remains with their respective authors and contributors.
+
+Guava listenablefuture 1.0 (Google): https://github.com/google/guava
+JetBrains annotations 23.0.0: https://github.com/JetBrains/java-annotations
+JSpecify 1.0.0: https://github.com/jspecify/jspecify
+Poko annotations 0.23.1 (Drew Hamilton and contributors): https://github.com/drewhamilton/Poko
