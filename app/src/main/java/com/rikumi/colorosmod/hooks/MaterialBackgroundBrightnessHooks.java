@@ -10,6 +10,7 @@ import android.graphics.drawable.ColorDrawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import com.rikumi.colorosmod.TileBackgroundEnhancement;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -25,6 +26,7 @@ final class MaterialBackgroundBrightnessHooks {
     private static final ReferenceQueue<Object> queue = new ReferenceQueue<>();
     // BlurMixConfig has structural equality and a mutable hashCode. Use weak identity keys.
     private static final Map<Key, Integer> configs = new HashMap<>();
+    private static final Map<Key, WeakReference<Object>> shaderSources = new HashMap<>();
     private static final WeakHashMap<Object, Boolean> tileProxies = new WeakHashMap<>();
     private static final WeakHashMap<Object, Boolean> activeSliderProxies = new WeakHashMap<>();
     private static final WeakHashMap<Object, Boolean> notificationProxies = new WeakHashMap<>();
@@ -52,8 +54,12 @@ final class MaterialBackgroundBrightnessHooks {
         // The ROM strips InnerClasses metadata: getSimpleName() may include the
         // enclosing binary name (BlurMixConfig$BlurMixMultiWithShader).
         if (config == null || shaderMix == null || !shaderMix.isInstance(config)) return;
-        for (Object old; (old = queue.poll()) != null;) configs.remove(old);
-        configs.put(new Key(config), kind);
+        for (Object old; (old = queue.poll()) != null;) {
+            configs.remove(old);
+            shaderSources.remove(old);
+        }
+        if (configs.put(new Key(config), kind) == null)
+            shaderSources.put(new Key(XposedHelpers.callMethod(config, "getMixMultiShaderParams")), new WeakReference<>(config));
     }
     private static synchronized Integer kind(Object config) { return configs.get(new Key(config)); }
     static void markNotification(Object config) { mark(config, NOTIFICATION); }
@@ -73,6 +79,21 @@ final class MaterialBackgroundBrightnessHooks {
             Class<?> renderer = XposedHelpers.findClass(
                     "com.oplusos.systemui.common.blurability.platformblur.PlatformBlurDrawable", lp.classLoader);
             platformRenderer = renderer;
+            TileBackgroundSaturationHooks.hook(lp.classLoader);
+            // The source list identifies the surface even if the caller's
+            // PlatformBlurDrawable.applyBlurConfig was inlined by ART.
+            Class<?> blend = XposedHelpers.findClass("com.oplus.posteffect.drawable.BlendDrawable", lp.classLoader);
+            XposedHelpers.findAndHookMethod(blend, "setShaderBlendParams", ArrayList.class, new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (p.hasThrowable()) return;
+                    WeakReference<Object> source;
+                    synchronized (MaterialBackgroundBrightnessHooks.class) {
+                        source = shaderSources.get(new Key(p.args[0]));
+                    }
+                    Object config = source == null ? null : source.get();
+                    if (config != null) applySaturation(p.thisObject, kind(config));
+                }
+            });
             // Modify the actual renderer output. The helper may have been inlined;
             // tagging its input and hooking the helper does not guarantee execution.
             XposedBridge.hookAllMethods(renderer, "applyBlurConfig", new XC_MethodHook() {
@@ -184,11 +205,21 @@ final class MaterialBackgroundBrightnessHooks {
         } catch (Throwable error) { log("material background brightness hook failed: " + error); }
     }
 
+    private static void applySaturation(Object drawable, Integer kind) {
+        TileBackgroundSaturationHooks.Surface surface = null;
+        if (!restoring) {
+            if (Integer.valueOf(TILE).equals(kind)) surface = TileBackgroundSaturationHooks.Surface.TILE;
+            else if (Integer.valueOf(NOTIFICATION).equals(kind)) surface = TileBackgroundSaturationHooks.Surface.NOTIFICATION;
+        }
+        TileBackgroundSaturationHooks.apply(drawable, surface);
+    }
+
     @SuppressWarnings("unchecked")
     private static void applyToRenderer(Object renderer, Object config, float blurAmount) {
-        if (restoring) return;
         Integer kind = kind(config);
-        if (kind == null) return;
+        Object drawable = XposedHelpers.getObjectField(renderer, "blurDrawable");
+        applySaturation(drawable, kind);
+        if (restoring || kind == null) return;
         String enabled = kind == TILE ? "qs_bg_brightness_enabled" : NotificationBackgroundBrightnessHooks.ENABLED;
         String value = kind == TILE ? "qs_bg_brightness_percent" : NotificationBackgroundBrightnessHooks.VALUE;
         if (kind == NOTIFICATION ? !NotificationBackgroundBrightnessHooks.materialEnabled()
@@ -221,7 +252,6 @@ final class MaterialBackgroundBrightnessHooks {
                         adjustTileColor((Integer) XposedHelpers.callMethod(param, "getColor"), i - 2)));
             }
         }
-        Object drawable = XposedHelpers.getObjectField(renderer, "blurDrawable");
         XposedHelpers.callMethod(drawable, "setShaderBlendParams", params);
         int diagnostic = brightness;
         int previous = kind == TILE ? lastTileDiagnostic : lastNotificationDiagnostic;
@@ -306,7 +336,8 @@ final class MaterialBackgroundBrightnessHooks {
     }
 
     private static boolean tileMaterialEnabled() {
-        return readBoolCached("qs_bg_brightness_enabled", false) || readBoolCached("qs_bg_opacity_enabled", false);
+        return readBoolCached("qs_bg_brightness_enabled", false) || readBoolCached("qs_bg_opacity_enabled", false)
+                || readBoolCached(TileBackgroundEnhancement.ENABLED, false);
     }
 
     private static int tileOpacityPercent() {
@@ -324,7 +355,8 @@ final class MaterialBackgroundBrightnessHooks {
 
     private static boolean drawSolidTile(Drawable tile, Canvas canvas) {
         solidTiles.put(tile, true);
-        if (restoring || !tileMaterialEnabled() || !adjustableTileBackground(tile)) return false;
+        if (restoring || !(readBoolCached("qs_bg_brightness_enabled", false)
+                || readBoolCached("qs_bg_opacity_enabled", false)) || !adjustableTileBackground(tile)) return false;
         ColorDrawable fill = (ColorDrawable) XposedHelpers.getObjectField(tile, "colorDrawable");
         int color = fill.getColor();
         if ((color >>> 24) == 0 && fill.getColorFilter() == null) return false;
@@ -370,10 +402,14 @@ final class MaterialBackgroundBrightnessHooks {
     static void refresh() {
         String settings = (readBoolCached("qs_bg_brightness_enabled", false) ? "on:" + percent("qs_bg_brightness_percent", 75) : "off")
                 + ":" + (readBoolCached("qs_bg_opacity_enabled", false) ? "on:" + tileOpacityPercent() : "off")
+                + ":" + (readBoolCached(TileBackgroundEnhancement.ENABLED, false) ? "on:" + TileBackgroundEnhancement.clamp(
+                    readIntCached(TileBackgroundEnhancement.VALUE, TileBackgroundEnhancement.DEFAULT)) : "off")
                 + ":" + (readBoolCached(NotificationBackgroundBrightnessHooks.ENABLED, false)
                     ? "on:" + NotificationBackgroundBrightnessHooks.brightnessPercent() : "off")
                 + ":" + (readBoolCached(NotificationBackgroundBrightnessHooks.OPACITY_ENABLED, false)
-                    ? "on:" + NotificationBackgroundBrightnessHooks.opacityPercent() : "off");
+                    ? "on:" + NotificationBackgroundBrightnessHooks.opacityPercent() : "off")
+                + ":" + (readBoolCached(TileBackgroundEnhancement.NOTIFICATION_ENABLED, false) ? "on:" + TileBackgroundEnhancement.clamp(
+                    readIntCached(TileBackgroundEnhancement.NOTIFICATION_VALUE, TileBackgroundEnhancement.DEFAULT)) : "off");
         if (settings.equals(lastSettings)) return;
         lastSettings = settings;
         new Handler(Looper.getMainLooper()).post(() -> {
@@ -420,6 +456,7 @@ final class MaterialBackgroundBrightnessHooks {
     }
     static void cleanup() {
         restoring = true;
+        TileBackgroundSaturationHooks.cleanup();
         refreshProxies(tileProxies, TILE);
         refreshProxies(notificationProxies, NOTIFICATION);
         refreshGroupHeaders();
@@ -430,7 +467,7 @@ final class MaterialBackgroundBrightnessHooks {
         notificationConfigs.clear();
         for (Drawable tile : new ArrayList<>(solidTiles.keySet())) if (tile != null) tile.invalidateSelf();
         solidTiles.clear();
-        synchronized (MaterialBackgroundBrightnessHooks.class) { configs.clear(); }
+        synchronized (MaterialBackgroundBrightnessHooks.class) { configs.clear(); shaderSources.clear(); }
     }
     private static void diagnostic(String message) {
         android.util.Log.e("ColorOSMod-Material", message);

@@ -314,6 +314,9 @@ private val QS: List<SettingsItem> = listOf(
     SwitchItem("qs_bg_opacity_enabled", R.string.ui_qs_bg_opacity,
         sliderKey = "qs_bg_opacity_percent", sliderMin = 40, sliderMax = 100,
         sliderDefault = 70, sliderStep = 5, sliderUnit = "%"),
+    SwitchItem(TileBackgroundEnhancement.ENABLED, R.string.ui_qs_bg_enhancement,
+        sliderKey = TileBackgroundEnhancement.VALUE, sliderMin = 0, sliderMax = 100,
+        sliderDefault = TileBackgroundEnhancement.DEFAULT, sliderStep = 5, sliderUnit = "%"),
     SwitchItem("qs_tile_name_ellipsis_enabled", R.string.ui_qs_tile_ellipsis),
     SwitchItem("qs_corner_radius_enabled", R.string.ui_qs_normal_corner, sliderKey = "qs_corner_radius_percent", sliderMin = 10, sliderMax = 50, sliderDefault = 30, sliderUnit = "%"),
     SwitchItem("slider_active_top_corners", R.string.ui_slider_active_top_corners),
@@ -345,6 +348,9 @@ private val NOTIF: List<SettingsItem> = listOf(
     SwitchItem("notification_bg_opacity_enabled", R.string.ui_notification_bg_opacity,
         sliderKey = "notification_bg_opacity_percent", sliderMin = 40, sliderMax = 100,
         sliderDefault = 70, sliderStep = 5, sliderUnit = "%"),
+    SwitchItem(TileBackgroundEnhancement.NOTIFICATION_ENABLED, R.string.ui_notification_bg_enhancement,
+        sliderKey = TileBackgroundEnhancement.NOTIFICATION_VALUE, sliderMin = 0, sliderMax = 100,
+        sliderDefault = TileBackgroundEnhancement.DEFAULT, sliderStep = 5, sliderUnit = "%"),
     SwitchItem("notification_subtitle_enabled", R.string.ui_notification_subtitle, sliderKey = "notification_subtitle_sp", sliderMax = 16, sliderDefault = 8, sliderUnit = "sp"),
     SwitchItem("notification_padding_enabled", R.string.ui_notification_padding, sliderKey = "notification_padding_dp", sliderMax = 8, sliderDefault = 4),
     SwitchItem("notification_real_app_name_enabled", R.string.ui_notification_real_app_name),
@@ -580,7 +586,9 @@ private val SettingsItem.availableOnDevice: Boolean
     get() = when {
         this is SelectItem && key == XposedInit.KEY_NETWORK_ICON_POSITION -> Build.VERSION.SDK_INT >= 37
         this !is SwitchItem -> true
-        key == "qs_bg_brightness_enabled" || key == "qs_bg_opacity_enabled" -> Build.VERSION.SDK_INT >= 37
+        key == "qs_bg_brightness_enabled" || key == "qs_bg_opacity_enabled"
+                || key == TileBackgroundEnhancement.ENABLED
+                || key == TileBackgroundEnhancement.NOTIFICATION_ENABLED -> Build.VERSION.SDK_INT >= 37
         key == XposedInit.KEY_NOTIFICATION_ROUND_CLEAR_ALL_ENABLED -> Build.VERSION.SDK_INT >= 37
         key == XposedInit.KEY_TABLET_LANDSCAPE_CUTOUT_INSETS_ENABLED -> TabletDevice.isTablet()
         else -> true

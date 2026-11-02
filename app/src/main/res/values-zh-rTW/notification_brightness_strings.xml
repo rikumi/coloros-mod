@@ -4,4 +4,6 @@
     <string name="ui_qs_bg_opacity">自訂磁貼背景不透明度</string>
     <string name="ui_notification_bg_brightness">自訂通知背景亮度</string>
     <string name="ui_notification_bg_opacity">自訂通知背景不透明度</string>
+    <string name="ui_qs_bg_enhancement">自訂磁貼背景飽和度提升</string>
+    <string name="ui_notification_bg_enhancement">自訂通知背景飽和度提升</string>
 </resources>
