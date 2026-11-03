@@ -9,6 +9,7 @@ import android.view.MotionEvent;
 import android.view.View;
 
 import com.rikumi.colorosmod.xposed.XC_MethodHook;
+import com.rikumi.colorosmod.xposed.XposedBridge;
 import com.rikumi.colorosmod.xposed.XposedHelpers;
 
 import java.util.ArrayList;
@@ -136,11 +137,12 @@ final class GestureTouchReplayHooks {
         try {
             Class<?> detector = XposedHelpers.findClass(
                     "com.oplus.systemui.navigationbar.gesture.sidegesture.SideGestureDetector", loader);
-            // ColorOS 17 phone input dispatch takes exactly one MotionEvent.
-            // A Map parameter here prevents the authoritative touch hook from installing.
-            XposedHelpers.findAndHookMethod(detector, "onMotionEventImpl", MotionEvent.class,
+            // ROM variants expose (MotionEvent) or (MotionEvent, Map). Missing
+            // the raw DOWN leaves only native replay delivered on release.
+            Set<XC_MethodHook.Unhook> inputHooks = XposedBridge.hookAllMethods(detector, "onMotionEventImpl",
                     new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam param) {
+                    if (param.args.length == 0 || !(param.args[0] instanceof MotionEvent)) return;
                     MotionEvent event = (MotionEvent) param.args[0];
                     if (event == null || (event.getEdgeFlags() & 0x40000000) != 0) return;
                     int action = event.getActionMasked();
@@ -191,6 +193,7 @@ final class GestureTouchReplayHooks {
                     })) copy.recycle();
                 }
             });
+            if (inputHooks.isEmpty()) log("gesture native replay admission unavailable: no onMotionEventImpl overload");
         } catch (Throwable error) { log("gesture native replay admission hook unavailable: " + error); }
     }
 

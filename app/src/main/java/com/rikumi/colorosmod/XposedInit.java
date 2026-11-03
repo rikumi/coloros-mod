@@ -1016,6 +1016,7 @@ public class XposedInit extends XposedModule {
 
         if (sIsSystemServer) {
             com.rikumi.colorosmod.hooks.SystemIconPackHooks.hook(sSystemServerClassLoader);
+            com.rikumi.colorosmod.hooks.MBackQuickBackBypass.hook(sSystemServerClassLoader);
             com.rikumi.colorosmod.hooks.PlayStoreUpdateHooks.hook(systemServerLpparam());
             com.rikumi.colorosmod.hooks.WifiBssidHooks.hook(systemServerLpparam());
             SystemServerHooks.hookFloatWindowEdgeHangSystemServer(systemServerLpparam());

@@ -206,6 +206,7 @@ public final class GestureHooks {
 
     public static void hookMBack(final XC_LoadPackage.LoadPackageParam lpparam) {
         GestureTouchReplayHooks.hook(lpparam.classLoader);
+        MBackRecentsHooks.hook(lpparam.classLoader);
         try {
             Class<?> handleClass = XposedHelpers.findClass(
                     "com.oplus.systemui.navigationbar.gesture.sidegesture.OplusNavigationHandle",
@@ -962,18 +963,17 @@ public final class GestureHooks {
             boolean cancelled = g.cancelled;
             boolean longPressed = g.longPress;
             cancelMBackLongPress(g);
-            if (!cancelled && !longPressed && event.getEventTime() - downTime
-                    >= android.view.ViewConfiguration.getLongPressTimeout()) {
-                longPressed = true;
-                fireMBackLongPress(g);
-            }
-            if (!cancelled && !longPressed) {
-                GestureTouchReplayHooks.consume(handle, downTime);
+            // Releasing a held gesture must not launch Home. Only the threshold
+            // callback (or a MOVE crossing it) performs the long-press action.
+            boolean tap = event.getEventTime() - downTime
+                    < android.view.ViewConfiguration.getLongPressTimeout();
+            if (!cancelled) GestureTouchReplayHooks.consume(handle, downTime);
+            if (!cancelled && !longPressed && tap) {
                 try {
                     handle.performHapticFeedback(
                             android.view.HapticFeedbackConstants.VIRTUAL_KEY);
                 } catch (Throwable ignored) { }
-                triggerNavigation(handle, false);
+                MBackRecentsHooks.navigate(handle, downTime, false);
             } else if (!cancelled && longPressed) {
                 // 松手时再震动一次。阈值处的震动不能抑制这次释放反馈。
                 try {
@@ -1073,11 +1073,13 @@ public final class GestureHooks {
         gesture.longPress = true;
         cancelMBackLongPress(gesture);
         GestureTouchReplayHooks.consume(gesture.handle, gesture.downTime);
+        // Issue the Home request at the threshold, before feedback.
+        // Releasing the finger does not issue navigation.
+        MBackRecentsHooks.navigate(gesture.handle, gesture.downTime, true);
         try {
             gesture.handle.performHapticFeedback(
                     android.view.HapticFeedbackConstants.LONG_PRESS);
         } catch (Throwable ignored) { }
-        triggerNavigation(gesture.handle, true);
     }
 
     private static void cancelMBackLongPress(MBackGesture gesture) {
@@ -1206,6 +1208,7 @@ public final class GestureHooks {
             if (gesture.handle != null) handles.add(gesture.handle);
         }
         GestureTouchReplayHooks.cleanup();
+        MBackRecentsHooks.cleanup();
         MBACK_GESTURES.clear();
         MBACK_IN_RANGE.clear();
         for (android.view.View handle : handles) {
@@ -1239,22 +1242,10 @@ public final class GestureHooks {
         }
 
         if (home) {
-            // Let ColorOS' PhoneWindowManager process HOME. Directly starting
-            // ACTION_MAIN/CATEGORY_HOME can return START_DELIVERED_TO_TOP while
-            // Oplus aborts the transition, leaving the current app focused.
-            if (android.os.Build.VERSION.SDK_INT >= 37) {
-                if (dispatchNavigationButton(navView, true)) {
-                    scheduleHomeTaskFront(handle);
-                    return;
-                }
-                if (injectKey(handle, android.view.KeyEvent.KEYCODE_HOME)) {
-                    scheduleHomeTaskFront(handle);
-                    return;
-                }
-            } else {
-                if (injectKey(handle, android.view.KeyEvent.KEYCODE_HOME)) return;
-                if (dispatchNavigationButton(navView, true)) return;
-            }
+            // After resolving the physical gesture's recents transition, let
+            // ColorOS route HOME to Launcher for its native closing animation.
+            if (injectKey(handle, android.view.KeyEvent.KEYCODE_HOME)) return;
+            if (dispatchNavigationButton(navView, true)) return;
             return;
         }
 
@@ -1272,56 +1263,6 @@ public final class GestureHooks {
         if (injectKey(handle, android.view.KeyEvent.KEYCODE_BACK)) return;
     }
 
-    private static void scheduleHomeTaskFront(final android.view.View handle) {
-        if (handle == null || android.os.Build.VERSION.SDK_INT < 37) return;
-        final int displayId = handle.getDisplay() != null
-                ? handle.getDisplay().getDisplayId() : 0;
-        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-            try {
-                android.content.Context context = handle.getContext();
-                android.app.KeyguardManager keyguard = context
-                        .getSystemService(android.app.KeyguardManager.class);
-                if (keyguard == null || keyguard.isKeyguardLocked()) {
-                    return;
-                }
-                android.content.Intent homeIntent = new android.content.Intent(
-                        android.content.Intent.ACTION_MAIN)
-                        .addCategory(android.content.Intent.CATEGORY_HOME);
-                android.content.pm.ResolveInfo resolved = context.getPackageManager()
-                        .resolveActivity(homeIntent,
-                                android.content.pm.PackageManager.MATCH_DEFAULT_ONLY);
-                if (resolved == null || resolved.activityInfo == null) {
-                    return;
-                }
-                String homePackage = resolved.activityInfo.packageName;
-                android.app.ActivityManager manager = context
-                        .getSystemService(android.app.ActivityManager.class);
-                java.util.List<android.app.ActivityManager.RunningTaskInfo> tasks =
-                        manager == null ? null : manager.getRunningTasks(20);
-                if (tasks == null || tasks.isEmpty()) {
-                    return;
-                }
-                android.app.ActivityManager.RunningTaskInfo top = tasks.get(0);
-                if (XposedHelpers.getIntField(top, "displayId") == displayId
-                        && top.topActivity != null
-                        && homePackage.equals(top.topActivity.getPackageName())) {
-                    return;
-                }
-                for (android.app.ActivityManager.RunningTaskInfo task : tasks) {
-                    android.content.ComponentName activity = task.topActivity != null
-                            ? task.topActivity : task.baseActivity;
-                    if (XposedHelpers.getIntField(task, "displayId") == displayId
-                            && activity != null
-                            && homePackage.equals(activity.getPackageName())) {
-                        manager.moveTaskToFront(task.id, 0);
-                        return;
-                    }
-                }
-            } catch (Throwable error) {
-            }
-        }, 250L);
-    }
-
     private static boolean dispatchNavigationButton(android.view.View navView, boolean home) {
         if (navView == null) return false;
         try {
@@ -1336,8 +1277,9 @@ public final class GestureHooks {
             if (XposedHelpers.getIntField(buttonView, "mCode") != expectedCode) return false;
             long now = android.os.SystemClock.uptimeMillis();
             XposedHelpers.setLongField(buttonView, "mDownTime", now);
-            XposedHelpers.callMethod(buttonView, "sendEvent", 0, 0, now);
-            XposedHelpers.callMethod(buttonView, "sendEvent", 1, 0);
+            int flags = 0;
+            XposedHelpers.callMethod(buttonView, "sendEvent", 0, flags, now);
+            XposedHelpers.callMethod(buttonView, "sendEvent", 1, flags);
             return true;
         } catch (Throwable t) {
             return false;
