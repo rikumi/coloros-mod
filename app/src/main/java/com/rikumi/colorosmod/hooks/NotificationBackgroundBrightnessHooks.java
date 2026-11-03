@@ -37,6 +37,7 @@ public final class NotificationBackgroundBrightnessHooks {
             modern = XposedHelpers.findClassIfExists(
                     "com.oplus.systemui.notification.blur.NotificationPlatFormBlurParamsManager", lp.classLoader) != null;
             if (modern) {
+                HeadsUpForegroundHooks.hook(lp);
                 MaterialBackgroundBrightnessHooks.hook(lp);
                 // These callers may contain ART-inlined getMixConfig copies.
                 XposedBridge.hookAllMethods(managerClass, "requireBlurProxyForView", new XC_MethodHook() {});
@@ -155,6 +156,10 @@ public final class NotificationBackgroundBrightnessHooks {
         return Math.max(50, Math.min(100, readIntCached(VALUE, DEFAULT)));
     }
 
+    static boolean forceWhiteHeadsUp() {
+        return !restoring && readBoolCached(ENABLED, false) && brightnessPercent() <= 80;
+    }
+
     static int opacityAlpha(int firstPercent, int layer) {
         float percent = layer == 0 ? firstPercent : firstPercent / 4f + 27.5f;
         return Math.round(255f * percent / 100f);
@@ -180,6 +185,7 @@ public final class NotificationBackgroundBrightnessHooks {
 
     private static void refreshNow() {
         Object host = manager.get();
+        if (modern) HeadsUpForegroundHooks.refresh(host);
         if (host == null) return;
         try {
             if (!modern) {
@@ -216,6 +222,7 @@ public final class NotificationBackgroundBrightnessHooks {
         restoring = true;
         MaterialBackgroundBrightnessHooks.cleanup();
         refreshNow();
+        HeadsUpForegroundHooks.cleanup();
         manager.clear();
     }
     private NotificationBackgroundBrightnessHooks() {}

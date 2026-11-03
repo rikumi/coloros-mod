@@ -707,6 +707,10 @@ public final class LauncherHooks {
     }
 
     public static boolean prepareHotReloadListeners() {
+        if (RecentsClearMemoryHooks.isBusy()) {
+            log("launcher hot reload rejected: clear-all completion pending");
+            return false;
+        }
         return XposedHelpers.prepareTrackedPreDrawListeners("colorosmod_launcher_predraw");
     }
 
@@ -718,6 +722,7 @@ public final class LauncherHooks {
     }
 
     public static void cleanupForHotReload() {
+        RecentsClearMemoryHooks.cleanup();
         TaskbarGestureHooks.cleanupForHotReload();
         LauncherStartupRefresh.cleanup();
         LauncherIconCacheRefreshHooks.cleanup();
@@ -928,6 +933,7 @@ public final class LauncherHooks {
         catch (Throwable error) { log("launcher icon clarity unavailable: " + error); }
         try { LauncherIconCacheRefreshHooks.hook(lpparam); }
         catch (Throwable error) { log("icon cache refresh hooks unavailable: " + error); }
+        LandscapeAppRotationHooks.hook(lpparam);
         sLauncherClassLoader = lpparam.classLoader;
         try { LauncherIdleRefresh.hook(lpparam); }
         catch (Throwable error) { log("launcher idle refresh hooks unavailable: " + error); }
@@ -1990,6 +1996,7 @@ public final class LauncherHooks {
     private static final ThreadLocal<Integer> sPendingKillTaskId = new ThreadLocal<>();
 
     public static void hookRecentsSwipeUpKill(final XC_LoadPackage.LoadPackageParam lpparam) {
+        RecentsClearMemoryHooks.hook(lpparam);
         // (1) 单卡上划
         try {
             XposedHelpers.findAndHookMethod(
@@ -2106,6 +2113,7 @@ public final class LauncherHooks {
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
                                 if (!readBool(KEY_RECENTS_SWIPE_UP_KILL_ENABLED, false)) return;
+                                if (RecentsClearMemoryHooks.handlesClearAll()) return;
                                 Context ctx = (Context) XposedHelpers.callMethod(
                                         param.thisObject, "getContext");
                                 // 被锁定的卡片不会被清掉, 所以这些包清除后仍有任务, 不能杀。

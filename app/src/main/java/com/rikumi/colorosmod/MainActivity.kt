@@ -417,6 +417,7 @@ private val NAV: List<SettingsItem> = listOf(
     SwitchItem("long_press_timeout_enabled", R.string.ui_long_press_timeout, sliderKey = "long_press_timeout_ms", sliderMax = 600, sliderDefault = 300, sliderUnit = "ms", sliderMin = 100, sliderStep = 50, rootBacked = true),
     SwitchItem("animation_duration_scale_enabled", R.string.ui_animation_scale, sliderKey = "animation_duration_scale", sliderMax = 20, sliderDefault = 15, sliderUnit = "", sliderUnitRes = R.string.ui_unit_multiplier, sliderDisplayScale = 0.05f, rootBacked = true),
     GroupTitleItem(R.string.ui_gesture_visual),
+    SwitchItem(XposedInit.KEY_DISABLE_LANDSCAPE_APP_ROTATION, R.string.ui_disable_landscape_app_rotation),
     SwitchItem(AppNavigationSettings.ENABLED, R.string.ui_app_immersive_navigation, masterManaged = false),
     NavigationAppsItem(R.string.ui_navigation_apps),
     SwitchItem("gesture_bar_width_enabled", R.string.ui_gesture_bar_width, sliderKey = "gesture_bar_width_dp", sliderMax = 120, sliderDefault = 100, sliderUnit = "dp", sliderMin = 80),
@@ -594,6 +595,7 @@ private val SettingsItem.availableOnDevice: Boolean
                 || key == TileBackgroundEnhancement.ENABLED
                 || key == TileBackgroundEnhancement.NOTIFICATION_ENABLED -> Build.VERSION.SDK_INT >= 37
         key == PlayStoreUpdatePolicy.KEY -> Build.VERSION.SDK_INT >= 37
+        key == XposedInit.KEY_DISABLE_LANDSCAPE_APP_ROTATION -> Build.VERSION.SDK_INT >= 37
         key == XposedInit.KEY_NOTIFICATION_ROUND_CLEAR_ALL_ENABLED -> Build.VERSION.SDK_INT >= 37
         key == XposedInit.KEY_TABLET_LANDSCAPE_CUTOUT_INSETS_ENABLED -> TabletDevice.isTablet()
         else -> true

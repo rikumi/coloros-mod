@@ -147,6 +147,7 @@ public class XposedInit extends XposedModule {
     public static final String KEY_QS_MERGED_RADIANT = "qs_merged_radiant";
     public static final String KEY_QS_MERGED_HOLLOW = "qs_merged_hollow";
     public static final String KEY_QS_MERGED_SETTINGS_ROTATION = "qs_merged_settings_rotation";
+    public static final String KEY_DISABLE_LANDSCAPE_APP_ROTATION = "disable_landscape_app_rotation";
     public static final String KEY_QS_MERGED_TILE_SCALE_ANIMATION = "qs_merged_tile_scale_animation";
     public static final String KEY_QS_MERGED_TILE_CLIP_ANIMATION = "qs_merged_tile_clip_animation";
     public static final String KEY_QS_MERGED_TWO_FINGER_EXPAND = "qs_merged_two_finger_expand";

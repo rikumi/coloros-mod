@@ -1621,6 +1621,8 @@ public final class SystemServerHooks {
     private static volatile int sLauncherUid = -1;
     private static final java.util.Set<Thread> sKillThreads =
             java.util.Collections.synchronizedSet(new java.util.HashSet<Thread>());
+    private static final java.util.concurrent.atomic.AtomicBoolean sRecentsKillFailed =
+            new java.util.concurrent.atomic.AtomicBoolean();
 
     public static void hookRecentsSwipeUpKillSystemServer(
             final XC_LoadPackage.LoadPackageParam lpparam) {
@@ -1652,8 +1654,21 @@ public final class SystemServerHooks {
                                 if (uid != sLauncherUid) return;
                                 final String arg = (String) param.args[0];
                                 if (arg == null || (!arg.startsWith("cmtask:")
-                                        && !arg.startsWith("cmpkg:"))) return;
+                                        && !arg.startsWith("cmpkg:") && !arg.equals("cmwait:"))) return;
                                 param.setResult(null); // 跳过原方法, 不做"只杀后台"的弱处理
+                                if (arg.equals("cmwait:")) {
+                                    try {
+                                        RecentsKillCompletion.await(sKillThreads, 15000L);
+                                        if (sRecentsKillFailed.getAndSet(false))
+                                            throw new IllegalStateException("A recents force-stop failed");
+                                    } catch (Throwable error) {
+                                        if (error instanceof InterruptedException)
+                                            Thread.currentThread().interrupt();
+                                        param.setThrowable(new IllegalStateException(
+                                                "Recents process termination incomplete", error));
+                                    }
+                                    return;
+                                }
                                 final Object ams = param.thisObject;
                                 // "cmtask:<taskId>": 定向杀掉某个任务所在的进程, 用于划掉小程序。
                                 if (arg.startsWith("cmtask:")) {
@@ -1703,9 +1718,23 @@ public final class SystemServerHooks {
                                             }
                                             long ident = android.os.Binder.clearCallingIdentity();
                                             try {
+                                                java.util.Map<Integer, Integer> processes = null;
+                                                try { processes = capturePackageProcesses(ams, pkg, userId); }
+                                                catch (Throwable error) {
+                                                    // Snapshot failure must never prevent the existing force-stop.
+                                                    sRecentsKillFailed.set(true);
+                                                    log("recents process snapshot failed: " + error);
+                                                }
                                                 XposedHelpers.callMethod(
                                                         ams, "forceStopPackage", pkg, userId);
+                                                if (processes != null) {
+                                                    RecentsKillCompletion.awaitProcesses(processes,
+                                                            pid -> (Integer) XposedHelpers.callStaticMethod(
+                                                                    android.os.Process.class, "getUidForPid", pid),
+                                                            10000L);
+                                                }
                                             } catch (Throwable t) {
+                                                sRecentsKillFailed.set(true);
                                                 log("!!! recents_swipe_up_kill forceStopPackage "
                                                         + pkg + " failed: " + t);
                                             } finally {
@@ -1729,6 +1758,23 @@ public final class SystemServerHooks {
             log("HOOK FAIL ActivityManagerService#killBackgroundProcesses "
                     + "(recents swipe up kill) :: " + Log.getStackTraceString(t));
         }
+    }
+
+    private static java.util.Map<Integer, Integer> capturePackageProcesses(
+            Object ams, String pkg, int userId) {
+        java.util.Map<Integer, Integer> result = new java.util.HashMap<>();
+        @SuppressWarnings("unchecked")
+        java.util.List<android.app.ActivityManager.RunningAppProcessInfo> processes =
+                (java.util.List<android.app.ActivityManager.RunningAppProcessInfo>)
+                        XposedHelpers.callMethod(ams, "getRunningAppProcesses");
+        if (processes == null) throw new IllegalStateException("Process snapshot unavailable");
+        for (android.app.ActivityManager.RunningAppProcessInfo process : processes) {
+            if (process.uid / 100000 != userId || process.pkgList == null || process.pid <= 0) continue;
+            for (String name : process.pkgList) {
+                if (pkg.equals(name)) { result.put(process.pid, process.uid); break; }
+            }
+        }
+        return result;
     }
 
     // 杀掉某个任务所在的进程(不整包强杀)。ATMS 经 AMS.mAtmInternal 的 this$0 拿到。

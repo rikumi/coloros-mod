@@ -918,6 +918,7 @@ public final class GestureHooks {
                 public void run() {
                     MBackGesture gg = MBACK_GESTURES.get(fDownTime);
                     if (gg == null || !gg.down || gg.cancelled) return;
+                    if (!readBool(KEY_MBACK_ENABLED, false)) return;
                     gg.longPress = true;
                     try {
                         handle.performHapticFeedback(
@@ -1129,7 +1130,10 @@ public final class GestureHooks {
         }
 
         if (home) {
-            if (injectHomeKey()) return;
+            // A queued HOME key is not proof that ColorOS 17's Home-key policy
+            // launched Launcher. Use SystemUI's native MAIN/HOME activity route.
+            if (android.os.Build.VERSION.SDK_INT >= 37 && launchHomeOnDisplay(handle)) return;
+            if (injectKey(handle, android.view.KeyEvent.KEYCODE_HOME)) return;
             if (dispatchNavigationButton(navView, true)) return;
             log("mback home dispatch was rejected");
             return;
@@ -1141,6 +1145,36 @@ public final class GestureHooks {
         if (injectKey(handle, android.view.KeyEvent.KEYCODE_BACK)) return;
         if (!dispatchNavigationButton(navView, false)) {
             log("mback back dispatch was rejected");
+        }
+    }
+
+    private static boolean launchHomeOnDisplay(android.view.View handle) {
+        if (handle == null) return false;
+        try {
+            android.content.Context context = handle.getContext();
+            android.app.KeyguardManager keyguard =
+                    context.getSystemService(android.app.KeyguardManager.class);
+            // Preserve native lock-screen restrictions; never request keyguard dismissal.
+            if (keyguard == null || keyguard.isKeyguardLocked()) return false;
+            int displayId = handle.getDisplay() != null ? handle.getDisplay().getDisplayId() : 0;
+            android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_MAIN)
+                    .addCategory(android.content.Intent.CATEGORY_HOME)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            android.app.ActivityOptions options = android.app.ActivityOptions.makeBasic();
+            options.setLaunchDisplayId(displayId);
+            Object currentUser = XposedHelpers.getStaticObjectField(android.os.UserHandle.class, "CURRENT");
+            XposedHelpers.callMethod(context, "startActivityAsUser", intent, options.toBundle(), currentUser);
+            // Match Home's panel/recents dismissal after the activity request succeeds.
+            try {
+                android.content.Intent close = new android.content.Intent(
+                        android.content.Intent.ACTION_CLOSE_SYSTEM_DIALOGS).putExtra("reason", "homekey");
+                XposedHelpers.callMethod(context, "sendBroadcastAsUser", close, currentUser);
+            } catch (Throwable error) { log("mback Home panel dismissal failed: " + error); }
+            log("mback Home activity requested on display " + displayId);
+            return true;
+        } catch (Throwable error) {
+            log("mback Home activity request failed: " + error);
+            return false;
         }
     }
 

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_disable_landscape_app_rotation">取消開關橫向應用程式旋轉效果</string>
+</resources>
