@@ -153,6 +153,9 @@ public final class PlayStoreRecoveryCommand {
         }
     }
 
+    // Invoked only by this class's root app_process entry point, not the target-SDK
+    // constrained app process. packages.xml may be ABX; a text-only parser loses it.
+    @android.annotation.SuppressLint("BlockedPrivateApi")
     private static void verifyCurrent(int attempts) throws Exception {
         Class<?> activityThread = Class.forName("android.app.ActivityThread");
         Object thread = activityThread.getDeclaredMethod("systemMain").invoke(null);
@@ -164,8 +167,8 @@ public final class PlayStoreRecoveryCommand {
             expected = new File(info.applicationInfo.sourceDir).getParent();
             version = info.getLongVersionCode();
             try (InputStream input = new FileInputStream("/data/system/packages.xml")) {
-                XmlPullParser parser = android.util.Xml.newPullParser();
-                parser.setInput(input, null);
+                XmlPullParser parser = (XmlPullParser) android.util.Xml.class
+                        .getDeclaredMethod("resolvePullParser", InputStream.class).invoke(null, input);
                 for (int type = parser.getEventType(); type != XmlPullParser.END_DOCUMENT; type = parser.next()) {
                     if (type == XmlPullParser.START_TAG && "package".equals(parser.getName())
                             && PlayStoreUpdatePolicy.PACKAGE.equals(parser.getAttributeValue(null, "name"))
