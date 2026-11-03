@@ -3,5 +3,5 @@
     <string name="ui_preserve_play_store_update">阻止 Play 商店重启自动卸载</string>
     <string name="ui_play_store_update_restart">设置已保存，重启后生效</string>
     <string name="ui_play_store_update_failed">设置失败，请检查 root 授权</string>
-    <string name="ui_preserve_play_store_update_subtitle">阻止系统触发自愈时卸载 Play 商店，掉 root 仍有效</string>
+    <string name="ui_preserve_play_store_update_subtitle">阻止系统自愈时卸载 Play 商店，掉 root 仍有效</string>
 </resources>
