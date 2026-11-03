@@ -126,19 +126,38 @@ FILE* fopen64Proxy(const char* path, const char* mode) {
 }
 int statProxy(const char* path, struct stat* result) {
     if (auto file = lookup(path)) return fstat(file->fd, result);
+#if defined(__aarch64__)
+    // Bionic stat tail-branches to fstatat@plt. Relocating that branch into an
+    // indirect trampoline violates BTI because the PLT entry has no landing pad.
+    // Use the kernel ABI for ordinary paths; font redirects still use their FD.
+    return syscall(__NR_newfstatat, AT_FDCWD, path, result, 0);
+#else
     return statOriginal(path, result);
+#endif
 }
 int stat64Proxy(const char* path, struct stat64* result) {
     if (auto file = lookup(path)) return fstat64(file->fd, result);
+#if defined(__aarch64__)
+    return syscall(__NR_newfstatat, AT_FDCWD, path, result, 0);
+#else
     return stat64Original(path, result);
+#endif
 }
 int fstatatProxy(int dir, const char* path, struct stat* result, int flags) {
     if (auto file = lookup(path, dir)) return fstat(file->fd, result);
+#if defined(__aarch64__)
+    return syscall(__NR_newfstatat, dir, path, result, flags);
+#else
     return fstatatOriginal(dir, path, result, flags);
+#endif
 }
 int fstatat64Proxy(int dir, const char* path, struct stat64* result, int flags) {
     if (auto file = lookup(path, dir)) return fstat64(file->fd, result);
+#if defined(__aarch64__)
+    return syscall(__NR_newfstatat, dir, path, result, flags);
+#else
     return fstatat64Original(dir, path, result, flags);
+#endif
 }
 int accessProxy(const char* path, int mode) {
     if (lookup(path)) { if ((mode & (W_OK | X_OK)) == 0) return 0; errno = EACCES; return -1; }
