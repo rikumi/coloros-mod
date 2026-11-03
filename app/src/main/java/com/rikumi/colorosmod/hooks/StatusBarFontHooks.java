@@ -209,13 +209,20 @@ public final class StatusBarFontHooks {
     }
 
     private static void applyPanelMetrics(TextView view, Original original, boolean customFont) {
-        if (!panelClockClass.isInstance(view) && !panelDateClass.isInstance(view)) return;
+        if ((panelClockClass == null || !panelClockClass.isInstance(view))
+                && (panelDateClass == null || !panelDateClass.isInstance(view))) return;
         boolean padding = !customFont && original.includeFontPadding;
         if (view.getIncludeFontPadding() != padding) view.setIncludeFontPadding(padding);
         if (Build.VERSION.SDK_INT >= 28) {
             boolean fallback = !customFont && original.fallbackLineSpacing;
             if (view.isFallbackLineSpacing() != fallback) view.setFallbackLineSpacing(fallback);
         }
+    }
+
+    /** Use the clock's native baseline so resetting settings restores the actual system font. */
+    public static Typeface nativeStatusBarTypeface(TextView clock) {
+        Original original = originals.get(clock);
+        return original == null ? clock.getTypeface() : original.font;
     }
 
     public static void applyStatusBarFont(TextView view) {

@@ -164,8 +164,8 @@ public final class PlayStoreRecoveryCommand {
             expected = new File(info.applicationInfo.sourceDir).getParent();
             version = info.getLongVersionCode();
             try (InputStream input = new FileInputStream("/data/system/packages.xml")) {
-                XmlPullParser parser = (XmlPullParser) android.util.Xml.class
-                        .getDeclaredMethod("resolvePullParser", InputStream.class).invoke(null, input);
+                XmlPullParser parser = android.util.Xml.newPullParser();
+                parser.setInput(input, null);
                 for (int type = parser.getEventType(); type != XmlPullParser.END_DOCUMENT; type = parser.next()) {
                     if (type == XmlPullParser.START_TAG && "package".equals(parser.getName())
                             && PlayStoreUpdatePolicy.PACKAGE.equals(parser.getAttributeValue(null, "name"))

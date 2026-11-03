@@ -148,6 +148,8 @@ public class XposedInit extends XposedModule {
     public static final String KEY_QS_MERGED_HOLLOW = "qs_merged_hollow";
     public static final String KEY_QS_MERGED_SETTINGS_ROTATION = "qs_merged_settings_rotation";
     public static final String KEY_DISABLE_LANDSCAPE_APP_ROTATION = "disable_landscape_app_rotation";
+    public static final String KEY_WIFI_AP_FILTER_ENABLED = "wifi_ap_filter_enabled";
+    public static final String KEY_FLOAT_WINDOW_DISABLE_ROTATION_ANIMATION = "float_window_disable_rotation_animation";
     public static final String KEY_QS_MERGED_TILE_SCALE_ANIMATION = "qs_merged_tile_scale_animation";
     public static final String KEY_QS_MERGED_TILE_CLIP_ANIMATION = "qs_merged_tile_clip_animation";
     public static final String KEY_QS_MERGED_TWO_FINGER_EXPAND = "qs_merged_two_finger_expand";
@@ -758,6 +760,7 @@ public class XposedInit extends XposedModule {
         if (sIsSystemServer) {
             try { SystemServerHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("system_server hot reload cleanup failed: " + t); }
+            com.rikumi.colorosmod.hooks.WifiBssidHooks.cleanupForHotReload();
             return;
         }
         if ("com.android.settings".equals(sHookedPackageName)) {
@@ -1014,6 +1017,7 @@ public class XposedInit extends XposedModule {
         if (sIsSystemServer) {
             com.rikumi.colorosmod.hooks.SystemIconPackHooks.hook(sSystemServerClassLoader);
             com.rikumi.colorosmod.hooks.PlayStoreUpdateHooks.hook(systemServerLpparam());
+            com.rikumi.colorosmod.hooks.WifiBssidHooks.hook(systemServerLpparam());
             SystemServerHooks.hookFloatWindowEdgeHangSystemServer(systemServerLpparam());
             SystemServerHooks.hookFloatWindowEdgeHangMute(systemServerLpparam());
             com.rikumi.colorosmod.hooks.SystemFontHooks.hook(systemServerLpparam());
@@ -1276,7 +1280,9 @@ public class XposedInit extends XposedModule {
         } else if ("com.oplus.athena".equals(lpparam.packageName)) {
             com.rikumi.colorosmod.hooks.RecentsClearMemoryHooks.hookAthena(lpparam);
         } else if ("android".equals(lpparam.packageName)) {
+            com.rikumi.colorosmod.hooks.MBackQuickBackBypass.hook(lpparam.classLoader);
             com.rikumi.colorosmod.hooks.PlayStoreUpdateHooks.hook(lpparam);
+            com.rikumi.colorosmod.hooks.WifiBssidHooks.hook(lpparam);
             com.rikumi.colorosmod.hooks.SystemFontHooks.hook(lpparam);
             // system_server: 承载"贴边最小化"的真正提交逻辑(com.android.server.wm.FlexibleTaskController)
             SystemServerHooks.hookFloatWindowEdgeHangSystemServer(lpparam);

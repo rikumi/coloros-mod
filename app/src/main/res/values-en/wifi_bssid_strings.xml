@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wifi_bssid_group">Wi-Fi AP filtering</string>
+    <string name="wifi_bssid_add_wifi">Edit current Wi-Fi</string>
+    <string name="wifi_bssid_mode">Filter mode</string>
+    <string name="wifi_bssid_mode_subtitle">Blocklist enables system auto-connect; allowlist disables it</string>
+    <string name="wifi_bssid_blacklist">Blocklist</string>
+    <string name="wifi_bssid_whitelist">Allowlist</string>
+    <string name="wifi_bssid_add_ap">Add current AP</string>
+    <string name="wifi_bssid_delete">Delete</string>
+    <string name="wifi_bssid_remove">Remove this network</string>
+    <string name="wifi_bssid_no_auto_connect">Do not auto-connect</string>
+    <string name="wifi_bssid_auto_connect">Auto-connect</string>
+    <string name="wifi_bssid_error">WiFi BSSID operation failed: %1$s</string>
+    <string name="wifi_bssid_hook_inactive">WiFi filter is not ready: %1$s</string>
+    <string name="wifi_bssid_connect_first">Connect to a saved WiFi first</string>
+    <string name="wifi_bssid_wrong_wifi">The current AP belongs to a different WiFi</string>
+    <string name="wifi_bssid_saved_missing">This WiFi is no longer saved in the system</string>
+    <string name="wifi_bssid_scanned_aps">Scanned APs</string>
+    <string name="wifi_bssid_scan_rejected">Could not start or complete scanning. Please try again later.</string>
+    <string name="wifi_bssid_scan_timeout">Scan timed out. Please try again.</string>
+    <string name="wifi_bssid_ap_unavailable">This AP is no longer in scan results. Please scan again.</string>
+    <string name="wifi_bssid_ap_details">" (%1$sGHz %2$d)"</string>
+    <string name="wifi_bssid_remove_confirm">After removal, connections will follow the system settings entirely.</string>
+    <string name="wifi_bssid_refresh">Refresh</string>
+    <string name="wifi_bssid_enabled">Enable Wi-Fi AP filtering</string>
+    <string name="wifi_bssid_connect_once">Connect once</string>
+    <string name="wifi_bssid_join_blacklist">Add to blocklist</string>
+    <string name="wifi_bssid_join_whitelist">Add to allowlist</string>
+    <string name="wifi_bssid_connect_timeout">Connection timed out. Please check AP availability.</string>
+</resources>

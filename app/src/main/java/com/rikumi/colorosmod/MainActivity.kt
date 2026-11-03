@@ -63,7 +63,7 @@ import io.github.suqi8.coui.kmp.icon.extended.Blocklist
 import io.github.suqi8.coui.kmp.icon.extended.Community
 import io.github.suqi8.coui.kmp.icon.extended.Copy
 import io.github.suqi8.coui.kmp.icon.extended.GridView
-import io.github.suqi8.coui.kmp.icon.extended.Folder
+import io.github.suqi8.coui.kmp.icon.extended.Settings
 import io.github.suqi8.coui.kmp.icon.extended.Hide
 import io.github.suqi8.coui.kmp.icon.extended.Lock
 import io.github.suqi8.coui.kmp.icon.extended.Refresh
@@ -211,6 +211,7 @@ internal data class GroupTitleItem(val title: Int) : SettingsItem
 internal data class NavigationAppsItem(val title: Int) : SettingsItem
 internal data class FontAppsItem(val title: Int) : SettingsItem
 internal data object RefreshIconCacheItem : SettingsItem
+internal data object WifiBssidItem : SettingsItem
 
 internal data class SwitchItem(
     val key: String,
@@ -392,7 +393,7 @@ private val HIDDEN: List<SettingsItem> = listOf(
     SwitchItem("hidden_launcher_apps_enabled", R.string.ui_hidden_launcher_apps),
 )
 
-// 小窗相关设置: 改动需重启 system_server(框架) 才生效(本模块该作用域为 android/system_server)。
+// 小窗设置分别由 system_server 和 SystemUI 中的钩子处理。
 private val FLOATWINDOW: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_float_behavior),
     SwitchItem("float_window_count_enabled", R.string.ui_float_count, sliderKey = "float_window_count", sliderMin = 1, sliderMax = 10, sliderDefault = 3, sliderUnit = ""),
@@ -401,6 +402,7 @@ private val FLOATWINDOW: List<SettingsItem> = listOf(
     SwitchItem("float_window_edge_hang_enabled", R.string.ui_float_edge_hang),
     SwitchItem("float_window_edge_hang_mute_enabled", R.string.ui_float_edge_mute),
     GroupTitleItem(R.string.ui_float_visual),
+    SwitchItem(XposedInit.KEY_FLOAT_WINDOW_DISABLE_ROTATION_ANIMATION, R.string.ui_float_window_disable_rotation_animation),
     SwitchItem("float_window_edge_hang_white_bar_enabled", R.string.ui_float_white_bar),
     SwitchItem("float_window_landscape_keep_ratio_enabled", R.string.ui_float_landscape_ratio, developerConfirmedSubtitle = R.string.ui_float_landscape_ratio_hint),
     SwitchItem("float_window_edge_size_optimize_enabled", R.string.ui_float_edge_size),
@@ -528,6 +530,9 @@ private val SYSTEM_FONTS: List<SettingsItem> = listOf(
 )
 
 private val STORAGE: List<SettingsItem> = listOf(
+    GroupTitleItem(R.string.wifi_bssid_group),
+    SwitchItem(XposedInit.KEY_WIFI_AP_FILTER_ENABLED, R.string.wifi_bssid_enabled),
+    WifiBssidItem,
     GroupTitleItem(R.string.ui_storage_folders),
     FolderBlockItem("media_folder_block_alarms", "Alarms", "Alarms"),
     FolderBlockItem("media_folder_block_audiobooks", "Audiobooks", "Audiobooks"),
@@ -566,7 +571,7 @@ private val CATEGORY_GROUPS: List<List<Category>> = listOf(
         Category("purification", R.string.weather_category_purification, COUIIcons.Tune, PURIFICATION),
         Category("system_fonts", R.string.ui_category_system_fonts, COUIIcons.Translate, SYSTEM_FONTS, hint = R.string.ui_system_font_zygote_hint),
         Category(HIDDEN_NOTIFICATIONS_ID, R.string.ui_category_hidden_notifications, COUIIcons.Hide, emptyList()),
-        Category("storage", R.string.ui_category_storage, COUIIcons.Folder, STORAGE),
+        Category("storage", R.string.ui_category_storage, COUIIcons.Settings, STORAGE),
     ),
 )
 private val CATEGORIES = CATEGORY_GROUPS.flatten()
@@ -599,6 +604,7 @@ private val SettingsItem.availableOnDevice: Boolean
                 || key == TileBackgroundEnhancement.NOTIFICATION_ENABLED -> Build.VERSION.SDK_INT >= 37
         key == PlayStoreUpdatePolicy.KEY -> Build.VERSION.SDK_INT >= 37
         key == XposedInit.KEY_DISABLE_LANDSCAPE_APP_ROTATION -> Build.VERSION.SDK_INT >= 37
+        key == XposedInit.KEY_FLOAT_WINDOW_DISABLE_ROTATION_ANIMATION -> Build.VERSION.SDK_INT >= 37
         key == XposedInit.KEY_NOTIFICATION_ROUND_CLEAR_ALL_ENABLED -> Build.VERSION.SDK_INT >= 37
         key == XposedInit.KEY_TABLET_LANDSCAPE_CUTOUT_INSETS_ENABLED -> TabletDevice.isTablet()
         else -> true
@@ -616,7 +622,7 @@ private fun SettingsItem.isEnabledInMaster(prefs: SharedPreferences): Boolean = 
     is SwitchItem -> prefs.getBoolean(settingKey, false)
     is FolderBlockItem -> prefs.getBoolean(settingKey, false)
     is SelectItem -> prefs.getInt(key, 0) != 0
-    is GroupTitleItem, is NavigationAppsItem, is FontAppsItem, is RefreshIconCacheItem -> false
+    is GroupTitleItem, is NavigationAppsItem, is FontAppsItem, is RefreshIconCacheItem, is WifiBssidItem -> false
 }
 
 private val SettingsItem.settingKey: String
@@ -624,7 +630,7 @@ private val SettingsItem.settingKey: String
         is SwitchItem -> key
         is FolderBlockItem -> key
         is SelectItem -> key
-        is GroupTitleItem, is NavigationAppsItem, is FontAppsItem, is RefreshIconCacheItem -> ""
+        is GroupTitleItem, is NavigationAppsItem, is FontAppsItem, is RefreshIconCacheItem, is WifiBssidItem -> ""
     }
 
 private fun List<SettingsItem>.splitByDivider(): List<SwitchGroup> {
@@ -645,6 +651,7 @@ private fun List<SettingsItem>.splitByDivider(): List<SwitchGroup> {
             is NavigationAppsItem -> current.add(item)
             is FontAppsItem -> current.add(item)
             is RefreshIconCacheItem -> current.add(item)
+            is WifiBssidItem -> current.add(item)
         }
     }
     if (current.isNotEmpty()) result.add(SwitchGroup(desc, current))
@@ -670,7 +677,7 @@ internal fun parentSettingsPage(id: String?): String? = when (id) {
     NAVIGATION_APPS_ID -> "navigation"
     FONT_APPS_ID -> "system_fonts"
     LICENSES_PAGE -> ABOUT_PAGE
-    else -> null
+    else -> if (id?.startsWith("wifi_bssid:") == true) "storage" else null
 }
 
 @Composable
@@ -798,7 +805,7 @@ fun SettingsScreen(resumeRequest: Int = 0) {
                         NAVIGATION_APPS_ID -> "navigation"
                         FONT_APPS_ID -> "system_fonts"
                         LICENSES_PAGE -> ABOUT_PAGE
-                        else -> openCategoryId ?: "desktop"
+                        else -> if (openCategoryId?.startsWith("wifi_bssid:") == true) "storage" else openCategoryId ?: "desktop"
                     },
                     showRestartMenu = false,
                 )
@@ -879,6 +886,10 @@ private fun DetailPane(
         DISABLED_APPS_ID -> DisabledAppsScreen(ctx = ctx, onBack = { navigate(null) }, showBack = showBack)
         HIDDEN_NOTIFICATIONS_ID -> HiddenNotificationsScreen(ctx = ctx, onBack = { navigate(null) }, showBack = showBack)
         else -> {
+            if (targetId.startsWith("wifi_bssid:")) {
+                WifiBssidDetailScreen(ctx, android.net.Uri.decode(targetId.removePrefix("wifi_bssid:")), onBack = { navigate("storage") })
+                return
+            }
             val category = CATEGORIES.firstOrNull { it.id == targetId } ?: return
             val override = masterOverride.valueFor(category.id)
             val anyEnabled = remember(version) { category.items.masterItems.any { it.isEnabledInMaster(prefs) } }
@@ -895,6 +906,7 @@ private fun DetailPane(
                 onOpenHiddenApps = { navigate(HIDDEN_LAUNCHER_APPS_ID) },
                 onOpenNavigationApps = { navigate(NAVIGATION_APPS_ID) },
                 onOpenFontApps = { navigate(FONT_APPS_ID) },
+                onOpenWifi = { navigate("wifi_bssid:" + android.net.Uri.encode(it)) },
                 showBack = showBack,
             )
         }
@@ -1020,6 +1032,7 @@ private fun CategoryScreen(
     onOpenHiddenApps: () -> Unit,
     onOpenNavigationApps: () -> Unit,
     onOpenFontApps: () -> Unit,
+    onOpenWifi: (String) -> Unit,
     showBack: Boolean = true,
 ) {
     val listState = rememberLazyListState()
@@ -1096,6 +1109,7 @@ private fun CategoryScreen(
                         onItemChanged = onItemChanged,
                         onOpenNavigationApps = onOpenNavigationApps,
                         onOpenFontApps = onOpenFontApps,
+                        onOpenWifi = onOpenWifi,
                         footerContent = if (group.items.any { it is SwitchItem && it.key == "hidden_launcher_apps_enabled" }) {
                             { SettingsCategoryRow(icon = null, title = ctx.getString(R.string.ui_hidden_apps_list), onClick = onOpenHiddenApps) }
                         } else null,

@@ -193,6 +193,7 @@ public final class GestureHooks {
         boolean down;
         boolean cancelled;
         boolean longPress;
+        long downTime;
         float downX;
         float downY;
         android.view.View handle;
@@ -204,6 +205,7 @@ public final class GestureHooks {
             new java.util.concurrent.ConcurrentHashMap<Long, Boolean>();
 
     public static void hookMBack(final XC_LoadPackage.LoadPackageParam lpparam) {
+        GestureTouchReplayHooks.hook(lpparam.classLoader);
         try {
             Class<?> handleClass = XposedHelpers.findClass(
                     "com.oplus.systemui.navigationbar.gesture.sidegesture.OplusNavigationHandle",
@@ -212,20 +214,9 @@ public final class GestureHooks {
                     android.view.MotionEvent.class, new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
-                            if (!readBool(KEY_MBACK_ENABLED, false)) return;
                             android.view.View handle = (android.view.View) param.thisObject;
                             android.view.MotionEvent ev = (android.view.MotionEvent) param.args[0];
-                            if (ev == null) return;
-                            long downTime = ev.getDownTime();
-
-                            if (ev.getActionMasked() == android.view.MotionEvent.ACTION_DOWN) {
-                                MBACK_IN_RANGE.put(downTime, isInMBackBarRange(handle, ev));
-                            }
-                            if (!Boolean.TRUE.equals(MBACK_IN_RANGE.get(downTime))) {
-                                return;
-                            }
-                            handleMBackTouch(handle, ev);
-                            param.setResult(null);
+                            if (handleNativeMBackTouch(handle, ev)) param.setResult(null);
                         }
                     });
         } catch (Throwable t) {
@@ -385,14 +376,14 @@ public final class GestureHooks {
                                             && event.getY() >= computeGestureBandTop(root, getGestureBarHeightPx(root))
                                             && event.getY() < root.getHeight();
                                     if (state.onTouch(event.getActionMasked(), event.getDownTime(), blockDown)) {
-                                        param.setObjectExtra("gesture_touch_consumed", Boolean.TRUE);
+                                        try { routeMBackWindowTouch(root, event); }
+                                        catch (Throwable error) { log("mback window touch routing failed: " + error); }
+                                        // This window owns the protected stream. Dispatching it
+                                        // to native children first lets their gesture/dead-zone
+                                        // handlers cancel or take over mBack before we consume it.
+                                        param.setResult(true);
+                                        syncGestureTouchWindow(root);
                                     }
-                                }
-
-                                @Override protected void afterHookedMethod(MethodHookParam param) {
-                                    if (!Boolean.TRUE.equals(param.getObjectExtra("gesture_touch_consumed"))) return;
-                                    if (!param.hasThrowable()) param.setResult(true);
-                                    syncGestureTouchWindow((View) param.thisObject);
                                 }
                             });
                 } catch (Throwable t) { log("gesture touch frame hook failed: " + t); }
@@ -522,16 +513,8 @@ public final class GestureHooks {
             // InternalInsetsInfo 为 @hide 类, 编译期不可见, 用反射访问。
             Class<?> insetsInfoClass = XposedHelpers.findClass(
                     "android.view.ViewTreeObserver$InternalInsetsInfo", null);
-            Class<?> insetsListenerClass = XposedHelpers.findClassIfExists(
-                    "com.android.systemui.navigationbar.views.NavigationBar$$ExternalSyntheticLambda10",
-                    lpparam.classLoader);
-            if (insetsListenerClass == null) {
-                insetsListenerClass = XposedHelpers.findClass(
-                        "com.android.systemui.navigationbar.NavigationBar$$ExternalSyntheticLambda13",
-                        lpparam.classLoader);
-            }
-            XposedHelpers.findAndHookMethod(insetsListenerClass, "onComputeInternalInsets",
-                    insetsInfoClass, new XC_MethodHook() {
+            Class<?> navigationBarClass = findNavigationBarClass(lpparam.classLoader);
+            XC_MethodHook insetsHook = new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             try {
@@ -573,7 +556,33 @@ public final class GestureHooks {
                                 dbg("gesture touch-through region error: " + t);
                             }
                         }
-                    });
+                    };
+            // R8 changes synthetic class numbers between ROM builds. Resolve the
+            // listener from the owning field instead, including existing hot-reload hosts.
+            try {
+                Class<?> declaredListener = navigationBarClass.getDeclaredField(
+                        "mOnComputeInternalInsetsListener").getType();
+                if (!declaredListener.isInterface()) {
+                    hookGestureInsetsListener(declaredListener, insetsInfoClass, insetsHook);
+                }
+            } catch (NoSuchFieldException ignored) { }
+            // Some builds declare the field as the listener interface. Resolve its
+            // actual class when NavigationBar registers it with ViewTreeObserver.
+            Class<?> listenerInterface = XposedHelpers.findClass(
+                    "android.view.ViewTreeObserver$OnComputeInternalInsetsListener", null);
+            XposedHelpers.findAndHookMethod(android.view.ViewTreeObserver.class,
+                    "addOnComputeInternalInsetsListener", listenerInterface, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam param) {
+                    Object listener = param.args[0];
+                    if (listener == null) return;
+                    try {
+                        Object owner = XposedHelpers.getObjectField(listener, "f$0");
+                        if (navigationBarClass.isInstance(owner)) {
+                            hookGestureInsetsListener(listener.getClass(), insetsInfoClass, insetsHook);
+                        }
+                    } catch (Throwable ignored) { }
+                }
+            });
         } catch (Throwable t) {
             dbg("gesture touch-through region hook failed: " + t);
         }
@@ -652,6 +661,19 @@ public final class GestureHooks {
                     });
         } catch (Throwable t) {
             log("gesture block shade sync hook failed: " + t);
+        }
+    }
+
+    private static final java.util.Set<Class<?>> GESTURE_INSETS_LISTENERS =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private static void hookGestureInsetsListener(Class<?> listener, Class<?> info, XC_MethodHook hook) {
+        if (!GESTURE_INSETS_LISTENERS.add(listener)) return;
+        try {
+            XposedHelpers.findAndHookMethod(listener, "onComputeInternalInsets", info, hook);
+        } catch (Throwable error) {
+            GESTURE_INSETS_LISTENERS.remove(listener);
+            log("gesture touch insets listener hook failed: " + error);
         }
     }
 
@@ -742,6 +764,9 @@ public final class GestureHooks {
 
     static android.view.View findHandleInTree(android.view.View v) {
         if (v == null) return null;
+        // NavigationBar keeps horizontal and vertical trees inflated together.
+        // A hidden tree must not supply the handle or its hit-test coordinates.
+        if (v.getVisibility() != View.VISIBLE) return null;
         if (v.getClass().getName().contains("OplusNavigationHandle")) return v;
         if (v instanceof android.view.ViewGroup) {
             android.view.ViewGroup group = (android.view.ViewGroup) v;
@@ -780,8 +805,12 @@ public final class GestureHooks {
         surface.setOnTouchListener(new android.view.View.OnTouchListener() {
             @Override
             public boolean onTouch(android.view.View view, android.view.MotionEvent event) {
-
-                return isGestureBlockActive(view);
+                if (!isGestureBlockActive(view)) return false;
+                // Insets and window dispatch differ across phone ROM versions.
+                // A touch delivered to the blocker must still reach mBack even
+                // when the NavigationBarFrame hook did not claim that stream.
+                routeMBackWindowTouch(view.getRootView(), event);
+                return true;
             }
         });
         android.widget.FrameLayout.LayoutParams lp =
@@ -808,6 +837,18 @@ public final class GestureHooks {
                 && !isShadeExpanded(view) && !isImeVisible(view);
     }
 
+    static boolean shouldBlockGestureReplay(View handle, MotionEvent event) {
+        View root = findNavigationFrame(handle);
+        if (root == null || !isPhoneGestureBlockActive(root)) return false;
+        int[] location = new int[2];
+        root.getLocationOnScreen(location);
+        float x = event.getRawX() - location[0];
+        float y = event.getRawY() - location[1];
+        return x >= 0 && x < root.getWidth()
+                && y >= computeGestureBandTop(root, getGestureBarHeightPx(root))
+                && y < root.getHeight();
+    }
+
     static boolean isImeVisible(android.view.View view) {
         if (sImeVisible) return true;
         if (view == null) return false;
@@ -818,37 +859,11 @@ public final class GestureHooks {
         try {
             android.graphics.Rect frame = new android.graphics.Rect();
             view.getWindowVisibleDisplayFrame(frame);
-            return view.getRootView().getHeight() - frame.bottom > Math.round(120 * readDensity());
+            if (view.getRootView().getHeight() - frame.bottom > Math.round(120 * readDensity())) return true;
         } catch (Throwable ignored) {
         }
-        // 导航栏是独立窗口时 WindowInsets 不包含 IME；系统输入法管理器仍能反映当前编辑器状态。
-        try {
-            android.view.inputmethod.InputMethodManager imm =
-                    (android.view.inputmethod.InputMethodManager) view.getContext()
-                            .getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
-            if (imm != null && imm.isAcceptingText()) return true;
-        } catch (Throwable ignored) { }
-
-        try {
-            Object current = view;
-            for (int depth = 0; current != null && depth < 5; depth++) {
-                Class<?> type = current.getClass();
-                while (type != null) {
-                    for (java.lang.reflect.Field field : type.getDeclaredFields()) {
-                        String name = field.getName().toLowerCase(java.util.Locale.ROOT);
-                        if (field.getType() == boolean.class
-                                && (name.contains("ime") || name.contains("keyboard")
-                                || name.contains("inputmethod"))) {
-                            field.setAccessible(true);
-                            if (field.getBoolean(current)) return true;
-                        }
-                    }
-                    type = type.getSuperclass();
-                }
-                current = current instanceof android.view.View
-                        ? ((android.view.View) current).getParent() : null;
-            }
-        } catch (Throwable ignored) { }
+        // An active editor or an IME-switcher flag does not imply a visible keyboard.
+        // Independent navigation windows use the native setImeWindowStatus cache above.
         return false;
     }
 
@@ -900,10 +915,12 @@ public final class GestureHooks {
         if (action == android.view.MotionEvent.ACTION_DOWN) {
             g = new MBackGesture();
             g.down = true;
+            g.downTime = downTime;
             g.handle = handle;
             g.downX = event.getX();
             g.downY = event.getY();
             MBACK_GESTURES.put(downTime, g);
+            GestureTouchReplayHooks.begin(handle, downTime);
             // 视觉反馈层非必要, 异常不得阻断触发逻辑。
             try {
                 MBackSurface surface = ensureMBackSurface(handle);
@@ -912,23 +929,15 @@ public final class GestureHooks {
                     surface.showAnimated();
                 }
             } catch (Throwable ignored) { }
-            final long fDownTime = downTime;
-            final java.lang.Runnable longPress = new java.lang.Runnable() {
-                @Override
-                public void run() {
-                    MBackGesture gg = MBACK_GESTURES.get(fDownTime);
-                    if (gg == null || !gg.down || gg.cancelled) return;
-                    if (!readBool(KEY_MBACK_ENABLED, false)) return;
-                    gg.longPress = true;
-                    try {
-                        handle.performHapticFeedback(
-                                android.view.HapticFeedbackConstants.LONG_PRESS);
-                    } catch (Throwable ignored) { }
-                    triggerNavigation(handle, true);
-                }
+            int timeout = android.view.ViewConfiguration.getLongPressTimeout();
+            final MBackGesture activeGesture = g;
+            g.longPressRunnable = () -> {
+                if (MBACK_GESTURES.get(downTime) != activeGesture || !activeGesture.down || activeGesture.cancelled
+                        || activeGesture.longPress || !GestureTouchReplayHooks.isMBackLongPressDue(
+                                handle, downTime, android.os.SystemClock.uptimeMillis(), timeout)) return;
+                fireMBackLongPress(activeGesture);
             };
-            g.longPressRunnable = longPress;
-            handle.postDelayed(longPress, android.view.ViewConfiguration.getLongPressTimeout());
+            GESTURE_TOUCH_MAIN.postAtTime(g.longPressRunnable, downTime + timeout);
             return;
         }
         if (g == null || !g.down) return;
@@ -940,7 +949,12 @@ public final class GestureHooks {
             if (Math.abs(dx) > swipe || dy < -swipe) {
                 g.cancelled = true;
                 cancelMBackLongPress(g);
+                GestureTouchReplayHooks.release(handle, downTime);
                 try { hideMBackSurface(handle); } catch (Throwable ignored) { }
+            }
+            if (!g.cancelled && !g.longPress && event.getEventTime() - downTime
+                    >= android.view.ViewConfiguration.getLongPressTimeout()) {
+                fireMBackLongPress(g);
             }
             return;
         }
@@ -948,31 +962,128 @@ public final class GestureHooks {
             boolean cancelled = g.cancelled;
             boolean longPressed = g.longPress;
             cancelMBackLongPress(g);
+            if (!cancelled && !longPressed && event.getEventTime() - downTime
+                    >= android.view.ViewConfiguration.getLongPressTimeout()) {
+                longPressed = true;
+                fireMBackLongPress(g);
+            }
             if (!cancelled && !longPressed) {
+                GestureTouchReplayHooks.consume(handle, downTime);
                 try {
                     handle.performHapticFeedback(
                             android.view.HapticFeedbackConstants.VIRTUAL_KEY);
                 } catch (Throwable ignored) { }
                 triggerNavigation(handle, false);
             } else if (!cancelled && longPressed) {
-                // 长按触发回桌面后松手: 追加与长按触发一致的线性马达反馈。
+                // 松手时再震动一次。阈值处的震动不能抑制这次释放反馈。
                 try {
                     handle.performHapticFeedback(
-                            android.view.HapticFeedbackConstants.LONG_PRESS);
+                            android.view.HapticFeedbackConstants.VIRTUAL_KEY);
                 } catch (Throwable ignored) { }
             }
             MBACK_GESTURES.remove(downTime);
             MBACK_IN_RANGE.remove(downTime);
+            g.down = false;
             try { hideMBackSurface(handle); } catch (Throwable ignored) { }
             return;
         }
         if (action == android.view.MotionEvent.ACTION_CANCEL
                 || action == android.view.MotionEvent.ACTION_POINTER_DOWN) {
-            g.cancelled = true;
             cancelMBackLongPress(g);
+            GestureTouchReplayHooks.release(handle, downTime);
+            g.cancelled = true;
+            g.down = false;
             MBACK_GESTURES.remove(downTime);
             MBACK_IN_RANGE.remove(downTime);
             try { hideMBackSurface(handle); } catch (Throwable ignored) { }
+        }
+    }
+
+    static boolean handleNativeMBackTouch(View handle, MotionEvent event) {
+        if (event == null) return false;
+        // The protected navigation window already owns this stream. Its direct
+        // dispatch must not depend on, or be duplicated by, the animation callback.
+        if (GestureTouchReplayHooks.ownsWindowMBack(handle, event.getDownTime())
+                || GestureTouchReplayHooks.ownsMonitorMBack(handle, event.getDownTime())) return true;
+        if (!readBool(KEY_MBACK_ENABLED, false)) return false;
+        long downTime = event.getDownTime();
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            MBACK_IN_RANGE.put(downTime, isInMBackBarRange(handle, event));
+        }
+        if (!Boolean.TRUE.equals(MBACK_IN_RANGE.get(downTime))) return false;
+        handleMBackTouch(handle, event);
+        return true;
+    }
+
+    static void routeMBackWindowTouch(View root, MotionEvent event) {
+        View handle = findHandleInTree(root);
+        if (handle == null) return;
+        routeMBackInput(handle, event, false);
+    }
+
+    static void routeMBackMonitorTouch(View handle, MotionEvent event) {
+        routeMBackInput(handle, event, true);
+    }
+
+    static void routeMBackInput(View handle, MotionEvent event, boolean monitor) {
+        long downTime = event.getDownTime();
+        // A navigation-window CANCEL can mean another system gesture monitor
+        // pilfered pointers. Only the raw monitor may cancel its own active stream.
+        if (!monitor && GestureTouchReplayHooks.ownsMonitorMBack(handle, downTime)) return;
+        MotionEvent copy = MotionEvent.obtain(event);
+        try {
+            // View dispatch uses window coordinates; the existing mBack recognizer
+            // and viewScreenLeft both use display coordinates, like the native monitor.
+            copy.setLocation(event.getRawX(), event.getRawY());
+            if (copy.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                // ColorOS can hide the navigation window while its independent
+                // input monitor keeps receiving bottom gestures (for example,
+                // when Launcher owns the gesture-bar surface). IME visibility
+                // makes the window visible again; it must not gate raw input.
+                boolean unavailable = monitor
+                        ? !handle.isAttachedToWindow() || handle.getWidth() <= 0
+                        : !handle.isShown();
+                if (!readBool(KEY_MBACK_ENABLED, false) || unavailable
+                        || isShadeExpanded(handle) || !isInMBackBarRange(handle, copy)) return;
+                if (monitor) GestureTouchReplayHooks.claimMonitorMBack(handle, downTime);
+                else GestureTouchReplayHooks.claimWindowMBack(handle, downTime);
+                // The monitor can deliver DOWN first. Adopt that pending gesture
+                // rather than restart its timer or repeat completed navigation.
+                if (MBACK_GESTURES.containsKey(downTime)
+                        || GestureTouchReplayHooks.wasNavigationConsumed(handle, downTime)) return;
+                MBACK_IN_RANGE.put(downTime, true);
+            } else if (monitor ? !GestureTouchReplayHooks.ownsMonitorMBack(handle, downTime)
+                    : !GestureTouchReplayHooks.ownsWindowMBack(handle, downTime)) {
+                return;
+            }
+            if (!readBool(KEY_MBACK_ENABLED, false)) copy.setAction(MotionEvent.ACTION_CANCEL);
+            handleMBackTouch(handle, copy);
+        } finally {
+            copy.recycle();
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL
+                    || action == MotionEvent.ACTION_POINTER_DOWN) {
+                GestureTouchReplayHooks.clearMBackPhysicalTerminal(handle, downTime);
+            }
+        }
+    }
+
+    private static void fireMBackLongPress(MBackGesture gesture) {
+        if (gesture == null || !gesture.down || gesture.cancelled || gesture.longPress) return;
+        gesture.longPress = true;
+        cancelMBackLongPress(gesture);
+        GestureTouchReplayHooks.consume(gesture.handle, gesture.downTime);
+        try {
+            gesture.handle.performHapticFeedback(
+                    android.view.HapticFeedbackConstants.LONG_PRESS);
+        } catch (Throwable ignored) { }
+        triggerNavigation(gesture.handle, true);
+    }
+
+    private static void cancelMBackLongPress(MBackGesture gesture) {
+        if (gesture != null && gesture.longPressRunnable != null && gesture.handle != null) {
+            GESTURE_TOUCH_MAIN.removeCallbacks(gesture.longPressRunnable);
+            gesture.longPressRunnable = null;
         }
     }
 
@@ -980,20 +1091,15 @@ public final class GestureHooks {
             android.view.MotionEvent ev) {
         try {
             int padding = Math.round(getMBackBandPaddingDp() * readDensity());
-            float x = ev.getX();
-            int left = XposedHelpers.getIntField(handle, "viewScreenLeft");
+            float x = ev.getRawX();
+            int[] location = new int[2];
+            handle.getLocationOnScreen(location);
+            int left = location[0];
             int right = left + handle.getWidth();
             return x >= left - padding && x <= right + padding;
         } catch (Throwable t) {
             return true;
         }
-    }
-
-    static void cancelMBackLongPress(MBackGesture g) {
-        if (g != null && g.longPressRunnable != null && g.handle != null) {
-            g.handle.removeCallbacks(g.longPressRunnable);
-        }
-        if (g != null) g.longPressRunnable = null;
     }
 
     static MBackSurface ensureMBackSurface(android.view.View handle) {
@@ -1054,6 +1160,8 @@ public final class GestureHooks {
             MBackGesture gg = it.next();
             if (gg.handle == handle) {
                 cancelMBackLongPress(gg);
+                // Removing a host cancels its unresolved replay ownership as well.
+                GestureTouchReplayHooks.release(handle, gg.downTime);
                 it.remove();
             }
         }
@@ -1097,6 +1205,7 @@ public final class GestureHooks {
             cancelMBackLongPress(gesture);
             if (gesture.handle != null) handles.add(gesture.handle);
         }
+        GestureTouchReplayHooks.cleanup();
         MBACK_GESTURES.clear();
         MBACK_IN_RANGE.clear();
         for (android.view.View handle : handles) {
@@ -1126,56 +1235,91 @@ public final class GestureHooks {
             }
             navView = parent;
         } catch (Throwable t) {
-            log("mback navigation view lookup failed: " + t);
+
         }
 
         if (home) {
-            // A queued HOME key is not proof that ColorOS 17's Home-key policy
-            // launched Launcher. Use SystemUI's native MAIN/HOME activity route.
-            if (android.os.Build.VERSION.SDK_INT >= 37 && launchHomeOnDisplay(handle)) return;
-            if (injectKey(handle, android.view.KeyEvent.KEYCODE_HOME)) return;
-            if (dispatchNavigationButton(navView, true)) return;
-            log("mback home dispatch was rejected");
+            // Let ColorOS' PhoneWindowManager process HOME. Directly starting
+            // ACTION_MAIN/CATEGORY_HOME can return START_DELIVERED_TO_TOP while
+            // Oplus aborts the transition, leaving the current app focused.
+            if (android.os.Build.VERSION.SDK_INT >= 37) {
+                if (dispatchNavigationButton(navView, true)) {
+                    scheduleHomeTaskFront(handle);
+                    return;
+                }
+                if (injectKey(handle, android.view.KeyEvent.KEYCODE_HOME)) {
+                    scheduleHomeTaskFront(handle);
+                    return;
+                }
+            } else {
+                if (injectKey(handle, android.view.KeyEvent.KEYCODE_HOME)) return;
+                if (dispatchNavigationButton(navView, true)) return;
+            }
             return;
         }
 
-        // ColorOS 17 的 sendEvent 仅将注入任务放入后台队列，返回 void，
-        // 不能据此确认返回按键已被接受。与原生侧滑返回一样直接注入，
-        // 并将事件定向到手势所在显示屏，避免使用隐藏按钮残留的显示状态。
+        // ColorOS 17's PhoneWindowManager routes injected BACK keys through
+        // QuickBackInputPolicy, which can consume them before the focused app.
+        // Mark this synthetic mBack key so system_server can bypass only that
+        // QuickBack interception while retaining the normal key policy path.
+        if (android.os.Build.VERSION.SDK_INT >= 37
+                && injectKey(handle, android.view.KeyEvent.KEYCODE_BACK, true)) return;
+
+        // Use ColorOS' own Back button event path first. KeyButtonView supplies
+        // its native device id, flags, display id, and gesture-thread dispatch;
+        // injectInputEvent returning true only means queued, not that Back ran.
+        if (dispatchNavigationButton(navView, false)) return;
         if (injectKey(handle, android.view.KeyEvent.KEYCODE_BACK)) return;
-        if (!dispatchNavigationButton(navView, false)) {
-            log("mback back dispatch was rejected");
-        }
     }
 
-    private static boolean launchHomeOnDisplay(android.view.View handle) {
-        if (handle == null) return false;
-        try {
-            android.content.Context context = handle.getContext();
-            android.app.KeyguardManager keyguard =
-                    context.getSystemService(android.app.KeyguardManager.class);
-            // Preserve native lock-screen restrictions; never request keyguard dismissal.
-            if (keyguard == null || keyguard.isKeyguardLocked()) return false;
-            int displayId = handle.getDisplay() != null ? handle.getDisplay().getDisplayId() : 0;
-            android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_MAIN)
-                    .addCategory(android.content.Intent.CATEGORY_HOME)
-                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-            android.app.ActivityOptions options = android.app.ActivityOptions.makeBasic();
-            options.setLaunchDisplayId(displayId);
-            Object currentUser = XposedHelpers.getStaticObjectField(android.os.UserHandle.class, "CURRENT");
-            XposedHelpers.callMethod(context, "startActivityAsUser", intent, options.toBundle(), currentUser);
-            // Match Home's panel/recents dismissal after the activity request succeeds.
+    private static void scheduleHomeTaskFront(final android.view.View handle) {
+        if (handle == null || android.os.Build.VERSION.SDK_INT < 37) return;
+        final int displayId = handle.getDisplay() != null
+                ? handle.getDisplay().getDisplayId() : 0;
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
             try {
-                android.content.Intent close = new android.content.Intent(
-                        android.content.Intent.ACTION_CLOSE_SYSTEM_DIALOGS).putExtra("reason", "homekey");
-                XposedHelpers.callMethod(context, "sendBroadcastAsUser", close, currentUser);
-            } catch (Throwable error) { log("mback Home panel dismissal failed: " + error); }
-            log("mback Home activity requested on display " + displayId);
-            return true;
-        } catch (Throwable error) {
-            log("mback Home activity request failed: " + error);
-            return false;
-        }
+                android.content.Context context = handle.getContext();
+                android.app.KeyguardManager keyguard = context
+                        .getSystemService(android.app.KeyguardManager.class);
+                if (keyguard == null || keyguard.isKeyguardLocked()) {
+                    return;
+                }
+                android.content.Intent homeIntent = new android.content.Intent(
+                        android.content.Intent.ACTION_MAIN)
+                        .addCategory(android.content.Intent.CATEGORY_HOME);
+                android.content.pm.ResolveInfo resolved = context.getPackageManager()
+                        .resolveActivity(homeIntent,
+                                android.content.pm.PackageManager.MATCH_DEFAULT_ONLY);
+                if (resolved == null || resolved.activityInfo == null) {
+                    return;
+                }
+                String homePackage = resolved.activityInfo.packageName;
+                android.app.ActivityManager manager = context
+                        .getSystemService(android.app.ActivityManager.class);
+                java.util.List<android.app.ActivityManager.RunningTaskInfo> tasks =
+                        manager == null ? null : manager.getRunningTasks(20);
+                if (tasks == null || tasks.isEmpty()) {
+                    return;
+                }
+                android.app.ActivityManager.RunningTaskInfo top = tasks.get(0);
+                if (XposedHelpers.getIntField(top, "displayId") == displayId
+                        && top.topActivity != null
+                        && homePackage.equals(top.topActivity.getPackageName())) {
+                    return;
+                }
+                for (android.app.ActivityManager.RunningTaskInfo task : tasks) {
+                    android.content.ComponentName activity = task.topActivity != null
+                            ? task.topActivity : task.baseActivity;
+                    if (XposedHelpers.getIntField(task, "displayId") == displayId
+                            && activity != null
+                            && homePackage.equals(activity.getPackageName())) {
+                        manager.moveTaskToFront(task.id, 0);
+                        return;
+                    }
+                }
+            } catch (Throwable error) {
+            }
+        }, 250L);
     }
 
     private static boolean dispatchNavigationButton(android.view.View navView, boolean home) {
@@ -1196,7 +1340,6 @@ public final class GestureHooks {
             XposedHelpers.callMethod(buttonView, "sendEvent", 1, 0);
             return true;
         } catch (Throwable t) {
-            log("mback navigation button dispatch failed: " + t);
             return false;
         }
     }
@@ -1206,6 +1349,10 @@ public final class GestureHooks {
     }
 
     static boolean injectKey(android.view.View handle, int code) {
+        return injectKey(handle, code, false);
+    }
+
+    private static boolean injectKey(android.view.View handle, int code, boolean mBackMarker) {
         boolean downInjected = false;
         try {
             // ColorOS 17 的 KeyButtonView 使用 InputManagerGlobal；旧系统保留
@@ -1220,6 +1367,7 @@ public final class GestureHooks {
             long now = android.os.SystemClock.uptimeMillis();
             int flags = android.view.KeyEvent.FLAG_FROM_SYSTEM
                     | android.view.KeyEvent.FLAG_VIRTUAL_HARD_KEY;
+            if (mBackMarker) flags |= android.view.KeyEvent.FLAG_FALLBACK;
             android.view.KeyEvent down = new android.view.KeyEvent(
                     now, now, android.view.KeyEvent.ACTION_DOWN,
                     code, 0, 0,
@@ -1238,12 +1386,16 @@ public final class GestureHooks {
             downInjected = Boolean.TRUE.equals(
                     XposedHelpers.callMethod(inputManager, "injectInputEvent", down, 0));
             if (!downInjected) return false;
-            Object upAccepted = XposedHelpers.callMethod(inputManager, "injectInputEvent", up, 0);
-            if (!Boolean.TRUE.equals(upAccepted)) log("mback key up injection rejected for " + code);
+            boolean upAccepted = false;
+            for (int attempt = 0; attempt < 2 && !upAccepted; attempt++) {
+                try {
+                    upAccepted = Boolean.TRUE.equals(
+                            XposedHelpers.callMethod(inputManager, "injectInputEvent", up, 0));
+                } catch (Throwable ignored) { }
+            }
             // DOWN 已被接受后不得再走备用路径，否则可能重复返回。
             return true;
         } catch (Throwable t) {
-            log("mback key injection failed for " + code + ": " + t);
             return downInjected;
         }
     }

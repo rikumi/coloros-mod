@@ -414,10 +414,10 @@ final class RelaxedNotificationHooks {
             current = parent;
         }
         icon.setTranslationY(collapsed ? requestedTop - icon.getTop() : 0f);
-        centerMessageAppIcon(root, line, icon);
+        centerMessageAppIcon(root, line, icon, collapsed);
     }
 
-    private static void centerMessageAppIcon(View root, View line, View icon) {
+    private static void centerMessageAppIcon(View root, View line, View icon, boolean collapsed) {
         int id = NotificationResourceIds.get(root.getResources(), "app_name_text", "id", "android");
         View name = id == 0 ? null : line.findViewById(id);
         if (name == null || name.getVisibility() != View.VISIBLE || name.getWidth() == 0
@@ -432,7 +432,10 @@ final class RelaxedNotificationHooks {
                 : root.getPaddingLeft() + iconMargin(icon);
         float nameEdge = rtl ? nameLeft + name.getWidth() : nameLeft;
         float targetLeft = (innerEdge + nameEdge - icon.getWidth()) / 2f;
-        float targetTop = nameTop + (name.getHeight() - icon.getHeight()) / 2f;
+        // The 32dp collapsed icon shares the regular template's top inset. Centering
+        // it on the shorter app-name line lifts it above regular notification icons.
+        float targetTop = collapsed ? root.getPaddingTop() + iconMargin(icon)
+                : nameTop + (name.getHeight() - icon.getHeight()) / 2f;
         // Use the actual name position, including ancestor offsets. In ConversationLayout
         // the app icon can be nested inside the avatar badge rather than directly in the header.
         float x = targetLeft - iconLeft, y = targetTop - iconTop;

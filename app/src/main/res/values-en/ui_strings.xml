@@ -131,7 +131,7 @@
     <string name="ui_category_float">"Floating windows"</string>
     <string name="ui_float_zygote_hint">"Restart Zygote for floating window settings to take effect."</string>
     <string name="ui_category_navigation">"Navigation and gestures"</string>
-    <string name="ui_category_storage">"Storage management"</string>
+    <string name="ui_category_storage">Miscellaneous settings</string>
     <string name="ui_category_disabled">"Disabled apps"</string>
     <string name="ui_master_off">"Enable all"</string>
     <string name="ui_master_home_on">"Enable module"</string>

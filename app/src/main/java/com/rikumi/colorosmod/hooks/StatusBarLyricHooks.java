@@ -64,7 +64,6 @@ public final class StatusBarLyricHooks {
 
     private static final String[] HIDE_VIEW_IDS = {"clock"};
 
-    private static final int MEDIUM_WEIGHT = 500;
 
     private static final float LYRIC_VERTICAL_OFFSET_DP = 1f;
 
@@ -525,7 +524,7 @@ public final class StatusBarLyricHooks {
     };
 
     private static boolean shouldHideClock() {
-        return sHiddenByUs || sHiddenByThirdParty;
+        return !com.rikumi.colorosmod.TabletDevice.isTablet() && (sHiddenByUs || sHiddenByThirdParty);
     }
 
     private static volatile Object sOplusWindowManager = null;
@@ -611,6 +610,7 @@ public final class StatusBarLyricHooks {
     }
 
     private static void setThirdPartyClockHidden(boolean hidden) {
+        hidden = hidden && !com.rikumi.colorosmod.TabletDevice.isTablet();
         if (hidden == sHiddenByThirdParty) return;
         sHiddenByThirdParty = hidden;
         View clock = sClockView;
@@ -792,6 +792,26 @@ public final class StatusBarLyricHooks {
         }
     }
 
+    private static View notificationAnchor(View icons) {
+        if (!com.rikumi.colorosmod.TabletDevice.isTablet()) return icons;
+        View anchor = icons;
+        while (anchor != null && anchor.getParent() instanceof View
+                && !(anchor.getParent() instanceof LinearLayout)) {
+            anchor = (View) anchor.getParent();
+        }
+        return anchor != null && anchor.getParent() instanceof LinearLayout ? anchor : null;
+    }
+
+    private static LinearLayout resolveLyricHost(View preferred, View clock, View icons) {
+        if (com.rikumi.colorosmod.TabletDevice.isTablet()) {
+            View anchor = notificationAnchor(icons);
+            return anchor == null ? null : (LinearLayout) anchor.getParent();
+        }
+        if (preferred instanceof LinearLayout) return (LinearLayout) preferred;
+        if (icons != null && icons.getParent() instanceof LinearLayout) return (LinearLayout) icons.getParent();
+        return clock != null && clock.getParent() instanceof LinearLayout ? (LinearLayout) clock.getParent() : null;
+    }
+
     private static void attachLyricView(FrameLayout root) {
         FluidCloudLyricHooks.clear();
         sStatusBarRoot = root;
@@ -800,14 +820,8 @@ public final class StatusBarLyricHooks {
         View clock = findSystemUiViewById(root, "clock");
         View icons = findSystemUiViewById(root, "notification_icon_area");
         View hostRaw = findSystemUiViewById(root, "status_bar_start_side_content_for_fake");
-        LinearLayout clockHost = null;
-        if (hostRaw instanceof LinearLayout) {
-            clockHost = (LinearLayout) hostRaw;
-        } else if (icons != null && icons.getParent() instanceof LinearLayout) {
-            clockHost = (LinearLayout) icons.getParent(); // 兜底: 用通知图标的父容器
-        } else if (clock != null && clock.getParent() instanceof LinearLayout) {
-            clockHost = (LinearLayout) clock.getParent();
-        }
+        View iconAnchor = notificationAnchor(icons);
+        LinearLayout clockHost = resolveLyricHost(hostRaw, clock, icons);
 
         // 重建 / 配置变化(旋转、挖孔等)后尺寸会变, 先作废缓存以便重新测量。
         sLyricMaxWidthPx = 0;
@@ -850,8 +864,8 @@ public final class StatusBarLyricHooks {
         lp.gravity = Gravity.CENTER_VERTICAL;
         // 歌词与左边的通知图标之间留 6dp(会被 updateLyricWidth 计入起点, 因此可用宽度仍正确)。
         lp.leftMargin = Math.round(dpToPx(ctx, LYRIC_MARGIN_START_DP));
-        int index = (icons != null && icons.getParent() == clockHost)
-                ? clockHost.indexOfChild(icons) + 1 : -1;
+        int index = (iconAnchor != null && iconAnchor.getParent() == clockHost)
+                ? clockHost.indexOfChild(iconAnchor) + 1 : -1;
         if (index > 0) clockHost.addView(container, index, lp);
         else clockHost.addView(container, lp);
         final LinearLayout hostFinal = clockHost;
@@ -861,6 +875,12 @@ public final class StatusBarLyricHooks {
         XposedHelpers.setAdditionalInstanceField(container,
                 "colorosmod_lyric_width_update", widthUpdate);
         container.post(widthUpdate);
+        if (com.rikumi.colorosmod.TabletDevice.isTablet()) {
+            // Notification icons keep their native width on tablets. Recompute
+            // the remaining lyric space after icons/clock/layout change size.
+            container.addOnLayoutChangeListener((view, left, top, right, bottom,
+                    oldLeft, oldTop, oldRight, oldBottom) -> widthUpdate.run());
+        }
 
         sLyricView = container;
         sHideViews = collectHideViews(root);
@@ -1018,25 +1038,31 @@ public final class StatusBarLyricHooks {
             TextView ctv = (TextView) clock;
             tv.setTextSize(TypedValue.COMPLEX_UNIT_PX, ctv.getTextSize());
             tv.setTextColor(ctv.getTextColors());
-            tv.setTypeface(mediumTypeface(ctv.getTypeface()));
+            tv.setTypeface(StatusBarFontHooks.nativeStatusBarTypeface(ctv));
         } else {
             tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
             tv.setTextColor(Color.WHITE);
-            tv.setTypeface(mediumTypeface(null));
+            tv.setTypeface(Typeface.DEFAULT);
         }
+        StatusBarFontHooks.applyStatusBarFont(tv);
         return tv;
     }
 
-    private static Typeface mediumTypeface(Typeface base) {
-        try {
-            if (android.os.Build.VERSION.SDK_INT >= 28) {
-                return Typeface.create(base == null ? Typeface.DEFAULT : base,
-                        MEDIUM_WEIGHT, false);
+    private static void syncLyricFonts() {
+        boolean changed = false;
+        for (TextView view : new TextView[]{sOutgoingView, sIncomingView}) {
+            if (view == null) continue;
+            Typeface before = view.getTypeface();
+            String variation = view.getFontVariationSettings();
+            StatusBarFontHooks.applyStatusBarFont(view);
+            if (before != view.getTypeface() || !java.util.Objects.equals(variation, view.getFontVariationSettings())) {
+                applyTextWidth(view, view.getText());
+                changed = true;
             }
-        } catch (Throwable t) {
-            log("statusbar_lyric medium typeface fallback: " + t);
         }
-        return Typeface.create("sans-serif-medium", Typeface.NORMAL);
+        if (changed && sOutgoingView != null && sLyricView != null
+                && sLyricView.getVisibility() == View.VISIBLE && sSwitchAnimator == null && !sPanelExpanded)
+            startSinglePassScroll(sOutgoingView, sCurrentText);
     }
 
     private static void syncLyricTextColor() {
@@ -1208,6 +1234,7 @@ public final class StatusBarLyricHooks {
     public static void onSettingsSnapshotPublished() {
         if (!sGenerationActive || sListenersPreparedForHotReload || sMainHandler == null) return;
         runOnMain(() -> {
+            syncLyricFonts();
             int settings = lyricMode();
             if (settings == sLastLyricSettings) return;
             sLastLyricSettings = settings;
@@ -1827,6 +1854,7 @@ public final class StatusBarLyricHooks {
     }
 
     private static void setNotificationNumberMode(boolean on) {
+        on = on && !com.rikumi.colorosmod.TabletDevice.isTablet();
         if (sNumberModeOn == on) return;
         sNumberModeOn = on;
         NotificationHooks.setLyricNumberMode(on);
@@ -1834,6 +1862,7 @@ public final class StatusBarLyricHooks {
     }
 
     private static void setHiddenForLyric(boolean hidden) {
+        hidden = hidden && !com.rikumi.colorosmod.TabletDevice.isTablet();
         View[] views = sHideViews;
         if (views == null) return;
         if (hidden) {

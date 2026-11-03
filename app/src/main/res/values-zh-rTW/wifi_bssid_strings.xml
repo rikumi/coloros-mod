@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wifi_bssid_group">Wi-Fi AP 過濾</string>
+    <string name="wifi_bssid_add_wifi">修改目前 Wi-Fi</string>
+    <string name="wifi_bssid_mode">過濾模式</string>
+    <string name="wifi_bssid_mode_subtitle">黑名單將開啟系統自動連線，反之關閉</string>
+    <string name="wifi_bssid_blacklist">黑名單</string>
+    <string name="wifi_bssid_whitelist">白名單</string>
+    <string name="wifi_bssid_add_ap">新增目前 AP</string>
+    <string name="wifi_bssid_delete">刪除</string>
+    <string name="wifi_bssid_remove">移除此網路</string>
+    <string name="wifi_bssid_no_auto_connect">不自動連線</string>
+    <string name="wifi_bssid_auto_connect">自動連線</string>
+    <string name="wifi_bssid_error">WiFi BSSID 操作失敗：%1$s</string>
+    <string name="wifi_bssid_hook_inactive">WiFi 過濾器尚未就緒：%1$s</string>
+    <string name="wifi_bssid_connect_first">請先連線至已儲存的 WiFi</string>
+    <string name="wifi_bssid_wrong_wifi">目前 AP 不屬於此 WiFi</string>
+    <string name="wifi_bssid_saved_missing">此 WiFi 已不在系統已儲存網路中</string>
+    <string name="wifi_bssid_scanned_aps">已掃描到的 AP</string>
+    <string name="wifi_bssid_scan_rejected">無法啟動掃描或掃描失敗，請稍後重試</string>
+    <string name="wifi_bssid_scan_timeout">掃描逾時，請重試</string>
+    <string name="wifi_bssid_ap_unavailable">此 AP 已不在掃描結果中，請重新掃描</string>
+    <string name="wifi_bssid_ap_details">" (%1$sGHz %2$d)"</string>
+    <string name="wifi_bssid_remove_confirm">移除後將完全遵循系統中的連線設定。</string>
+    <string name="wifi_bssid_refresh">重新整理</string>
+    <string name="wifi_bssid_enabled">啟用 Wi-Fi AP 過濾</string>
+    <string name="wifi_bssid_connect_once">連線一次</string>
+    <string name="wifi_bssid_join_blacklist">加入黑名單</string>
+    <string name="wifi_bssid_join_whitelist">加入白名單</string>
+    <string name="wifi_bssid_connect_timeout">連線逾時，請檢查 AP 是否可用</string>
+</resources>

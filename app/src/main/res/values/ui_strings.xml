@@ -132,7 +132,7 @@
     <string name="ui_category_float">"应用小窗"</string>
     <string name="ui_float_zygote_hint">"更改小窗设置需重启 Zygote 生效"</string>
     <string name="ui_category_navigation">"导航与手势"</string>
-    <string name="ui_category_storage">"存储管理"</string>
+    <string name="ui_category_storage">杂项设置</string>
     <string name="ui_category_disabled">"停用应用"</string>
     <string name="ui_master_off">"一键启用"</string>
     <string name="ui_master_home_on">"启用模块"</string>

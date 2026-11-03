@@ -535,6 +535,7 @@ internal fun SettingsGroup(
     onItemChanged: () -> Unit = {},
     onOpenNavigationApps: () -> Unit = {},
     onOpenFontApps: () -> Unit = {},
+    onOpenWifi: (String) -> Unit = {},
     modifier: Modifier = Modifier,
     footerContent: (@Composable () -> Unit)? = null,
 ) {
@@ -558,6 +559,7 @@ internal fun SettingsGroup(
                         }
                     }
                     is RefreshIconCacheItem -> RefreshIconCacheRow(ctx)
+                    is WifiBssidItem -> WifiBssidGroup(ctx, onOpenWifi)
                     is GroupTitleItem -> Unit
                     is FontAppsItem -> SettingsCategoryRow(
                         icon = null,
@@ -588,6 +590,7 @@ private val SettingsItem.keyForCompose: String
         is NavigationAppsItem -> "navigation_apps"
         is FontAppsItem -> "font_mount_apps"
         is RefreshIconCacheItem -> "refresh_icon_cache"
+        is WifiBssidItem -> "wifi_bssid"
     }
 
 @Composable
