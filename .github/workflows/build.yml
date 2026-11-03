@@ -57,19 +57,23 @@ jobs:
           echo "previous_tag=$LATEST" >> "$GITHUB_OUTPUT"
           echo "Next version: $VERSION (from $LATEST)"
 
-      - name: Generate release changelog
+      - name: Check release notes
+        id: release
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           NOTES="docs/releases/$VERSION.md"
-          if [ -f "$NOTES" ]; then
+          if [ -s "$NOTES" ]; then
             cp "$NOTES" release-notes.md
-            exit 0
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Release notes found: $NOTES"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "No release notes for $VERSION; building Actions artifacts only."
           fi
-          echo "Missing release notes: $NOTES" >&2
-          exit 1
 
       - name: Bump version in app/build.gradle
+        if: ${{ steps.release.outputs.enabled == 'true' }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
@@ -115,19 +119,6 @@ jobs:
       - name: Verify APK signing identity
         run: python3 scripts/verify-apk-signature.py app/build/outputs/apk/debug/*.apk app/build/outputs/apk/release/*.apk
 
-      - name: Commit version bump
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add app/build.gradle
-          git commit -m "chore: bump version to ${{ steps.version.outputs.version }}" || echo "no changes"
-          git push
-
-      - name: Create tag
-        run: |
-          git tag "v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
-
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
@@ -137,7 +128,23 @@ jobs:
             app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
+      - name: Commit version bump
+        if: ${{ steps.release.outputs.enabled == 'true' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add app/build.gradle
+          git commit -m "chore: bump version to ${{ steps.version.outputs.version }}" || echo "no changes"
+          git push
+
+      - name: Create tag
+        if: ${{ steps.release.outputs.enabled == 'true' }}
+        run: |
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
       - name: Create GitHub Release
+        if: ${{ steps.release.outputs.enabled == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
@@ -149,6 +156,7 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Sync to Xposed-Modules-Repo
+        if: ${{ steps.release.outputs.enabled == 'true' }}
         env:
           TOKEN: ${{ secrets.XPOSED_REPO_TOKEN }}
           TARGET: Xposed-Modules-Repo/com.rikumi.colorosmod
@@ -174,7 +182,7 @@ jobs:
           git push origin "v${VERSION}"
 
       - name: Upload release to Xposed-Modules-Repo
-        if: ${{ env.XPOSED_REPO_TOKEN != '' }}
+        if: ${{ steps.release.outputs.enabled == 'true' && env.XPOSED_REPO_TOKEN != '' }}
         uses: softprops/action-gh-release@v2
         env:
           XPOSED_REPO_TOKEN: ${{ secrets.XPOSED_REPO_TOKEN }}
