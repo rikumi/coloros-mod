@@ -218,6 +218,7 @@ public final class AppNavigationHooks {
         nav.getDeclaredMethod("onDetachedFromWindow");
         nav.getField("mBarTransitions");
         nav.getField("mIsVertical");
+        nav.getField("mNavBarMode");
         Class<?> transitions = loader.loadClass(TRANSITIONS);
         transitions.getField("mView");
         applyIntensity = transitions.getMethod("applyDarkIntensity", float.class);
@@ -230,10 +231,12 @@ public final class AppNavigationHooks {
         Field scrimsVisibility = shadeState.getField("scrimsVisibility");
         Field keyguardShowing = shadeState.getField("keyguardShowing");
         Field dozing = shadeState.getField("dozing");
-        Class<?> builder = loader.loadClass("android.window.ScreenCapture$LayerCaptureArgs$Builder");
-        Class<?> args = loader.loadClass("android.window.ScreenCapture$LayerCaptureArgs");
-        Class<?> listener = loader.loadClass("android.window.ScreenCapture$ScreenCaptureListener");
-        Class<?> buffer = loader.loadClass("android.window.ScreenCapture$ScreenshotHardwareBuffer");
+        Class<?> captureApi = NavigationPlatformCompat.captureApi(loader);
+        String captureName = captureApi.getName();
+        Class<?> builder = loader.loadClass(captureName + "$LayerCaptureArgs$Builder");
+        Class<?> args = loader.loadClass(captureName + "$LayerCaptureArgs");
+        Class<?> listener = loader.loadClass(captureName + "$ScreenCaptureListener");
+        Class<?> buffer = loader.loadClass(captureName + "$ScreenshotHardwareBuffer");
         argsBuilder = builder.getConstructor(SurfaceControl.class);
         setCrop = builder.getMethod("setSourceCrop", Rect.class);
         setExcludeLayers = builder.getMethod("setExcludeLayers", SurfaceControl[].class);
@@ -241,7 +244,7 @@ public final class AppNavigationHooks {
         listenerConstructor = listener.getConstructor(ObjIntConsumer.class);
         getHardwareBuffer = buffer.getMethod("getHardwareBuffer");
         getColorSpace = buffer.getMethod("getColorSpace");
-        captureLayers = loader.loadClass("android.window.ScreenCapture").getMethod("captureLayers", args, listener);
+        captureLayers = captureApi.getMethod("captureLayers", args, listener);
         taskSurfaces = new AppNavigationTaskSurface(loader);
         taskSurfaces.install(installer, id -> main.post(() -> {
             for (State state : states.values()) if (state.task != null && state.task.id == id) state.reset();
@@ -291,25 +294,60 @@ public final class AppNavigationHooks {
             }
             return chain.proceed();
         }, float.class);
-        installer.hook("com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler", "onInputEvent$1", chain -> {
-            InputEvent event = (InputEvent) chain.getArg(0);
-            if (enabled() && !recentsCached && event instanceof MotionEvent) {
-                MotionEvent motion = (MotionEvent) event;
-                int action = motion.getActionMasked();
-                float x = motion.getX(), y = motion.getY();
-                int display = (Integer) XposedHelpers.callMethod(event, "getDisplayId");
-                main.post(() -> {
-                    if (!enabled() || recentsCached) return;
-                    for (State state : states.values()) if (state.effect != null && state.view.getDisplay() != null
-                            && state.view.getDisplay().getDisplayId() == display) {
-                        try { state.effect.input(action, x, y); }
-                        catch (ReflectiveOperationException error) { state.report(error); }
-                    }
-                });
+        try {
+            Method input = NavigationPlatformCompat.gestureInput(loader);
+            installer.hook(input.getDeclaringClass().getName(), input.getName(), chain -> {
+                InputEvent event = (InputEvent) chain.getArg(0);
+                if (enabled() && !recentsCached && event instanceof MotionEvent) {
+                    MotionEvent motion = (MotionEvent) event;
+                    int action = motion.getActionMasked();
+                    float x = motion.getX(), y = motion.getY();
+                    int display = (Integer) XposedHelpers.callMethod(event, "getDisplayId");
+                    main.post(() -> {
+                        if (!enabled() || recentsCached) return;
+                        for (State state : states.values()) if (state.effect != null && state.view.getDisplay() != null
+                                && state.view.getDisplay().getDisplayId() == display) {
+                            try { state.effect.input(action, x, y); }
+                            catch (ReflectiveOperationException error) { state.report(error); }
+                        }
+                    });
+                }
+                return chain.proceed();
+            }, input.getParameterTypes());
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
+            // Touch only controls sampling refresh rate; losing this auxiliary
+            // callback must not uninstall the task/capture/background hooks.
+            log.accept("Navigation input refresh hook unavailable", error);
+        }
+        main.post(this::discoverAttachedNavigation);
+        log.accept("SystemUI ColorOS native navigation color-pick hooks registered: " + captureName, null);
+    }
+
+    private void discoverAttachedNavigation() {
+        if (closed || paused) return;
+        try {
+            Object manager = XposedHelpers.callStaticMethod(
+                    Class.forName("android.view.WindowManagerGlobal"), "getInstance");
+            for (String name : (String[]) XposedHelpers.callMethod(manager, "getViewRootNames")) {
+                Object root = XposedHelpers.callMethod(manager, "getRootView", name);
+                if (root instanceof View) discoverNavigation((View) root);
             }
-            return chain.proceed();
-        }, InputEvent.class);
-        log.accept("SystemUI ColorOS native navigation color-pick hooks registered", null);
+        } catch (Throwable error) { log.accept("Cannot discover attached navigation windows", error); }
+    }
+
+    private void discoverNavigation(View view) {
+        if (NAV.equals(view.getClass().getName()) && view.isAttachedToWindow()) {
+            if (!states.containsKey(view)) {
+                State state = new State(view);
+                states.put(view, state);
+                state.tick();
+            }
+            return;
+        }
+        if (view instanceof android.view.ViewGroup) {
+            android.view.ViewGroup group = (android.view.ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) discoverNavigation(group.getChildAt(i));
+        }
     }
 
     private boolean enabled() {
@@ -396,11 +434,11 @@ public final class AppNavigationHooks {
             try {
                 KeyguardManager keyguard = view.getContext().getSystemService(KeyguardManager.class);
                 boolean vertical = view.getClass().getField("mIsVertical").getBoolean(view);
-                int mode = android.provider.Settings.Secure.getInt(view.getContext().getContentResolver(), "hide_navigationbar_enable", 0);
+                int mode = view.getClass().getField("mNavBarMode").getInt(view);
                 android.view.WindowInsets insets = view.getRootWindowInsets();
                 boolean ime = (insets != null && insets.isVisible(android.view.WindowInsets.Type.ime()))
                         || (view.getClass().getField("mNavbarFlags").getInt(view) & 1) != 0;
-                if (!enabled() || !view.isShown() || vertical || (mode != 2 && mode != 3) || ime || view.getDisplay() == null
+                if (!enabled() || !view.isShown() || vertical || mode != 2 || ime || view.getDisplay() == null
                         || (keyguard != null && keyguard.isKeyguardLocked())) {
                     reset();
                 } else if (!checkingTask) {
