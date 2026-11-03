@@ -189,7 +189,7 @@
     <string name="ui_disabled_apps_export_title">"導出已停用應用程式為腳本"</string>
     <string name="ui_disabled_apps_export_hint">"將已停用或卸載的系統應用程式導出成腳本方便重複執行，請注意：\n1. 取決於停用應用程式的途徑，導出的腳本仍然可能需要 adb root；\n2. 模組獲取的資訊可能並不準確，因此腳本可能會導致系統崩潰或不穩定。<annotation warning="fresh_system">請始終在無資料的全新系統上執行腳本</annotation>。"</string>
     <string name="ui_restore_theme_failed">"原始主題恢復失敗：%1$s"</string>
-    <string name="ui_reload_scope_count">"熱重載處理中：%1$d 個作用域"</string>
+    <string name="ui_reload_scope_count">"熱重載處理中：%1$d 個處理程序"</string>
     <string name="ui_reload_summary">"熱重載：%1$s"</string>
     <string name="ui_reload_empty">"無結果"</string>
     <string name="ui_reload_separator">"，"</string>
@@ -197,6 +197,8 @@
     <string name="ui_reload_refused">"模組拒絕 %1$d"</string>
     <string name="ui_reload_framework_failed">"框架失敗 %1$d"</string>
     <string name="ui_reload_unsupported">"不支援 %1$d"</string>
+    <string name="ui_reload_unsupported_targets">"不支援的處理程序：%1$s"</string>
+    <string name="ui_reload_api_unsupported">"框架 API 低於 102，無法熱重載：%1$d 個服務"</string>
     <string name="ui_reload_in_progress">"進行中 %1$d"</string>
     <string name="ui_reload_process_died">"處理程序退出 %1$d"</string>
     <string name="ui_reload_submission_failed">"提交失敗 %1$d"</string>

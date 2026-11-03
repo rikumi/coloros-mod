@@ -24,11 +24,27 @@ import java.util.concurrent.TimeUnit;
 import static com.rikumi.colorosmod.XposedInit.*;
 
 /** ColorOS 17 clear-all: retain the native cleanup, report only after our kills complete. */
-final class RecentsClearMemoryHooks {
+public final class RecentsClearMemoryHooks {
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static volatile boolean installed;
     private static volatile Batch active;
     private static volatile boolean live = true;
+
+    /** Athena 7.0.0 ignores IsShowCleanFinishToast and emits its result from o0(Bundle). */
+    public static void hookAthena(XC_LoadPackage.LoadPackageParam lp) {
+        if (Build.VERSION.SDK_INT < 37) return;
+        try {
+            Class<?> service = XposedHelpers.findClass("com.oplus.athena.client.AthenaService", lp.classLoader);
+            XposedHelpers.findAndHookMethod(service, "o0", Bundle.class, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (!readBool(KEY_RECENTS_SWIPE_UP_KILL_ENABLED, false)) return;
+                    Bundle result = (Bundle) p.args[0];
+                    if (result != null && "oplus.intent.action.REQUEST_APP_CLEAN_RUNNING"
+                            .equals(result.getString("action"))) p.setResult(null);
+                }
+            });
+        } catch (Throwable error) { log("Athena clear-result toast hook unavailable: " + error); }
+    }
 
     private static final class Batch {
         final Object owner;

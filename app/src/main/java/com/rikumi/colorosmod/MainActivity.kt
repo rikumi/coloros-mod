@@ -151,12 +151,14 @@ class MainActivity : ComponentActivity() {
             XposedServiceHelper.registerListener(object : XposedServiceHelper.OnServiceListener {
                 override fun onServiceBind(service: XposedService) {
                     xposedServices.add(service)
+                    Log.i("ColorOSMod", "Xposed service bound: ${service.frameworkName} ${service.frameworkVersion} api=${service.apiVersion}")
                     val context = applicationContext
                     SystemFontStore.enqueueSync { SystemFontStore.sync(context, service) }
                     scopeObservers.forEach { it.run() }
                 }
                 override fun onServiceDied(service: XposedService) {
                     xposedServices.remove(service)
+                    Log.w("ColorOSMod", "Xposed service died: $service")
                     scopeObservers.forEach { it.run() }
                     activeHotReloadBatches.forEach { it.serviceDied(service) }
                 }
@@ -459,8 +461,6 @@ private val LOCKSCREEN: List<SettingsItem> = listOf(
 
 private val PURIFICATION: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_system_settings_group),
-    SwitchItem(PlayStoreUpdatePolicy.KEY, R.string.ui_preserve_play_store_update,
-        rootBacked = true, masterManaged = false),
     SelectItem("about_device_card_style", R.string.ui_about_device_card,
         listOf(R.string.ui_about_card_default, R.string.ui_about_card_coloros17, R.string.ui_about_card_coloros161, R.string.ui_about_card_coloros16, R.string.ui_about_card_coloros15,
             R.string.ui_about_card_oxygenos, R.string.ui_about_card_oxygenos15, R.string.ui_about_card_realme16, R.string.ui_about_card_realme15, R.string.ui_about_card_mod),
@@ -473,6 +473,9 @@ private val PURIFICATION: List<SettingsItem> = listOf(
     SwitchItem("installer_disable_virus_scan", R.string.installer_disable_virus_scan),
     SwitchItem("installer_hide_finish_suggestions", R.string.installer_hide_finish_suggestions),
     SwitchItem("installer_show_first_header", R.string.installer_show_first_header),
+    SwitchItem(PlayStoreUpdatePolicy.KEY, R.string.ui_preserve_play_store_update,
+        developerConfirmedSubtitle = R.string.ui_preserve_play_store_update_subtitle,
+        rootBacked = true, masterManaged = false, masterEnableAllowed = false),
     GroupTitleItem(R.string.store_group),
     SwitchItem("store_block_splash", R.string.store_block_splash),
     SwitchItem("store_hide_featured", R.string.store_hide_featured),
@@ -1221,6 +1224,7 @@ internal fun launchApp(ctx: Context, command: String) {
 }
 
 private const val HOT_RELOAD_TIMEOUT_MS = 30_000L
+private const val HOT_RELOAD_SERVICE_WAIT_MS = 3_000L
 private val hotReloadBusy = AtomicBoolean(false)
 private val activeHotReloadBatches: MutableSet<HotReloadBatch> =
     java.util.Collections.newSetFromMap(ConcurrentHashMap<HotReloadBatch, Boolean>())
@@ -1238,6 +1242,8 @@ private class HotReloadBatch(private val context: Context) {
     private var refused = 0
     private var frameworkFailed = 0
     private var unsupported = 0
+    private var unsupportedServiceApi = 0
+    private val unsupportedTargets = linkedSetOf<String>()
     private var inProgress = 0
     private var processDied = 0
     private var submissionFailed = 0
@@ -1270,8 +1276,15 @@ private class HotReloadBatch(private val context: Context) {
     }
 
     fun recordUnsupportedService(service: XposedService, apiVersion: Int) {
-        synchronized(lock) { unsupported++ }
-        Log.e("ColorOSMod", "hot reload outcome: unsupported service api=$apiVersion service=$service")
+        synchronized(lock) { unsupportedServiceApi++ }
+        val framework = runCatching {
+            "${service.frameworkName} ${service.frameworkVersion} (${service.frameworkVersionCode})"
+        }.getOrDefault(service.toString())
+        val scope = runCatching { service.scope.joinToString() }.getOrDefault("unavailable")
+        Log.e(
+            "ColorOSMod",
+            "hot reload unsupported: service api=$apiVersion framework=$framework scope=[$scope]",
+        )
     }
 
     fun closeSubmissions() {
@@ -1291,7 +1304,7 @@ private class HotReloadBatch(private val context: Context) {
             if (finished || remaining != 0) return
             finished = true
             submissionsClosed = true
-            if (queryFailed > 0 || unsupported > 0) {
+            if (queryFailed > 0 || unsupported > 0 || unsupportedServiceApi > 0) {
                 summaryLocked()
             } else {
                 context.getString(R.string.ui_reload_no_targets)
@@ -1324,7 +1337,10 @@ private class HotReloadBatch(private val context: Context) {
                     HotReloadResult.Status.FAILED -> {
                         if (message == null) refused++ else frameworkFailed++
                     }
-                    HotReloadResult.Status.UNSUPPORTED -> unsupported++
+                    HotReloadResult.Status.UNSUPPORTED -> {
+                        unsupported++
+                        unsupportedTargets += pending.targetLabel
+                    }
                     HotReloadResult.Status.IN_PROGRESS -> inProgress++
                     HotReloadResult.Status.PROCESS_DIED -> processDied++
                 }
@@ -1408,6 +1424,15 @@ private class HotReloadBatch(private val context: Context) {
         if (refused > 0) parts += context.getString(R.string.ui_reload_refused, refused)
         if (frameworkFailed > 0) parts += context.getString(R.string.ui_reload_framework_failed, frameworkFailed)
         if (unsupported > 0) parts += context.getString(R.string.ui_reload_unsupported, unsupported)
+        if (unsupportedTargets.isNotEmpty()) {
+            parts += context.getString(
+                R.string.ui_reload_unsupported_targets,
+                unsupportedTargets.joinToString(context.getString(R.string.ui_reload_separator)),
+            )
+        }
+        if (unsupportedServiceApi > 0) {
+            parts += context.getString(R.string.ui_reload_api_unsupported, unsupportedServiceApi)
+        }
         if (inProgress > 0) parts += context.getString(R.string.ui_reload_in_progress, inProgress)
         if (processDied > 0) parts += context.getString(R.string.ui_reload_process_died, processDied)
         if (submissionFailed > 0) parts += context.getString(R.string.ui_reload_submission_failed, submissionFailed)
@@ -1423,15 +1448,26 @@ private fun requestHotReloadAll(ctx: Context) {
         Toast.makeText(appContext, appContext.getString(R.string.ui_reload_processing), Toast.LENGTH_SHORT).show()
         return
     }
-    val services = MainActivity.xposedServices.toList()
-    if (services.isEmpty()) {
-        hotReloadBusy.set(false)
-        Toast.makeText(appContext, appContext.getString(R.string.ui_xposed_unavailable), Toast.LENGTH_SHORT).show()
-        return
-    }
-    val batch = HotReloadBatch(appContext)
-    activeHotReloadBatches.add(batch)
+    showHotReloadToast(appContext, appContext.getString(R.string.ui_reload_processing))
     Thread({
+        val deadline = System.currentTimeMillis() + HOT_RELOAD_SERVICE_WAIT_MS
+        while (MainActivity.xposedServices.isEmpty() && System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(50L)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                break
+            }
+        }
+        val services = MainActivity.xposedServices.toList()
+        if (services.isEmpty()) {
+            hotReloadBusy.set(false)
+            Log.e("ColorOSMod", "Xposed service unavailable after ${HOT_RELOAD_SERVICE_WAIT_MS}ms wait")
+            showHotReloadToast(appContext, appContext.getString(R.string.ui_xposed_unavailable))
+            return@Thread
+        }
+        val batch = HotReloadBatch(appContext)
+        activeHotReloadBatches.add(batch)
         try {
             val work = ArrayList<Pair<XposedService, HookedTarget>>()
             services.forEach { service ->

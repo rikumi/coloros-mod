@@ -188,7 +188,7 @@
     <string name="ui_disabled_apps_export_title">"Export disabled apps as a script"</string>
     <string name="ui_disabled_apps_export_hint">"Export disabled or uninstalled system apps as a reusable script. Please note:\n1. Depending on how the apps were disabled, the exported script may still require adb root.\n2. The information retrieved by the module may be inaccurate, so the script could cause system crashes or instability. <annotation warning="fresh_system">Always run it on a freshly installed system without user data</annotation>."</string>
     <string name="ui_restore_theme_failed">"Original theme restore failed: %1$s"</string>
-    <string name="ui_reload_scope_count">"Hot reload in progress: %1$d scopes"</string>
+    <string name="ui_reload_scope_count">"Hot reload in progress: %1$d processes"</string>
     <string name="ui_reload_summary">"Hot reload: %1$s"</string>
     <string name="ui_reload_empty">"No results"</string>
     <string name="ui_reload_separator">", "</string>
@@ -196,6 +196,8 @@
     <string name="ui_reload_refused">"Refused by module: %1$d"</string>
     <string name="ui_reload_framework_failed">"Framework failed: %1$d"</string>
     <string name="ui_reload_unsupported">"Unsupported: %1$d"</string>
+    <string name="ui_reload_unsupported_targets">"Unsupported processes: %1$s"</string>
+    <string name="ui_reload_api_unsupported">"Framework API below 102; hot reload unavailable for %1$d services"</string>
     <string name="ui_reload_in_progress">"In progress: %1$d"</string>
     <string name="ui_reload_process_died">"Process exited: %1$d"</string>
     <string name="ui_reload_submission_failed">"Submission failed: %1$d"</string>

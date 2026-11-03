@@ -844,7 +844,8 @@ private fun SettingsSwitchRow(
     onItemChanged: () -> Unit,
 ) {
     if (item.key == PlayStoreUpdatePolicy.KEY) {
-        PlayStoreUpdateRow(ctx, onItemChanged)
+        PlayStoreUpdateRow(ctx, onItemChanged,
+            developerConfirmedSubtitle = item.developerConfirmedSubtitle?.let { ctx.getString(it) })
         return
     }
     if (item.key == InstallerSettings.RESTORE) {

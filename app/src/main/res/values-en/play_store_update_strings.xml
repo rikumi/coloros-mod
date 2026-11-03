@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="ui_preserve_play_store_update">Prevent Google Play Store from reverting to its preinstalled version</string>
-    <string name="ui_play_store_update_restart">Setting saved. Restart Zygote to apply.</string>
+    <string name="ui_preserve_play_store_update">Prevent automatic Play Store uninstall after restart</string>
+    <string name="ui_play_store_update_restart">Setting saved. Restart to apply.</string>
     <string name="ui_play_store_update_failed">Could not save the setting. Check root access.</string>
+    <string name="ui_preserve_play_store_update_subtitle">Prevent system self-repair from uninstalling Play Store. Remains effective after root access is lost.</string>
 </resources>

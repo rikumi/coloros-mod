@@ -1222,7 +1222,8 @@ public class XposedInit extends XposedModule {
                 || "net.oneplus.weather".equals(packageName)
                 || "com.heytap.market".equals(packageName)
                 || "com.android.packageinstaller".equals(packageName)
-                || "com.android.providers.media.module".equals(packageName);
+                || "com.android.providers.media.module".equals(packageName)
+                || "com.oplus.athena".equals(packageName);
     }
 
     @Override
@@ -1272,6 +1273,8 @@ public class XposedInit extends XposedModule {
             WallpapersHooks.hookWallpapers(lpparam);
         } else if ("com.android.providers.media.module".equals(lpparam.packageName)) {
             MediaProviderHooks.hookMediaProvider(lpparam);
+        } else if ("com.oplus.athena".equals(lpparam.packageName)) {
+            com.rikumi.colorosmod.hooks.RecentsClearMemoryHooks.hookAthena(lpparam);
         } else if ("android".equals(lpparam.packageName)) {
             com.rikumi.colorosmod.hooks.PlayStoreUpdateHooks.hook(lpparam);
             com.rikumi.colorosmod.hooks.SystemFontHooks.hook(lpparam);
