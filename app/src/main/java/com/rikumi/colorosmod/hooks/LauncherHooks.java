@@ -1904,34 +1904,7 @@ public final class LauncherHooks {
     }
 
     public static void hookRecentsHideFreeform(final XC_LoadPackage.LoadPackageParam lpparam) {
-        try {
-            Class<?> groupedTaskInfo = findLauncherGroupedTaskInfo(lpparam.classLoader);
-            final String flag = KEY_RECENTS_HIDE_FREEFORM_ENABLED;
-            XposedHelpers.findAndHookMethod(
-                    "com.oplus.quickstep.data.OplusRecentTasksFilter",
-                    lpparam.classLoader, "filterTaskInfo",
-                    int.class, int.class,
-                    groupedTaskInfo,
-                    java.util.ArrayList.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
-                            try {
-                                if (!readBool(flag, false)) return;
-                                Object gti = param.args[2];
-                                if (gti == null) return;
-                                Object taskInfo = XposedHelpers.callMethod(gti, "getTaskInfo1");
-                                if (taskInfo == null) return;
-                                if (isFlexibleFloatingWindow(lpparam.classLoader, taskInfo)) {
-                                    param.setResult(true); // 剔除该小窗任务卡片
-                                }
-                            } catch (Throwable ignored) { }
-                        }
-                    });
-            log("HOOK OK OplusRecentTasksFilter#filterTaskInfo (recents hide freeform)");
-        } catch (Throwable t) {
-            log("HOOK FAIL OplusRecentTasksFilter#filterTaskInfo :: " + Log.getStackTraceString(t));
-        }
+        RecentsHideFreeformHooks.hook(lpparam);
     }
 
     public static void hookRecentsHideNotRunning(final XC_LoadPackage.LoadPackageParam lpparam) {
@@ -2279,6 +2252,13 @@ public final class LauncherHooks {
             Object r = XposedHelpers.callStaticMethod(taskUtils, "isFlexibleFloatingWindow",
                     new Class[]{android.app.TaskInfo.class}, taskInfo);
             if (r instanceof Boolean) return (Boolean) r;
+        } catch (Throwable ignored) { }
+        // ColorOS 17 mixes this TaskUtils class name. Use its exact native
+        // predicate; flexible tasks need not use WINDOWING_MODE_FREEFORM.
+        try {
+            Class<?> manager = XposedHelpers.findClass("com.oplus.flexiblewindow.FlexibleWindowManager", cl);
+            Object instance = XposedHelpers.callStaticMethod(manager, "getInstance");
+            return ((Number) XposedHelpers.callMethod(instance, "getFlexibleWindowState", taskInfo)).intValue() == 1;
         } catch (Throwable ignored) { }
         // 兜底: 直接按窗口模式判定(WINDOWING_MODE_FREEFORM=5)
         try {

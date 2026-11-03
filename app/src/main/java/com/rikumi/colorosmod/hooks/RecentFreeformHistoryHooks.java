@@ -19,6 +19,7 @@ public final class RecentFreeformHistoryHooks {
     private static final Object RECORD_LOCK = new Object();
     private static Object generation = new Object();
     private static boolean lastEnabled;
+    private static boolean lastHideActive;
     private static volatile WeakReference<Object> taskNotifications = new WeakReference<>(null);
 
     public static void onSettingsSnapshotPublished(Map<String, Integer> settings) {
@@ -27,7 +28,9 @@ public final class RecentFreeformHistoryHooks {
         boolean changed;
         synchronized (RECORD_LOCK) {
             if (!next) generation = new Object();
-            changed = lastEnabled != next;
+            boolean hideActive = Integer.valueOf(1).equals(settings.get(KEY_RECENTS_HIDE_FREEFORM_ENABLED));
+            changed = lastEnabled != next || lastHideActive != hideActive;
+            lastHideActive = hideActive;
             lastEnabled = next;
         }
         if (changed) notifyRecentTasksChanged();
