@@ -19,13 +19,25 @@ public final class WifiBssidHooks {
     private static volatile JSONArray cached = new JSONArray();
     private static long loadedAt;
     private static volatile boolean active;
+    private static android.os.FileObserver policyObserver;
 
     public static void cleanupForHotReload() {
         active = false;
+        if (policyObserver != null) { policyObserver.stopWatching(); policyObserver = null; }
+        WifiBssidRoaming.cleanup();
         WifiBssidConnection.clearBypass();
     }
 
     private static final JSONArray EMPTY_RULES = new JSONArray();
+
+    public static void refresh() {
+        synchronized (WifiBssidHooks.class) { loadedAt = 0; }
+        WifiBssidRoaming.refresh();
+    }
+
+    static JSONObject ruleFor(Object config) throws ReflectiveOperationException {
+        return !active || config == null ? null : WifiBssidPolicy.find(rules(), WifiBssidPolicy.profile(config));
+    }
 
     private static synchronized JSONArray rules() {
         if (!readBoolCached(KEY_WIFI_AP_FILTER_ENABLED, false)) return EMPTY_RULES;
@@ -160,6 +172,7 @@ public final class WifiBssidHooks {
                 count++;
             }
             if (count == 0) throw new NoSuchMethodException("WiFi candidate insertion");
+            WifiBssidRoaming.install(loader, installed, candidateHooks);
             File directory = new File(WifiBssidPolicy.DIRECTORY);
             if (!directory.isDirectory() && !directory.mkdir()) throw new java.io.IOException("WiFi policy directory unavailable");
             android.system.Os.chmod(directory.getPath(), 0700);
@@ -200,8 +213,17 @@ public final class WifiBssidHooks {
             new File(WifiBssidPolicy.DIRECTORY, "filter.pid").delete();
             new File(WifiBssidPolicy.DIRECTORY, "filter.pid.error").delete();
             active = true;
+            policyObserver = new android.os.FileObserver(directory,
+                    android.os.FileObserver.CLOSE_WRITE | android.os.FileObserver.MOVED_TO | android.os.FileObserver.DELETE) {
+                @Override public void onEvent(int event, String path) {
+                    if ("bssid-rules.json".equals(path)) refresh();
+                }
+            };
+            policyObserver.startWatching();
             log("WiFi BSSID automatic candidate filters installed");
         } catch (Throwable error) {
+            active = false;
+            if (policyObserver != null) { policyObserver.stopWatching(); policyObserver = null; }
             for (XC_MethodHook.Unhook hook : installed) hook.unhook();
             for (var hook : candidateHooks) hook.unhook();
             LOADERS.remove(loader);

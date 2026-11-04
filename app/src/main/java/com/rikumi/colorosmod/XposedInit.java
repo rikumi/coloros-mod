@@ -534,6 +534,7 @@ public class XposedInit extends XposedModule {
         com.rikumi.colorosmod.hooks.SystemIconPackHooks.onSettingsSnapshotPublished();
         if (sIsSystemServer) {
             com.rikumi.colorosmod.hooks.RecentFreeformHistoryHooks.onSettingsSnapshotPublished(all);
+            com.rikumi.colorosmod.hooks.WifiBssidHooks.refresh();
         }
         if ("com.android.settings".equals(sHookedPackageName)) {
             SettingsHooks.onSettingsSnapshotPublished();
