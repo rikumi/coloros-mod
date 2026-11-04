@@ -29,8 +29,21 @@ public final class GestureHooks {
 
     static final float ROTATION_BUTTON_MARGIN_DP = 12f;
 
-    static final java.util.WeakHashMap<Object, Boolean> sBarExtraApplied =
+    static final java.util.WeakHashMap<Object, Integer> sBarExtraApplied =
             new java.util.WeakHashMap<>();
+    private static boolean sGestureBarHeightActive;
+    private static ClassLoader sGestureBarHeightLoader;
+    private static final java.util.WeakHashMap<View, GestureBarLengthState> GESTURE_BAR_LENGTHS =
+            new java.util.WeakHashMap<>();
+
+    private static final class GestureBarLengthState {
+        int nativeWidth, nativeGravity, appliedWidth;
+        boolean applied;
+        GestureBarLengthState(android.widget.LinearLayout.LayoutParams params) {
+            nativeWidth = params.width;
+            nativeGravity = params.gravity;
+        }
+    }
 
     public static void hookRotationButtonNativePosition(
             final XC_LoadPackage.LoadPackageParam lpparam) {
@@ -286,7 +299,44 @@ public final class GestureHooks {
     public static void onGestureTouchSettingsChanged() {
         GESTURE_TOUCH_MAIN.removeCallbacks(REFRESH_GESTURE_TOUCH);
         GESTURE_TOUCH_MAIN.post(REFRESH_GESTURE_TOUCH);
+        GESTURE_TOUCH_MAIN.removeCallbacks(REFRESH_GESTURE_HEIGHT);
+        GESTURE_TOUCH_MAIN.post(REFRESH_GESTURE_HEIGHT);
     }
+
+    private static int gestureBarExtraPx() {
+        return sGestureBarHeightActive && readBool(KEY_GESTURE_BAR_HEIGHT_ENABLED, false)
+                ? Math.round(Math.max(0, Math.min(24, readInt(KEY_GESTURE_BAR_HEIGHT_DP, 12))) * readDensity()) : 0;
+    }
+
+    private static final Runnable REFRESH_GESTURE_HEIGHT = () -> {
+        for (View handle : new java.util.ArrayList<>(GESTURE_BAR_LENGTHS.keySet())) {
+            applyGestureBarWidth(handle);
+            handle.invalidate();
+        }
+        if (sGestureBarHeightActive && sBarExtraApplied.isEmpty() && sGestureBarHeightLoader != null) {
+            try {
+                Class<?> dependency = XposedHelpers.findClass("com.android.systemui.Dependency", sGestureBarHeightLoader);
+                Class<?> type = XposedHelpers.findClass(
+                        "com.android.systemui.navigationbar.NavigationBarController", sGestureBarHeightLoader);
+                Object container = XposedHelpers.getStaticObjectField(dependency, "sDependency");
+                Object controller = XposedHelpers.callMethod(container, "getDependencyInner", type);
+                Object bar = XposedHelpers.callMethod(controller, "getDefaultNavigationBar");
+                if (bar != null) sBarExtraApplied.put(bar, -1);
+            } catch (Throwable ignored) { /* Initial creation will register the native owner. */ }
+        }
+        int extra = gestureBarExtraPx();
+        for (Object bar : new java.util.ArrayList<>(sBarExtraApplied.keySet())) {
+            if (java.util.Objects.equals(sBarExtraApplied.get(bar), extra)) continue;
+            try {
+                View view = (View) XposedHelpers.getObjectField(bar, "mView");
+                if (view == null || !view.isAttachedToWindow()) continue;
+                int rotation = view.getDisplay().getRotation();
+                XposedHelpers.callMethod(bar, "repositionNavigationBar", rotation);
+                View handle = findHandleInTree(view);
+                if (handle != null) handle.invalidate();
+            } catch (Throwable error) { log("gesture bar height refresh failed: " + error); }
+        }
+    };
 
     private static boolean isNavigationFrame(View view) {
         String name = view.getClass().getName();
@@ -1179,6 +1229,10 @@ public final class GestureHooks {
     }
 
     public static void cleanupForHotReload() {
+        sGestureBarHeightActive = false;
+        GESTURE_TOUCH_MAIN.removeCallbacks(REFRESH_GESTURE_HEIGHT);
+        REFRESH_GESTURE_HEIGHT.run();
+        GESTURE_BAR_LENGTHS.clear();
         sGestureTouchHooksActive = false;
         GESTURE_TOUCH_MAIN.removeCallbacks(REFRESH_GESTURE_TOUCH);
         for (View root : new java.util.ArrayList<>(GESTURE_TOUCH_WINDOWS.keySet())) {
@@ -1219,6 +1273,7 @@ public final class GestureHooks {
         }
         XposedHelpers.removeTrackedViewChildren("mback_surface", "gesture_block_surface");
         sBarExtraApplied.clear();
+        sGestureBarHeightLoader = null;
         sImeVisible = false;
         sGestureBarHeightPx = -1;
         sGestureBarHandleBottomPx = -1;
@@ -1483,6 +1538,8 @@ public final class GestureHooks {
     }
 
     public static void hookGestureBarHeight(final XC_LoadPackage.LoadPackageParam lpparam) {
+        sGestureBarHeightActive = true;
+        sGestureBarHeightLoader = lpparam.classLoader;
         try {
             Class<?> navBarClass = findNavigationBarClass(lpparam.classLoader);
             XposedHelpers.findAndHookMethod(navBarClass, "getBarLayoutParams", int.class,
@@ -1490,10 +1547,8 @@ public final class GestureHooks {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             try {
-                                if (readInt(KEY_GESTURE_BAR_HEIGHT_ENABLED, 0) != 1) return;
-                                int dp = Math.max(0, Math.min(24,
-                                        readInt(KEY_GESTURE_BAR_HEIGHT_DP, 12)));
-                                int extraPx = Math.round(dp * readDensity());
+                                int extraPx = gestureBarExtraPx();
+                                sBarExtraApplied.put(param.thisObject, extraPx);
                                 android.view.WindowManager.LayoutParams lp =
                                         (android.view.WindowManager.LayoutParams) param.getResult();
                                 if (lp == null || extraPx <= 0) return;
@@ -1516,6 +1571,7 @@ public final class GestureHooks {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
+                                applyGestureBarWidth((View) param.thisObject);
                                 int half = getGestureBarCanvasLiftPx();
                                 if (half <= 0) return;
                                 android.graphics.Canvas c = (android.graphics.Canvas) param.args[0];
@@ -1566,23 +1622,41 @@ public final class GestureHooks {
     }
 
     static int getGestureBarCanvasLiftPx() {
-        if (readInt(KEY_GESTURE_BAR_HEIGHT_ENABLED, 0) != 1) return 0;
-        int dp = 10;
-        if (dp <= 0) return 0;
-        return Math.round(dp * readDensity() * 0.5f);
+        return Math.round(gestureBarExtraPx() * 0.5f);
     }
 
     static void applyGestureBarWidth(android.view.View view) {
         try {
-            if (readInt(KEY_GESTURE_BAR_WIDTH_ENABLED, 0) != 1) return;
-            int dp = Math.max(80, Math.min(120,
-                    readInt(KEY_GESTURE_BAR_WIDTH_DP, 100)));
-            int width = Math.round(dp * readDensity());
             android.view.ViewGroup.LayoutParams raw = view.getLayoutParams();
             if (!(raw instanceof android.widget.LinearLayout.LayoutParams)) return;
             android.widget.LinearLayout.LayoutParams lp =
                     (android.widget.LinearLayout.LayoutParams) raw;
+            GestureBarLengthState state = GESTURE_BAR_LENGTHS.get(view);
+            if (state == null) {
+                state = new GestureBarLengthState(lp);
+                GESTURE_BAR_LENGTHS.put(view, state);
+            } else if (!state.applied || (lp.width != state.appliedWidth
+                    || lp.gravity != android.view.Gravity.CENTER)) {
+                state.nativeWidth = lp.width;
+                state.nativeGravity = lp.gravity;
+                state.applied = false;
+            }
+            if (!sGestureBarHeightActive || !readBool(KEY_GESTURE_BAR_WIDTH_ENABLED, false)) {
+                if (state.applied) {
+                    android.widget.LinearLayout.LayoutParams restored = new android.widget.LinearLayout.LayoutParams(lp);
+                    restored.width = state.nativeWidth;
+                    restored.gravity = state.nativeGravity;
+                    view.setLayoutParams(restored);
+                    state.applied = false;
+                }
+                return;
+            }
+            int dp = Math.max(80, Math.min(120, readInt(KEY_GESTURE_BAR_WIDTH_DP, 100)));
+            int width = Math.round(dp * view.getResources().getDisplayMetrics().density);
+            state.appliedWidth = width;
+            state.applied = true;
             if (lp.width == width && lp.gravity == android.view.Gravity.CENTER) return;
+            lp = new android.widget.LinearLayout.LayoutParams(lp);
             lp.width = width;
             lp.gravity = android.view.Gravity.CENTER;
             view.setLayoutParams(lp);
@@ -1592,8 +1666,9 @@ public final class GestureHooks {
     }
 
     static void applyBarExtra(android.view.WindowManager.LayoutParams lp, int extraPx) {
-        lp.height += extraPx;
-        bumpInsetsIfPresent(lp, extraPx);
+        java.util.Set<android.view.WindowManager.LayoutParams> seen = java.util.Collections.newSetFromMap(
+                new java.util.IdentityHashMap<>());
+        applyBottomBarExtra(lp, extraPx, seen);
         try {
             java.lang.reflect.Field f = lp.getClass().getField("paramsForRotation");
             Object arr = f.get(lp);
@@ -1601,13 +1676,20 @@ public final class GestureHooks {
                 for (Object o : (Object[]) arr) {
                     if (o instanceof android.view.WindowManager.LayoutParams) {
                         android.view.WindowManager.LayoutParams p = (android.view.WindowManager.LayoutParams) o;
-                        p.height += extraPx;
-                        bumpInsetsIfPresent(p, extraPx);
+                        applyBottomBarExtra(p, extraPx, seen);
                     }
                 }
             }
         } catch (Throwable ignored) {
         }
+    }
+
+    private static void applyBottomBarExtra(android.view.WindowManager.LayoutParams lp, int extraPx,
+            java.util.Set<android.view.WindowManager.LayoutParams> seen) {
+        if (!seen.add(lp) || lp.height <= 0 || extraPx <= 0
+                || (lp.gravity & android.view.Gravity.VERTICAL_GRAVITY_MASK) != android.view.Gravity.BOTTOM) return;
+        lp.height += extraPx;
+        bumpInsetsIfPresent(lp, extraPx);
     }
 
     static void bumpInsetsIfPresent(android.view.WindowManager.LayoutParams lp, int extraPx) {

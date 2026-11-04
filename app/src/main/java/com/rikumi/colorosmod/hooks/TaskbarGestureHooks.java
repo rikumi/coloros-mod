@@ -37,6 +37,7 @@ public final class TaskbarGestureHooks {
     private static final int EDGE_FROM_GESTURE = 512;
     private static final Map<View, HandleState> HANDLES = new IdentityHashMap<>();
     private static final Map<Object, Insets[]> APPLIED_INSETS = new IdentityHashMap<>();
+    private static final Map<Object, Object> INSETS_CONTROLLERS = new IdentityHashMap<>();
     private static final Set<WindowManager.LayoutParams> SLIPPERY_OVERRIDES =
             Collections.newSetFromMap(new IdentityHashMap<>());
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
@@ -53,14 +54,16 @@ public final class TaskbarGestureHooks {
                 TASKBAR + "StashedHandleViewController", lpparam.classLoader);
         if (controller == null) return;
         active = true;
-        XposedBridge.hookAllMethods(controller, "init", new XC_MethodHook() {
+        XC_MethodHook initialized = new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam param) {
                 if (!param.hasThrowable()) register(param.thisObject);
             }
-        });
+        };
+        XposedBridge.hookAllMethods(controller, "init", initialized);
         Class<?> oplus = XposedHelpers.findClassIfExists(
                 TASKBAR + "stashedhandleview.OplusStashedHandleViewController", lpparam.classLoader);
         if (oplus != null) {
+            XposedBridge.hookAllMethods(oplus, "init", initialized);
             XposedBridge.hookAllMethods(oplus, "startPressAnimation", new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam param) {
                     if (readBool(KEY_GESTURE_BAR_LONG_PRESS_DISABLE_ENABLED, true)
@@ -79,13 +82,18 @@ public final class TaskbarGestureHooks {
         if (oplus != null) XposedBridge.hookAllMethods(oplus, "onDestroy", destroy);
         hookInsets(lpparam.classLoader);
         hookInput(lpparam.classLoader);
-        hookWindowTouchFlags();
+        hookWindowTouchFlags(lpparam.classLoader);
     }
 
-    private static void hookWindowTouchFlags() {
+    private static void hookWindowTouchFlags(ClassLoader loader) {
+        Class<?> dragLayer = XposedHelpers.findClassIfExists(TASKBAR + "TaskbarDragLayer", loader);
         XC_MethodHook callback = new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam param) {
                 if (!(param.args[1] instanceof WindowManager.LayoutParams)) return;
+                if (param.args[0] instanceof View view && dragLayer != null && dragLayer.isInstance(view)) {
+                    try { applyTaskbarHeight(view.getContext(), param.args[1]); }
+                    catch (Throwable t) { log("taskbar final height update failed: " + t); }
+                }
                 for (HandleState state : HANDLES.values()) {
                     if (state.host != param.args[0]) continue;
                     try {
@@ -131,18 +139,26 @@ public final class TaskbarGestureHooks {
     private static void hookInsets(ClassLoader loader) {
         try {
             Class<?> insets = XposedHelpers.findClass(TASKBAR + "TaskbarInsetsController", loader);
+            XposedBridge.hookAllMethods(insets, "init", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    if (param.hasThrowable()) return;
+                    Object context = XposedHelpers.getObjectField(param.thisObject, "context");
+                    INSETS_CONTROLLERS.put(context, param.thisObject);
+                    scheduleRefresh();
+                }
+            });
+            XposedBridge.hookAllMethods(insets, "onDestroy", new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam param) {
+                    Object context = XposedHelpers.getObjectField(param.thisObject, "context");
+                    INSETS_CONTROLLERS.remove(context);
+                }
+            });
             XposedHelpers.findAndHookMethod(TASKBAR + "TaskbarActivityContext", loader,
                     "notifyUpdateLayoutParams", new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam param) {
                             try {
-                                int extra = isGestureNav(param.thisObject)
-                                        ? extraHeight((android.content.Context) param.thisObject) : 0;
                                 Object params = XposedHelpers.callMethod(param.thisObject, "getWindowLayoutParams");
-                                updateProvidedInsets(params, extra);
-                                Object[] rotations = (Object[]) XposedHelpers.getObjectField(params, "paramsForRotation");
-                                if (rotations != null) for (Object rotation : rotations) {
-                                    if (rotation != null) updateProvidedInsets(rotation, extra);
-                                }
+                                applyTaskbarHeight(param.thisObject, params);
                             } catch (Throwable t) { log("taskbar gesture height failed: " + t); }
                         }
                     });
@@ -167,6 +183,16 @@ public final class TaskbarGestureHooks {
                         }
                     });
         } catch (Throwable t) { log("taskbar gesture insets hook failed: " + t); }
+    }
+
+    private static void applyTaskbarHeight(Object context, Object params) {
+        if (params == null) return;
+        int extra = active && isGestureNav(context) ? extraHeight((android.content.Context) context) : 0;
+        updateProvidedInsets(params, extra);
+        Object[] rotations = (Object[]) XposedHelpers.getObjectField(params, "paramsForRotation");
+        if (rotations != null) for (Object rotation : rotations) {
+            if (rotation != null) updateProvidedInsets(rotation, extra);
+        }
     }
 
     private static void updateProvidedInsets(Object params, int extra) {
@@ -384,6 +410,12 @@ public final class TaskbarGestureHooks {
     }
 
     private static void refresh() {
+        // Insets exist before the handle's outline. Do not make height refresh
+        // depend on successful handle registration or on a visible handle.
+        for (Object insets : new ArrayList<>(INSETS_CONTROLLERS.values())) {
+            try { XposedHelpers.callMethod(insets, "onTaskbarWindowHeightOrInsetsChanged"); }
+            catch (Throwable t) { log("taskbar height refresh failed: " + t); }
+        }
         for (HandleState state : new ArrayList<>(HANDLES.values())) {
             state.syncWindowTouchFlags();
             try {
@@ -392,18 +424,27 @@ public final class TaskbarGestureHooks {
                 state.host.requestLayout();
                 Object controllers = XposedHelpers.getObjectField(state.controller, "mControllers");
                 Object insets = XposedHelpers.getObjectField(controllers, "taskbarInsetsController");
-                XposedHelpers.callMethod(insets, "onTaskbarWindowHeightOrInsetsChanged");
+                if (!INSETS_CONTROLLERS.containsValue(insets))
+                    XposedHelpers.callMethod(insets, "onTaskbarWindowHeightOrInsetsChanged");
             } catch (Throwable t) { log("taskbar gesture refresh failed: " + t); }
         }
         if (!readBool(KEY_MBACK_ENABLED, false)) abortPendingGesture();
     }
 
     public static Object captureControllers() {
-        return HANDLES.values().stream().map(state -> state.controller).toArray();
+        ArrayList<Object> controllers = new ArrayList<>(INSETS_CONTROLLERS.values());
+        for (HandleState state : HANDLES.values()) controllers.add(state.controller);
+        return controllers.toArray();
     }
 
     public static void restoreControllers(Object saved) {
-        if (saved instanceof Object[]) for (Object controller : (Object[]) saved) register(controller);
+        if (saved instanceof Object[]) for (Object controller : (Object[]) saved) {
+            if (controller.getClass().getName().equals(TASKBAR + "TaskbarInsetsController")) {
+                Object context = XposedHelpers.getObjectField(controller, "context");
+                INSETS_CONTROLLERS.put(context, controller);
+            } else register(controller);
+        }
+        scheduleRefresh();
     }
 
     public static void cleanupForHotReload() {
@@ -411,6 +452,7 @@ public final class TaskbarGestureHooks {
         MAIN.removeCallbacks(REFRESH);
         cancelPendingTouch();
         refresh();
+        INSETS_CONTROLLERS.clear();
         for (View handle : new ArrayList<>(HANDLES.keySet())) remove(handle);
         APPLIED_INSETS.clear();
         for (WindowManager.LayoutParams params : new ArrayList<>(SLIPPERY_OVERRIDES)) {
@@ -589,6 +631,10 @@ public final class TaskbarGestureHooks {
         }
 
         @Override public boolean onPreDraw() {
+            if (active && handle.getOutlineProvider() != outline) {
+                register(controller);
+                return true;
+            }
             syncWindowTouchFlags();
             if (isUsable() && readBool(KEY_MBACK_ENABLED, false)) {
                 GestureHooks.updateMBackSurface(handle);

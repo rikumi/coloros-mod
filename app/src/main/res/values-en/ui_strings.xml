@@ -97,7 +97,7 @@
     <string name="ui_animation_scale">"Global animation duration"</string>
     <string name="ui_unit_multiplier">"×"</string>
     <string name="ui_gesture_visual">"Gesture appearance"</string>
-    <string name="ui_gesture_bar_width">"Adjust gesture bar width"</string>
+    <string name="ui_gesture_bar_width">"Adjust gesture bar length"</string>
     <string name="ui_gesture_bar_animation">"Disable gesture bar animations"</string>
     <string name="ui_gesture_bar_animation_hint">"Remove assistant animations on OxygenOS."</string>
     <string name="ui_recents_switching">"Recent apps"</string>

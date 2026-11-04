@@ -98,7 +98,7 @@
     <string name="ui_animation_scale">"微调系统动画时长"</string>
     <string name="ui_unit_multiplier">"倍"</string>
     <string name="ui_gesture_visual">"手势视觉"</string>
-    <string name="ui_gesture_bar_width">"调整手势滑动条宽度"</string>
+    <string name="ui_gesture_bar_width">"调整手势条长度"</string>
     <string name="ui_gesture_bar_animation">"禁止手势条动画效果"</string>
     <string name="ui_gesture_bar_animation_hint">"理论可解决 OxygenOS 关不掉助手动画的问题"</string>
     <string name="ui_recents_switching">"多任务切换"</string>
