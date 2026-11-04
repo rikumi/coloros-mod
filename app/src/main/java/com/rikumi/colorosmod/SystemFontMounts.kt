@@ -125,9 +125,22 @@ internal object SystemFontMounts {
                             targets.append(path).append('\t').append(file).append('\n')
                         }
                         path.matches(Regex("/system/fonts/colorosmod/[0-9a-f]{64}\\.ttf")) -> {
-                            val bytes = remote(service, name)
-                            require(digest(bytes) == path.substringAfterLast('/').removeSuffix(".ttf"))
-                            write(File(input, "font-${path.substringAfterLast('/')}"), bytes)
+                            val hash = MessageDigest.getInstance("SHA-256")
+                            val file = File(input, "font-${path.substringAfterLast('/')}")
+                            ParcelFileDescriptor.AutoCloseInputStream(service.openRemoteFile(name)).use { source ->
+                                file.outputStream().use { output ->
+                                    val buffer = ByteArray(65536); var total = 0L
+                                    while (true) {
+                                        val count = source.read(buffer); if (count < 0) break
+                                        total += count; require(total <= FontFileInfo.MAX_BYTES)
+                                        output.write(buffer, 0, count); hash.update(buffer, 0, count)
+                                    }
+                                    output.fd.sync()
+                                }
+                            }
+                            val actual = hash.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+                            require(actual == name.substringAfter('_').substringBefore('.'))
+                            require(actual == path.substringAfterLast('/').removeSuffix(".ttf"))
                         }
                         // Native hooks also publish aliases for symlinked partitions; mount each XML once.
                         path == "/system/system_ext/etc/fonts_base.xml"

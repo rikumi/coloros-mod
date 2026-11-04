@@ -8,7 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class FontFileInfo {
-    public static final long MAX_BYTES = 100L * 1024 * 1024;
+    public static final long MAX_BYTES = 256L * 1024 * 1024;
     public static final class Face {
         public int index, weight = 400;
         public boolean italic;
@@ -52,7 +52,7 @@ public final class FontFileInfo {
                 Face face = new Face(); face.index = i;
                 long os2 = -1, head = -1, fvar = -1, name = -1, cmap = -1, hhea = -1, hmtx = -1;
                 long os2Len = 0, headLen = 0, fvarLen = 0, nameLen = 0, cmapLen = 0, hheaLen = 0, hmtxLen = 0;
-                boolean cbdt = false, cblc = false, colr = false, cpal = false;
+                boolean cbdt = false, cblc = false, colr = false, cpal = false, sbix = false;
                 for (int t = 0; t < count; t++) {
                     f.seek(offset + 12 + t * 16L);
                     int tag = f.readInt(); f.readInt();
@@ -66,8 +66,9 @@ public final class FontFileInfo {
                     if (tag == 0x686d7478) { hmtx = start; hmtxLen = length; }
                     cbdt |= tag == 0x43424454; cblc |= tag == 0x43424c43;
                     colr |= tag == 0x434f4c52; cpal |= tag == 0x4350414c;
+                    sbix |= tag == 0x73626978;
                 }
-                face.color = (cbdt && cblc) || (colr && cpal);
+                face.color = (cbdt && cblc) || (colr && cpal) || sbix;
                 if (os2Len >= 6) {
                     f.seek(os2 + 4); face.weight = Math.max(1, Math.min(1000, f.readUnsignedShort()));
                     if (os2Len >= 64) { f.seek(os2 + 62); face.italic = (f.readUnsignedShort() & 1) != 0; }

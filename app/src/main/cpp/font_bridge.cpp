@@ -209,7 +209,7 @@ int retain(int input) {
             written += result;
         }
         position += count;
-        if (position > 100 * 1024 * 1024) { close(fd); return -1; }
+        if (position > 256 * 1024 * 1024) { close(fd); return -1; }
     }
     if (count < 0 || lseek(fd, 0, SEEK_SET) < 0) { close(fd); return -1; }
     fcntl(fd, F_ADD_SEALS, F_SEAL_WRITE | F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL);

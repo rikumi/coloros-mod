@@ -146,6 +146,7 @@ class MainActivity : ComponentActivity() {
                 applied
             }
         }
+        SystemFontStore.migrateEmojiChoice(this)
         restoreRemovedThemeColor(this)
         if (listenerRegistered.compareAndSet(false, true)) {
             XposedServiceHelper.registerListener(object : XposedServiceHelper.OnServiceListener {
@@ -523,7 +524,7 @@ private val SYSTEM_FONTS: List<SettingsItem> = listOf(
     SelectItem("system_font_zh", R.string.ui_system_font_zh, listOf(R.string.ui_font_default, R.string.ui_font_source_han, R.string.ui_font_custom)),
     SelectItem("system_font_latin", R.string.ui_system_font_latin, listOf(R.string.ui_font_default, R.string.ui_font_inter, R.string.ui_font_manrope, R.string.ui_font_custom)),
     SelectItem("system_font_mono", R.string.ui_system_font_mono, listOf(R.string.ui_font_default, R.string.ui_font_maple, R.string.ui_font_jetbrains, R.string.ui_font_fira, R.string.ui_font_cascadia, R.string.ui_font_custom), defaultValue = -1, optionValues = listOf(-1, 0, 1, 2, 3, 4)),
-    SelectItem("system_font_emoji", R.string.ui_system_font_emoji, listOf(R.string.ui_font_default, R.string.ui_font_emoji_apple, R.string.ui_font_emoji_joypixels, R.string.ui_font_emoji_twitter, R.string.ui_font_emoji_samsung)),
+    SelectItem("system_font_emoji", R.string.ui_system_font_emoji, listOf(R.string.ui_font_default, R.string.ui_font_emoji_apple, R.string.ui_font_emoji_joypixels, R.string.ui_font_emoji_twitter, R.string.ui_font_emoji_samsung, R.string.ui_font_emoji_noto_3d, R.string.ui_font_custom), defaultValue = com.rikumi.colorosmod.hooks.SystemFontHooks.DEFAULT_EMOJI, optionValues = listOf(0, 1, 2, 3, 4, 7, 8)),
     SwitchItem("system_font_disable_replacement", R.string.ui_system_font_disable_replacement, developerConfirmedSubtitle = R.string.ui_system_font_disable_replacement_hint),
     SwitchItem("system_font_mount_enabled", R.string.ui_system_font_mount_enabled, masterManaged = false),
     FontAppsItem(R.string.ui_system_font_mount_apps),

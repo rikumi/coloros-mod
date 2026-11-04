@@ -106,6 +106,7 @@ private val OPEN_SOURCE_COMPONENTS = listOf(
     OpenSourceComponent("JVM runtime dependencies", "https://github.com/rikumi/coloros-mod/blob/master/THIRD_PARTY_NOTICES", "licenses/runtime-NOTICE", "licenses/Apache-2.0"),
     OpenSourceComponent("MaterialKolor", "https://github.com/jordond/MaterialKolor/tree/5.0.0", "licenses/materialkolor-NOTICE", "licenses/materialkolor-LICENSE", "licenses/Apache-2.0"),
     OpenSourceComponent("LLVM libc++ / libc++abi", "https://github.com/llvm/llvm-project", "licenses/native-NOTICE", "licenses/llvm-libc++-NOTICE", "licenses/llvm-libc++abi-NOTICE"),
+    OpenSourceComponent("Noto 3D", "https://github.com/googlefonts/noto-emoji", "licenses/noto-3d-OFL.txt"),
     OpenSourceComponent("Twemoji", "https://github.com/twitter/twemoji", "licenses/twemoji-NOTICE", "licenses/twemoji-LICENSE-GRAPHICS"),
     OpenSourceComponent("Inter", "https://github.com/rsms/inter", "clock_fonts/inter-OFL.txt"),
     OpenSourceComponent("Lato", "https://github.com/latofonts/lato-source", "clock_fonts/lato-OFL.txt"),

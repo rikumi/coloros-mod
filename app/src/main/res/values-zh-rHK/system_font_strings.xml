@@ -23,6 +23,7 @@
     <string name="ui_font_emoji_joypixels">JoyPixels</string>
     <string name="ui_font_emoji_twitter">Twitter</string>
     <string name="ui_font_emoji_samsung">Samsung</string>
+    <string name="ui_font_emoji_noto_3d">Noto 3D</string>
     <string name="ui_system_font_mount_enabled">為 WebView 應用程式掛載字型設定</string>
     <string name="ui_font_emoji_downloading">正在下載 Emoji 字型…</string>
     <string name="ui_font_emoji_ready">字型已就緒，可重新啟動 Zygote 套用</string>
@@ -32,4 +33,20 @@
     <string name="ui_font_show_system">顯示系統</string>
     <string name="ui_font_hide_system">隱藏系統</string>
     <string name="ui_font_all_apps">所有應用程式</string>
+    <string name="ui_font_preparing">正在準備字型…</string>
+    <string name="ui_font_mounting">正在掛載字型…</string>
+    <string name="ui_font_cancelling">正在取消…</string>
+    <string name="ui_font_not_color_emoji">所選字型不包含彩色 Emoji</string>
+    <string name="ui_font_step_cache">正在校驗字型快取…</string>
+    <string name="ui_font_step_request">正在請求 URL…</string>
+    <string name="ui_font_step_zip_directory">正在解析 ZIP 尾部目錄…</string>
+    <string name="ui_font_step_zip_entry">正在定位 ZIP 中的字型…</string>
+    <string name="ui_font_step_zip_header">正在解析 ZIP 檔案標頭…</string>
+    <string name="ui_font_step_decompress">正在解壓字型…</string>
+    <string name="ui_font_step_verify">正在校驗字型完整性…</string>
+    <string name="ui_font_step_parse">正在解析字型…</string>
+    <string name="ui_font_step_save">正在儲存字型快取…</string>
+    <string name="ui_font_step_publish">正在發佈字型檔案…</string>
+    <string name="ui_font_step_config">正在產生字型設定…</string>
+    <string name="ui_font_step_load">正在載入字型檔案…</string>
 </resources>

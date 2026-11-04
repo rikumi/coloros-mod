@@ -43,3 +43,4 @@ app/build
 
 /.kotlin/
 !/scripts/check-font-app-mounts.py
+!/scripts/RemoteZipFontTest.java

@@ -16,6 +16,7 @@ also packaged there as coloros-mod-LICENSE for binary redistribution.
   (materialkolor-NOTICE, materialkolor-LICENSE, Apache-2.0).
 - LLVM libc++ / libc++abi: original NDK notices including their license terms
   (native-NOTICE, llvm-libc++-NOTICE, llvm-libc++abi-NOTICE).
+- Noto 3D emoji font: SIL OFL 1.1 (noto-3d-OFL.txt).
 - Twemoji artwork: CC BY 4.0 (twemoji-NOTICE, twemoji-LICENSE-GRAPHICS).
   The downloaded third-party font conversion requires separate verification.
 - Bundled fonts: SIL OFL 1.1. Retain the *-OFL.txt notices in

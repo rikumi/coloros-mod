@@ -18,9 +18,11 @@ internal object NativeFontBridge {
         val paths = linkedMapOf<String, String>()
         val selected = linkedMapOf<String, List<FontOverlayXml.Source>>()
         fun publish(prefix: String, suffix: String, bytes: ByteArray): String {
+            FontOperation.report(FontOperation.Step.VERIFY_FONT, "SHA-256")
             val hash = digest(bytes)
             val name = "$prefix$hash$suffix"
             if (name !in available) {
+                FontOperation.report(FontOperation.Step.PUBLISH_FONT, name)
                 try {
                     ParcelFileDescriptor.AutoCloseOutputStream(service.openRemoteFile(name)).use { output ->
                         output.channel.truncate(0); output.channel.position(0)
@@ -33,26 +35,60 @@ internal object NativeFontBridge {
         }
         val roles = listOf("zh" to SystemFontHooks.ZH, "latin" to SystemFontHooks.LATIN, "mono" to SystemFontHooks.MONO, "emoji" to SystemFontHooks.EMOJI)
         for ((role, key) in roles) {
-            val choice = if (key == overrideKey) requireNotNull(overrideValue) else prefs.getInt(key, if (role == "mono") -1 else 0)
+            FontOperation.report(FontOperation.Step.BUILD_CONFIG, key)
+            val choice = if (key == overrideKey) requireNotNull(overrideValue) else prefs.getInt(key, SystemFontHooks.defaultChoice(key))
             if ((role == "mono" && choice < 0) || (role == "emoji" && choice == 0)) continue
             // Default must explicitly undo any previous overlay, even when OEM replacement is disabled.
             if ((role == "zh" || role == "latin") && choice == 0) {
                 selected[role] = SystemOppoFonts.find(role == "zh").map { file ->
+                    FontOperation.report(FontOperation.Step.PARSE_FONT, file.absolutePath)
                     FontOverlayXml.Source("../..${file.absolutePath}", FontFileInfo.read(file))
                 }
                 continue
             }
             if (role == "zh" && choice == 1) {
                 selected[role] = SystemCjkFonts.find().map { file ->
+                    FontOperation.report(FontOperation.Step.PARSE_FONT, file.absolutePath)
                     FontOverlayXml.Source("../..${file.absolutePath}", FontFileInfo.read(file))
                 }
                 continue
             }
-            val bytes: List<ByteArray> = if (role == "emoji") {
-                listOf(EmojiFontStore.obtain(context, choice).readBytes())
-            } else if (choice == SystemFontStore.customIndex(key)) {
-                listOf((if (key == overrideKey && overrideFile != null) overrideFile
-                    else File(de.filesDir, "system_fonts/$key.font")).readBytes())
+            if (role == "emoji") {
+                val file = if (choice == SystemFontStore.customIndex(key)) {
+                    if (key == overrideKey && overrideFile != null) overrideFile
+                    else File(de.filesDir, "system_fonts/$key.font")
+                } else EmojiFontStore.obtain(context, choice)
+                val digest = MessageDigest.getInstance("SHA-256")
+                FontOperation.report(FontOperation.Step.VERIFY_FONT, file.name + "\nSHA-256")
+                file.inputStream().use { input ->
+                    val buffer = ByteArray(65536)
+                    while (true) {
+                        FontOperation.check()
+                        val count = input.read(buffer); if (count < 0) break
+                        digest.update(buffer, 0, count)
+                    }
+                }
+                val hash = digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+                val name = "nativefont_$hash.font"
+                if (name !in available) {
+                    FontOperation.report(FontOperation.Step.PUBLISH_FONT, name)
+                    try {
+                        ParcelFileDescriptor.AutoCloseOutputStream(service.openRemoteFile(name)).use { output ->
+                            output.channel.truncate(0); output.channel.position(0)
+                            file.inputStream().use { FontOperation.copy(it, output) }; output.fd.sync()
+                        }
+                        available += name
+                    } catch (error: Exception) { runCatching { service.deleteRemoteFile(name) }; throw error }
+                }
+                paths["/system/fonts/colorosmod/$hash.ttf"] = name
+                selected[role] = listOf(FontOverlayXml.Source("colorosmod/$hash.ttf", FontFileInfo.read(file).filter { it.color }))
+                continue
+            }
+            val bytes: List<ByteArray> = if (choice == SystemFontStore.customIndex(key)) {
+                val file = if (key == overrideKey && overrideFile != null) overrideFile
+                    else File(de.filesDir, "system_fonts/$key.font")
+                FontOperation.report(FontOperation.Step.LOAD_FONT, file.absolutePath)
+                listOf(file.readBytes().also { FontOperation.check() })
             } else {
                 val assets = when (role) {
                     "latin" -> listOf("clock_fonts/${if (choice == 1) "Inter" else "Manrope"}.ttf")
@@ -62,16 +98,25 @@ internal object NativeFontBridge {
                         else listOf("system_fonts/$name.ttf", "system_fonts/$name-Italic.ttf")
                     }
                 }
-                assets.map { context.assets.open(it).use { stream -> stream.readBytes() } }
+                assets.map { asset ->
+                    FontOperation.report(FontOperation.Step.LOAD_FONT, asset)
+                    context.assets.open(asset).use { input ->
+                        input.readBytes().also { FontOperation.check() }
+                    }
+                }
             }
             val fonts = mutableListOf<FontOverlayXml.Source>()
             for (raw in bytes) {
-                val data = if (role == "emoji") raw else EmojiFontPriority.apply(raw)
+                FontOperation.report(FontOperation.Step.PARSE_FONT, key)
+                val data = EmojiFontPriority.apply(raw)
                 val hash = digest(data)
                 val path = "/system/fonts/colorosmod/$hash.ttf"
                 paths[path] = publish("nativefont_", ".font", data)
                 val file = File.createTempFile("metadata-", ".font", directory)
-                try { file.writeBytes(data); fonts += FontOverlayXml.Source("colorosmod/$hash.ttf", FontFileInfo.read(file)) }
+                try {
+                    FontOperation.report(FontOperation.Step.PARSE_FONT, "colorosmod/$hash.ttf")
+                    file.writeBytes(data); fonts += FontOverlayXml.Source("colorosmod/$hash.ttf", FontFileInfo.read(file))
+                }
                 finally { file.delete() }
             }
             selected[role] = fonts
@@ -80,6 +125,7 @@ internal object NativeFontBridge {
                             "/product/etc/fonts_customization.xml")) {
             val source = File(path)
             if (!source.isFile) continue
+            FontOperation.report(FontOperation.Step.BUILD_CONFIG, path)
             val config = if (path.startsWith("/product/")) selected.mapValues { (_, fonts) ->
                 fonts.map { FontOverlayXml.Source(if (it.path.startsWith("../../")) it.path else "../../system/fonts/${it.path}", it.faces) }
             } else selected

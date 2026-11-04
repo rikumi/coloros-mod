@@ -13,16 +13,62 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.basic.LinearProgressIndicator
+import io.github.suqi8.coui.kmp.basic.ButtonDefaults
 import io.github.suqi8.coui.kmp.layout.DialogButtonBar
 import io.github.suqi8.coui.kmp.layout.DialogButtonBarAction
 import io.github.suqi8.coui.kmp.layout.DialogDefaults
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.window.WindowDialog
+
+@Composable
+internal fun FontProgressDialog(title: String, progress: SystemFontStore.Progress, cancelling: Boolean, onCancel: () -> Unit) {
+    val detail = if (progress.total > 0) String.format(java.util.Locale.getDefault(),
+        "%.1f / %.1f MB · %d%%", progress.completed / 1048576.0, progress.total / 1048576.0,
+        (progress.completed * 100 / progress.total).toInt()) else ""
+    WindowDialog(
+        show = true,
+        title = title,
+        onDismissRequest = {},
+    ) {
+        androidx.compose.foundation.layout.Column(
+            modifier = Modifier.fillMaxWidth().padding(24.dp),
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp),
+        ) {
+            Text(text = stringResource(if (cancelling) R.string.ui_font_cancelling else progress.stage), color = DialogDefaults.summaryColor())
+            if (!cancelling && !progress.detail.isNullOrEmpty()) {
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Text(
+                        text = progress.detail,
+                        color = DialogDefaults.summaryColor(),
+                        fontSize = COUITheme.textStyles.body2.fontSize,
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 140.dp)
+                            .verticalScroll(rememberScrollState()),
+                    )
+                }
+            }
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth(),
+                progress = if (!cancelling && progress.total > 0)
+                    (progress.completed.toFloat() / progress.total).coerceIn(0f, 1f) else null,
+            )
+            if (!cancelling && detail.isNotEmpty()) Text(text = detail, color = DialogDefaults.summaryColor())
+        }
+        DialogButtonBar(
+            negative = null,
+            colors = ButtonDefaults.textButtonColorsBorderless(
+                disabledTextColor = colorResource(R.color.settings_summary_text_disabled),
+            ),
+            positive = DialogButtonBarAction(text = stringResource(R.string.ui_cancel), enabled = !cancelling && progress.canCancel, onClick = onCancel),
+        )
+    }
+}
 
 /** Native COUI panel and adaptive button bar, with annotated risk text in the message slot. */
 @Composable

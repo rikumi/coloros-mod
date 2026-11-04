@@ -703,6 +703,18 @@ private fun SettingsSelectRow(
     }
     val scope = rememberCoroutineScope()
     var importing by remember { mutableStateOf(false) }
+    var fontProgress by remember(item.key) { mutableStateOf<SystemFontStore.Progress?>(null) }
+    var fontOperation by remember(item.key) { mutableStateOf<FontOperation?>(null) }
+    var cancellingFont by remember(item.key) { mutableStateOf(false) }
+    val progressHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+    val preparationObserver = FontOperation.Observer { step, detail ->
+        progressHandler.post { fontProgress = SystemFontStore.preparationProgress(step, detail) }
+    }
+    if (SystemFontStore.isFont(item.key) && importing) {
+        FontProgressDialog(androidx.compose.ui.res.stringResource(item.label), fontProgress ?: SystemFontStore.Progress(R.string.ui_font_preparing), cancellingFont) {
+            if (fontOperation?.cancel() == true) cancellingFont = true
+        }
+    }
     var pendingSelection by remember(item.key) { mutableStateOf<Int?>(null) }
     val displayedSelection = pendingSelection ?: selected
     val fontPicker = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -712,20 +724,40 @@ private fun SettingsSelectRow(
             importing = true
             val custom = SystemFontStore.customIndex(item.key)
             pendingSelection = item.optionValues?.indexOf(custom) ?: custom
-            val operation = SystemFontStore.enqueue { SystemFontStore.import(ctx.applicationContext, item.key, uri) }
+            val cancellation = FontOperation(preparationObserver)
+            fontOperation = cancellation
+            cancellingFont = false
+            fontProgress = SystemFontStore.Progress(R.string.ui_font_importing)
+            val operation = SystemFontStore.enqueue {
+                val importFont = Runnable {
+                    SystemFontStore.import(ctx.applicationContext, item.key, uri) { progress ->
+                        progressHandler.post { fontProgress = progress }
+                    }
+                }
+                cancellation.run(importFont)
+            }
             scope.launch {
                 try {
                     operation.await()
                     val custom = SystemFontStore.customIndex(item.key)
                     selected = item.optionValues?.indexOf(custom) ?: custom
                     onItemChanged()
+                } catch (_: FontOperation.Cancelled) {
+                    // Keep the previous selection after an explicitly cancelled import.
                 } catch (error: kotlinx.coroutines.CancellationException) {
                     throw error
                 } catch (error: Exception) {
-                    android.widget.Toast.makeText(ctx, if (error is SystemFontStore.NotMonospaceFontException) ctx.getString(R.string.ui_font_not_monospace)
-                        else ctx.getString(R.string.ui_font_import_failed), android.widget.Toast.LENGTH_LONG).show()
+                    val message = when (error) {
+                        is SystemFontStore.NotMonospaceFontException -> R.string.ui_font_not_monospace
+                        is SystemFontStore.NotColorEmojiFontException -> R.string.ui_font_not_color_emoji
+                        else -> R.string.ui_font_import_failed
+                    }
+                    android.widget.Toast.makeText(ctx, ctx.getString(message), android.widget.Toast.LENGTH_LONG).show()
                     AppLog.log("font import failed: $error")
-                } finally { importing = false; pendingSelection = null }
+                } finally {
+                    importing = false; pendingSelection = null; fontProgress = null
+                    fontOperation = null; cancellingFont = false
+                }
             }
         }
     }
@@ -741,21 +773,37 @@ private fun SettingsSelectRow(
                 val value = item.optionValues?.get(index) ?: index
                 if (!importing && value == SystemFontStore.customIndex(item.key)) {
                     fontPicker.launch(arrayOf("*/*"))
-                } else if (!importing && index != selected) {
+                } else if (!importing && (index != selected || item.key == com.rikumi.colorosmod.hooks.SystemFontHooks.EMOJI)) {
                     importing = true
                     pendingSelection = index
-                    val operation = SystemFontStore.enqueue { SystemFontStore.select(ctx.applicationContext, item.key, value) }
+                    fontProgress = SystemFontStore.Progress(R.string.ui_font_preparing)
+                    val cancellation = FontOperation(preparationObserver)
+                    fontOperation = cancellation
+                    cancellingFont = false
+                    val operation = SystemFontStore.enqueue {
+                        val select = Runnable {
+                            SystemFontStore.select(ctx.applicationContext, item.key, value) { progress ->
+                                progressHandler.post { fontProgress = progress }
+                            }
+                        }
+                        cancellation.run(select)
+                    }
                     scope.launch {
                         try {
                             operation.await()
                             selected = index
                             onItemChanged()
+                        } catch (_: FontOperation.Cancelled) {
+                            // User cancellation preserves the prior font and is not an import failure.
                         } catch (error: kotlinx.coroutines.CancellationException) {
                             throw error
                         } catch (error: Exception) {
                             android.widget.Toast.makeText(ctx, ctx.getString(R.string.ui_font_import_failed), android.widget.Toast.LENGTH_LONG).show()
                             AppLog.log("font selection failed: $error")
-                        } finally { importing = false; pendingSelection = null }
+                        } finally {
+                            importing = false; pendingSelection = null; fontProgress = null
+                            fontOperation = null; cancellingFont = false
+                        }
                     }
                 }
             } else if (index != selected) {

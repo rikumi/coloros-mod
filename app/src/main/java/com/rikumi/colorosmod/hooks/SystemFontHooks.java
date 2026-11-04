@@ -20,6 +20,9 @@ public final class SystemFontHooks {
     public static final String PREFS = "system_fonts";
     public static final String ZH = "system_font_zh", LATIN = "system_font_latin", MONO = "system_font_mono";
     public static final String EMOJI = "system_font_emoji";
+    public static final int DEFAULT_EMOJI = 7;
+    public static final int CUSTOM_EMOJI = 8;
+    public static int defaultChoice(String slot) { return slot.equals(MONO) ? -1 : slot.equals(EMOJI) ? DEFAULT_EMOJI : 0; }
     public static final String DISABLE_REPLACEMENT = "system_font_disable_replacement";
     private static final String FONT_ROOT = "/data/fonts/files";
     private static final String CACHE_NAME = "coloros-mod";
@@ -90,7 +93,7 @@ public final class SystemFontHooks {
                         result.put(name, chain);
                     }
                     boolean active = prefs.getInt(ZH, 0) > 0 || prefs.getInt(LATIN, 0) > 0
-                            || prefs.getInt(MONO, -1) >= 0 || prefs.getInt(EMOJI, 0) > 0;
+                            || prefs.getInt(MONO, -1) >= 0 || prefs.getInt(EMOJI, DEFAULT_EMOJI) > 0;
                     if (active) for (Map.Entry<String, FontFamily[]> entry : result.entrySet()) {
                         FontFamily[] chain = entry.getValue();
                         if (chain.length < 2) continue;
@@ -108,7 +111,7 @@ public final class SystemFontHooks {
 
     private static synchronized FontFamily family(String slot, String language, int variant, boolean defaultFallback) {
         try {
-            int choice = prefs.getInt(slot, slot.equals(MONO) ? -1 : 0);
+            int choice = prefs.getInt(slot, defaultChoice(slot));
             if ((slot.equals(MONO) && choice < 0) || (slot.equals(EMOJI) && choice == 0)) return null;
             String[] sources;
             int custom = slot.equals(ZH) ? 2 : slot.equals(LATIN) ? 3 : 4;
@@ -117,7 +120,7 @@ public final class SystemFontHooks {
                         .map(file -> "system:" + file.getAbsolutePath()).toArray(String[]::new);
             } else if (slot.equals(EMOJI)) {
                 String remote = prefs.getString(EMOJI + "_file", "");
-                if (choice < 1 || choice > 4 || remote.isEmpty()) return null;
+                if (remote.isEmpty() || (choice != DEFAULT_EMOJI && choice != CUSTOM_EMOJI && (choice < 1 || choice > 4))) return null;
                 sources = new String[]{"remote:" + remote};
             } else if (choice == custom) {
                 String remote = prefs.getString(slot + "_file", "");
@@ -142,6 +145,7 @@ public final class SystemFontHooks {
                 File file = materialize(source, !slot.equals(EMOJI));
                 List<FontFileInfo.Face> faces = FontFileInfo.read(file);
                 if (slot.equals(MONO)) faces.removeIf(face -> !face.monospace);
+                if (slot.equals(EMOJI)) faces.removeIf(face -> !face.color);
                 if (faces.isEmpty()) throw new IOException("No monospace face in selected font");
                 fontFiles.add(file); metadata.add(faces);
             }
@@ -192,17 +196,29 @@ public final class SystemFontHooks {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             try (InputStream raw = open(source)) {
-                ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-                byte[] chunk = new byte[65536]; int size; long total = 0;
-                while ((size = raw.read(chunk)) != -1) {
-                    total += size;
-                    if (total > FontFileInfo.MAX_BYTES) throw new IOException("Font too large");
-                    buffer.write(chunk, 0, size);
-                }
-                byte[] contents = buffer.toByteArray();
-                if (emojiPriority) contents = com.rikumi.colorosmod.EmojiFontPriority.apply(contents);
-                try (FileOutputStream output = new FileOutputStream(temporary)) {
-                    output.write(contents); digest.update(contents); output.getFD().sync();
+                if (!emojiPriority) {
+                    try (FileOutputStream output = new FileOutputStream(temporary)) {
+                        byte[] chunk = new byte[65536]; int size; long total = 0;
+                        while ((size = raw.read(chunk)) != -1) {
+                            total += size;
+                            if (total > FontFileInfo.MAX_BYTES) throw new IOException("Font too large");
+                            output.write(chunk, 0, size); digest.update(chunk, 0, size);
+                        }
+                        output.getFD().sync();
+                    }
+                } else {
+                    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                    byte[] chunk = new byte[65536]; int size; long total = 0;
+                    while ((size = raw.read(chunk)) != -1) {
+                        total += size;
+                        if (total > FontFileInfo.MAX_BYTES) throw new IOException("Font too large");
+                        buffer.write(chunk, 0, size);
+                    }
+                    byte[] contents = buffer.toByteArray();
+                    if (emojiPriority) contents = com.rikumi.colorosmod.EmojiFontPriority.apply(contents);
+                    try (FileOutputStream output = new FileOutputStream(temporary)) {
+                        output.write(contents); digest.update(contents); output.getFD().sync();
+                    }
                 }
             }
             FontFileInfo.read(temporary);
