@@ -34,9 +34,6 @@ final class SystemNotificationIconMasks {
             Context target = contexts.get(pkg);
             if (target == null) { target = context.createPackageContext(pkg, 0); contexts.put(pkg, target); }
             String name = target.getResources().getResourceEntryName(icon.getResId());
-            if (owner.equals("android") && pkg.equals("android") && name.equals("stat_sys_adb"))
-                return Icon.createWithResource(MODULE_PACKAGE, R.drawable.ic_android_debug_monochrome);
-
             if (owner.equals("android") && pkg.equals("com.android.wifi.resources") && name.equals("ic_wifi_settings"))
                 return Icon.createWithResource(MODULE_PACKAGE, R.drawable.ic_hotspot_monochrome);
             if (!owner.equals("com.android.systemui") || !pkg.equals(owner)

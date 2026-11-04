@@ -41,8 +41,6 @@ final class MessagesNotificationIconHooks {
     }
 
     static Icon iconFor(StatusBarNotification sbn) {
-        if (SystemNotificationGroupHooks.androidSummary(sbn))
-            return Icon.createWithResource(MODULE_PACKAGE, R.drawable.ic_android_debug_monochrome);
         if (("com.android.shell".equals(sbn.getPackageName()) || MODULE_PACKAGE.equals(sbn.getPackageName()))
                 && "notification_layout_preview".equals(sbn.getTag()))
             return Icon.createWithResource(MODULE_PACKAGE, R.drawable.ic_test_notification_monochrome);

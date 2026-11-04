@@ -1,7 +1,6 @@
 package com.rikumi.colorosmod.hooks;
 
 import android.graphics.Canvas;
-import android.text.TextPaint;
 import android.view.View;
 import android.widget.LinearLayout;
 import java.util.ArrayList;
@@ -13,32 +12,17 @@ import static com.rikumi.colorosmod.XposedInit.log;
 
 final class NotificationBadgeGeometryHooks {
     private static final String BADGE = "com.oplus.systemui.statusbar.widget.NotificationBadgeView";
-    private static final String[] FIELDS = {"mCircleRadius", "mRoundRectHeight", "mRoundRectWith",
-            "mTextOffsetX", "mTextOffsetY"};
     private static final WeakHashMap<View, State> states = new WeakHashMap<>();
 
     private static final class State {
-        final float[] values = new float[FIELDS.length];
-        final int twoDigits;
-        final float textSize;
         final LinearLayout.LayoutParams params;
-        State(View view, LinearLayout.LayoutParams original) {
-            for (int i = 0; i < FIELDS.length; i++) values[i] = XposedHelpers.getFloatField(view, FIELDS[i]);
-            twoDigits = XposedHelpers.getIntField(view, "mTwoDigitsWidth");
-            textSize = paint(view).getTextSize();
+        State(LinearLayout.LayoutParams original) {
             params = new LinearLayout.LayoutParams(original);
         }
         void restore(View view) {
-            for (int i = 0; i < FIELDS.length; i++) XposedHelpers.setFloatField(view, FIELDS[i], values[i]);
-            XposedHelpers.setIntField(view, "mTwoDigitsWidth", twoDigits);
-            paint(view).setTextSize(textSize);
             view.setLayoutParams(new LinearLayout.LayoutParams(params));
             view.invalidate();
         }
-    }
-
-    private static TextPaint paint(View view) {
-        return (TextPaint) XposedHelpers.getObjectField(view, "mTextPaint");
     }
 
     static void update(View view, boolean enabled) {
@@ -49,11 +33,8 @@ final class NotificationBadgeGeometryHooks {
         }
         if (!(view.getLayoutParams() instanceof LinearLayout.LayoutParams params)) return;
         boolean fresh = state == null;
-        if (fresh) { state = new State(view, params); states.put(view, state); }
-        float scale = MonochromeIconGeometryHooks.drawingSize(view) / Math.max(1f, state.values[0] * 2f);
-        for (int i = 0; i < FIELDS.length; i++) XposedHelpers.setFloatField(view, FIELDS[i], state.values[i] * scale);
-        XposedHelpers.setIntField(view, "mTwoDigitsWidth", Math.round(state.twoDigits * scale));
-        paint(view).setTextSize(state.textSize * scale);
+        if (fresh) { state = new State(params); states.put(view, state); }
+        // Keep the native badge and text dimensions; only align its status-bar cell.
         if (fresh || params.leftMargin != 0 || params.rightMargin != 0
                 || params.getMarginStart() != 0 || params.getMarginEnd() != 0) {
             LinearLayout.LayoutParams own = new LinearLayout.LayoutParams(params);
@@ -99,7 +80,7 @@ final class NotificationBadgeGeometryHooks {
                     View view = (View) p.thisObject;
                     State old = states.get(view);
                     if (old == null) return;
-                    states.put(view, new State(view, old.params));
+                    states.put(view, new State(old.params));
                     update(view, MissingNotificationCountHooks.hybridBadge(view));
                     view.requestLayout(); view.invalidate();
                 }

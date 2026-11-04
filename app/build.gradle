@@ -44,8 +44,8 @@ android {
         externalNativeBuild {
             cmake { arguments '-DANDROID_STL=c++_static' }
         }
-        versionCode 10607
-        versionName '1.6.7'
+        versionCode 10608
+        versionName '1.6.8'
     }
 
     signingConfigs {
