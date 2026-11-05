@@ -246,6 +246,15 @@ public final class TaskbarGestureHooks {
                             MotionEvent ev = (MotionEvent) param.args[0];
                             for (HandleState state : HANDLES.values()) {
                                 if (state.host != param.thisObject) continue;
+                                if (!state.isUsable()) {
+                                    state.windowTouches.active = false;
+                                    state.windowTouches.downTime = -1;
+                                    state.forwardedTouches.active = false;
+                                    state.forwardedTouches.downTime = -1;
+                                    if (pendingTouch != null && pendingTouch.state == state) cancelPendingTouch();
+                                    state.syncWindowTouchFlags();
+                                    return;
+                                }
                                 boolean blockDown = ev.getActionMasked() == MotionEvent.ACTION_DOWN
                                         && state.isUsable()
                                         && (state.blockEnabled() || readBool(KEY_MBACK_ENABLED, false))
@@ -283,6 +292,10 @@ public final class TaskbarGestureHooks {
         }
         PendingTouch touch = pendingTouch;
         if (touch == null || ev.getDownTime() != touch.down.getDownTime()) return false;
+        if (!touch.state.isUsable()) {
+            cancelPendingTouch();
+            return false;
+        }
         if (touch.cancelled || !readBool(KEY_MBACK_ENABLED, false) || !touch.state.isUsable()) {
             abortPendingGesture();
             if (ev.getActionMasked() == MotionEvent.ACTION_UP
@@ -379,6 +392,18 @@ public final class TaskbarGestureHooks {
     private static HandleState findByContext(Object context) {
         for (HandleState state : HANDLES.values()) if (state.context == context) return state;
         return null;
+    }
+
+    static boolean isNavigationHidden(View handle) {
+        HandleState state = HANDLES.get(handle);
+        if (state == null) return false;
+        try {
+            long flags = ((Number) XposedHelpers.getObjectField(state.context, "mSystemUiStateFlags")).longValue();
+            // NavbarButtonsViewController.parseSystemUiFlags derives
+            // mNavbarIsHidden from this bit. The legacy "immersive" bit alone
+            // describes behavior and can also be set while the bar is visible.
+            return (flags & 2L) != 0;
+        } catch (Throwable error) { return false; }
     }
 
     private static boolean isGestureNav(Object context) {
@@ -594,6 +619,7 @@ public final class TaskbarGestureHooks {
 
         boolean isUsable() {
             if (!active || !handle.isAttachedToWindow() || !handle.isShown()
+                    || !GestureHooks.isNavigationBarVisible(handle)
                     || handle.getAlpha() < 0.01f || host.getAlpha() < 0.01f
                     || localBounds.isEmpty() || !isGestureNav(context)) return false;
             try {
@@ -615,8 +641,8 @@ public final class TaskbarGestureHooks {
         }
 
         boolean shouldPreventWindowTransfer() {
-            return active && (windowTouches.active || (isUsable()
-                    && (blockEnabled() || readBool(KEY_MBACK_ENABLED, false))));
+            return active && isUsable() && (windowTouches.active
+                    || blockEnabled() || readBool(KEY_MBACK_ENABLED, false));
         }
 
         void syncWindowTouchFlags() {
@@ -634,6 +660,12 @@ public final class TaskbarGestureHooks {
             if (active && handle.getOutlineProvider() != outline) {
                 register(controller);
                 return true;
+            }
+            if (!isUsable()) {
+                windowTouches.active = false;
+                windowTouches.downTime = -1;
+                forwardedTouches.active = false;
+                forwardedTouches.downTime = -1;
             }
             syncWindowTouchFlags();
             if (isUsable() && readBool(KEY_MBACK_ENABLED, false)) {

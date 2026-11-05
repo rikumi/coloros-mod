@@ -326,6 +326,14 @@ final class GestureTouchReplayHooks {
         MBACK_PHYSICAL_CANCEL.remove(key);
     }
 
+    static void abandonMBack(View handle, long downTime) {
+        String key = streamKey(handle, downTime);
+        synchronized (WINDOW_MBACK) { WINDOW_MBACK.remove(key); }
+        synchronized (MONITOR_MBACK) { MONITOR_MBACK.remove(key); }
+        clearMBackPhysicalTerminal(handle, downTime);
+        release(handle, downTime);
+    }
+
     static void claimWindowMBack(View handle, long downTime) {
         synchronized (WINDOW_MBACK) {
             WINDOW_MBACK.put(streamKey(handle, downTime), true);

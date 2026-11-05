@@ -32,6 +32,9 @@ public final class GestureHooks {
     static final java.util.WeakHashMap<Object, Integer> sBarExtraApplied =
             new java.util.WeakHashMap<>();
     private static boolean sGestureBarHeightActive;
+    private static final java.util.WeakHashMap<View, Boolean> NAVIGATION_WINDOW_VISIBLE = new java.util.WeakHashMap<>();
+    private static final java.util.Map<Integer, Boolean> APPLICATION_NAVIGATION_VISIBLE =
+            new java.util.concurrent.ConcurrentHashMap<>();
     private static ClassLoader sGestureBarHeightLoader;
     private static final java.util.WeakHashMap<View, GestureBarLengthState> GESTURE_BAR_LENGTHS =
             new java.util.WeakHashMap<>();
@@ -359,6 +362,36 @@ public final class GestureHooks {
                 && isGestureBlockActive(handle);
     }
 
+    static boolean isNavigationBarVisible(View handle) {
+        if (handle == null || !handle.isAttachedToWindow() || !handle.isShown()
+                || handle.getWindowVisibility() != View.VISIBLE) return false;
+        for (View current = handle; current != null;
+                current = current.getParent() instanceof View parent ? parent : null) {
+            if (current.getAlpha() <= 0.01f) return false;
+        }
+        View frame = findNavigationFrame(handle);
+        if (frame != null && Boolean.FALSE.equals(NAVIGATION_WINDOW_VISIBLE.get(frame))) return false;
+        if (TaskbarGestureHooks.isNavigationHidden(handle)) return false;
+        int displayId = handle.getDisplay() == null ? 0 : handle.getDisplay().getDisplayId();
+        Boolean requested = APPLICATION_NAVIGATION_VISIBLE.get(displayId);
+        if (Boolean.FALSE.equals(requested)) return false;
+        // A navigation window may exclude its own source from root Insets.
+        // Behavior SHOW_TRANSIENT_BARS_BY_SWIPE also does not imply a hide request.
+        // Unknown application state must preserve ordinary navigation.
+        return true;
+    }
+
+    private static void updateRequestedNavigationVisibility(int display, int requestedTypes, String packageName) {
+        // DisplayPolicy reports zero with package "none" while focus is absent;
+        // that is not an application's request to hide the navigation bar.
+        if (packageName == null || packageName.isEmpty() || "none".equals(packageName)) {
+            APPLICATION_NAVIGATION_VISIBLE.remove(display);
+        } else {
+            APPLICATION_NAVIGATION_VISIBLE.put(display,
+                    (requestedTypes & android.view.WindowInsets.Type.navigationBars()) != 0);
+        }
+    }
+
     private static void syncGestureTouchWindow(View view) {
         View root = findNavigationFrame(view);
         if (root == null) return;
@@ -368,7 +401,10 @@ public final class GestureHooks {
             state = new GestureTouchWindowState();
             GESTURE_TOUCH_WINDOWS.put(root, state);
         }
-        if (!root.isAttachedToWindow()) state.touchActive = false;
+        if (!isNavigationBarVisible(findHandleInTree(root))) {
+            state.touchActive = false;
+            state.downTime = -1;
+        }
         if (!(root.getLayoutParams() instanceof WindowManager.LayoutParams)) return;
         WindowManager.LayoutParams params = (WindowManager.LayoutParams) root.getLayoutParams();
         try {
@@ -394,6 +430,10 @@ public final class GestureHooks {
                     GESTURE_TOUCH_WINDOWS.put(root, state);
                 }
                 try {
+                    if (!isNavigationBarVisible(findHandleInTree(root))) {
+                        state.touchActive = false;
+                        state.downTime = -1;
+                    }
                     state.updateFlags((WindowManager.LayoutParams) param.args[1],
                             sGestureTouchHooksActive && (state.touchActive || isPhoneGestureBlockActive(root)));
                 } catch (Throwable t) { log("gesture touch window flags failed: " + t); }
@@ -517,6 +557,49 @@ public final class GestureHooks {
     public static void hookGestureTouchThrough(final XC_LoadPackage.LoadPackageParam lpparam) {
         sGestureTouchHooksActive = true;
         hookGestureTouchWindow(lpparam.classLoader);
+        try {
+            Class<?> queue = XposedHelpers.findClass("com.android.systemui.statusbar.CommandQueue", lpparam.classLoader);
+            XposedBridge.hookAllMethods(queue, "onSystemBarAttributesChanged", new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (p.args.length < 6 || !(p.args[0] instanceof Integer)
+                            || !(p.args[5] instanceof Integer)) return;
+                    int display = (Integer) p.args[0];
+                    int requestedTypes = (Integer) p.args[5];
+                    String packageName = p.args.length > 6 && p.args[6] instanceof String ? (String) p.args[6] : null;
+                    updateRequestedNavigationVisibility(display, requestedTypes, packageName);
+                    GESTURE_TOUCH_MAIN.post(() -> {
+                        for (MBackGesture gesture : new java.util.ArrayList<>(MBACK_GESTURES.values())) {
+                            if (!isNavigationBarVisible(gesture.handle))
+                                cancelHiddenMBack(gesture.handle, gesture.downTime);
+                        }
+                        for (View frame : new java.util.ArrayList<>(GESTURE_TOUCH_WINDOWS.keySet())) {
+                            syncGestureTouchWindow(frame);
+                            if (!isNavigationBarVisible(findHandleInTree(frame))) removeGestureBlockSurfaces(frame);
+                            frame.requestApplyInsets();
+                        }
+                    });
+                }
+            });
+        } catch (Throwable error) { log("navigation requested visibility hook failed: " + error); }
+        try {
+            XposedHelpers.findAndHookMethod(findNavigationBarClass(lpparam.classLoader), "setWindowVisible", boolean.class,
+                    new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            View frame = (View) XposedHelpers.getObjectField(p.thisObject, "mFrame");
+                            if (frame == null) return;
+                            boolean visible = (Boolean) p.args[0];
+                            NAVIGATION_WINDOW_VISIBLE.put(frame, visible);
+                            if (!visible) {
+                                for (MBackGesture gesture : new java.util.ArrayList<>(MBACK_GESTURES.values())) {
+                                    if (findNavigationFrame(gesture.handle) == frame)
+                                        cancelHiddenMBack(gesture.handle, gesture.downTime);
+                                }
+                                removeGestureBlockSurfaces(frame);
+                            }
+                            syncGestureTouchWindow(frame);
+                        }
+                    });
+        } catch (Throwable error) { log("navigation visibility hook failed: " + error); }
         try {
             Class<?> navigationBarClass = findNavigationBarClass(lpparam.classLoader);
             boolean legacyNavigationBar = navigationBarClass.getName().equals(
@@ -885,6 +968,7 @@ public final class GestureHooks {
 
     static boolean isGestureBlockActive(android.view.View view) {
         return readBool(KEY_GESTURE_TOUCH_THROUGH_ENABLED, false)
+                && isNavigationBarVisible(view)
                 && !isShadeExpanded(view) && !isImeVisible(view);
     }
 
@@ -960,6 +1044,10 @@ public final class GestureHooks {
     static void handleMBackTouch(final android.view.View handle,
             android.view.MotionEvent event) {
         if (event == null) return;
+        if (!isNavigationBarVisible(handle)) {
+            cancelHiddenMBack(handle, event.getDownTime());
+            return;
+        }
         int action = event.getActionMasked();
         long downTime = event.getDownTime();
         MBackGesture g = MBACK_GESTURES.get(downTime);
@@ -1051,6 +1139,10 @@ public final class GestureHooks {
 
     static boolean handleNativeMBackTouch(View handle, MotionEvent event) {
         if (event == null) return false;
+        if (!isNavigationBarVisible(handle)) {
+            cancelHiddenMBack(handle, event.getDownTime());
+            return false;
+        }
         // The protected navigation window already owns this stream. Its direct
         // dispatch must not depend on, or be duplicated by, the animation callback.
         if (GestureTouchReplayHooks.ownsWindowMBack(handle, event.getDownTime())
@@ -1077,6 +1169,10 @@ public final class GestureHooks {
 
     static void routeMBackInput(View handle, MotionEvent event, boolean monitor) {
         long downTime = event.getDownTime();
+        if (!isNavigationBarVisible(handle)) {
+            cancelHiddenMBack(handle, downTime);
+            return;
+        }
         // A navigation-window CANCEL can mean another system gesture monitor
         // pilfered pointers. Only the raw monitor may cancel its own active stream.
         if (!monitor && GestureTouchReplayHooks.ownsMonitorMBack(handle, downTime)) return;
@@ -1086,13 +1182,7 @@ public final class GestureHooks {
             // and viewScreenLeft both use display coordinates, like the native monitor.
             copy.setLocation(event.getRawX(), event.getRawY());
             if (copy.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                // ColorOS can hide the navigation window while its independent
-                // input monitor keeps receiving bottom gestures (for example,
-                // when Launcher owns the gesture-bar surface). IME visibility
-                // makes the window visible again; it must not gate raw input.
-                boolean unavailable = monitor
-                        ? !handle.isAttachedToWindow() || handle.getWidth() <= 0
-                        : !handle.isShown();
+                boolean unavailable = handle.getWidth() <= 0;
                 if (!readBool(KEY_MBACK_ENABLED, false) || unavailable
                         || isShadeExpanded(handle) || !isInMBackBarRange(handle, copy)) return;
                 if (monitor) GestureTouchReplayHooks.claimMonitorMBack(handle, downTime);
@@ -1120,6 +1210,10 @@ public final class GestureHooks {
 
     private static void fireMBackLongPress(MBackGesture gesture) {
         if (gesture == null || !gesture.down || gesture.cancelled || gesture.longPress) return;
+        if (!isNavigationBarVisible(gesture.handle)) {
+            cancelHiddenMBack(gesture.handle, gesture.downTime);
+            return;
+        }
         gesture.longPress = true;
         cancelMBackLongPress(gesture);
         GestureTouchReplayHooks.consume(gesture.handle, gesture.downTime);
@@ -1137,6 +1231,18 @@ public final class GestureHooks {
             GESTURE_TOUCH_MAIN.removeCallbacks(gesture.longPressRunnable);
             gesture.longPressRunnable = null;
         }
+    }
+
+    private static void cancelHiddenMBack(View handle, long downTime) {
+        MBackGesture gesture = MBACK_GESTURES.remove(downTime);
+        MBACK_IN_RANGE.remove(downTime);
+        if (gesture != null) {
+            gesture.down = false;
+            gesture.cancelled = true;
+            cancelMBackLongPress(gesture);
+        }
+        GestureTouchReplayHooks.abandonMBack(handle, downTime);
+        try { hideMBackSurface(handle); } catch (Throwable ignored) { }
     }
 
     static boolean isInMBackBarRange(android.view.View handle,
@@ -1273,6 +1379,8 @@ public final class GestureHooks {
         }
         XposedHelpers.removeTrackedViewChildren("mback_surface", "gesture_block_surface");
         sBarExtraApplied.clear();
+        NAVIGATION_WINDOW_VISIBLE.clear();
+        APPLICATION_NAVIGATION_VISIBLE.clear();
         sGestureBarHeightLoader = null;
         sImeVisible = false;
         sGestureBarHeightPx = -1;
@@ -1280,6 +1388,7 @@ public final class GestureHooks {
     }
 
     static void triggerNavigation(android.view.View handle, boolean home) {
+        if (!isNavigationBarVisible(handle)) return;
         if (TaskbarGestureHooks.dispatchNavigation(handle, home)) return;
         android.view.View navView = null;
         try {
