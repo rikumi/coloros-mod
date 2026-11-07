@@ -43,7 +43,7 @@ final class RecentsHideFreeformHooks {
         } catch (Throwable error) { log("recents floating task filter unavailable: " + error); }
     }
 
-    private static Method taskGetter(Class<?> grouped, String original, String renamed) throws NoSuchMethodException {
+    static Method taskGetter(Class<?> grouped, String original, String renamed) throws NoSuchMethodException {
         Method method;
         try { method = grouped.getDeclaredMethod(original); }
         catch (NoSuchMethodException missing) { method = grouped.getDeclaredMethod(renamed); }

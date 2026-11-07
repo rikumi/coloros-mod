@@ -1874,33 +1874,8 @@ public final class LauncherHooks {
         }
     }
 
-    static final java.util.concurrent.atomic.AtomicInteger sRecentsBypassLogCount =
-            new java.util.concurrent.atomic.AtomicInteger(0);
-
     public static void hookRecentsShowHidden(final XC_LoadPackage.LoadPackageParam lpparam) {
-        try {
-            XposedHelpers.findAndHookMethod(
-                    "com.oplus.quickstep.privacy.OplusPrivacyManager",
-                    lpparam.classLoader, "isHiddenPkg", String.class, int.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
-                            // 运行时动态门控: 关闭则保持系统默认(隐藏应用不出现在多任务)。
-                            if (!readBool(KEY_RECENTS_SHOW_HIDDEN_ENABLED, false)) return;
-                            // 仅当调用方来自 quickstep 多任务渲染/手势路径时, 绕过"隐藏应用"判定
-                            if (callerInQuickstepPath()) {
-                                Object pkg = param.args[0];
-                                param.setResult(false);
-                                if (sRecentsBypassLogCount.getAndIncrement() < 30) {
-                                    Log.e("ColorOSMod", "recents bypass isHiddenPkg pkg=" + pkg);
-                                }
-                            }
-                        }
-                    });
-            log("HOOK OK com.oplus.quickstep.privacy.OplusPrivacyManager#isHiddenPkg");
-        } catch (Throwable t) {
-            log("HOOK FAIL OplusPrivacyManager#isHiddenPkg :: " + Log.getStackTraceString(t));
-        }
+        RecentsHiddenAppsHooks.hook(lpparam);
     }
 
     public static void hookRecentsHideFreeform(final XC_LoadPackage.LoadPackageParam lpparam) {
@@ -1908,54 +1883,7 @@ public final class LauncherHooks {
     }
 
     public static void hookRecentsHideNotRunning(final XC_LoadPackage.LoadPackageParam lpparam) {
-        try {
-            Class<?> groupedTaskInfo = findLauncherGroupedTaskInfo(lpparam.classLoader);
-            final String flag = KEY_RECENTS_HIDE_NOT_RUNNING_ENABLED;
-            XposedHelpers.findAndHookMethod(
-                    "com.oplus.quickstep.data.OplusRecentTasksFilter",
-                    lpparam.classLoader, "filterTaskInfo",
-                    int.class, int.class,
-                    groupedTaskInfo,
-                    java.util.ArrayList.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
-                            try {
-                                if (!readBool(flag, false)) return;
-                                Object gti = param.args[2];
-                                if (gti == null) return;
-                                if (isTaskInfoRunning(gti, "getTaskInfo1")) return;
-                                // 分屏: 另一半还在运行就保留
-                                if (isTaskInfoRunning(gti, "getTaskInfo2")) return;
-                                param.setResult(true); // 剔除该任务卡片
-                            } catch (Throwable ignored) { }
-                        }
-                    });
-            log("HOOK OK OplusRecentTasksFilter#filterTaskInfo (recents hide not running)");
-        } catch (Throwable t) {
-            log("HOOK FAIL OplusRecentTasksFilter#filterTaskInfo (hide not running) :: "
-                    + Log.getStackTraceString(t));
-        }
-    }
-
-    private static Class<?> findLauncherGroupedTaskInfo(ClassLoader classLoader) throws Throwable {
-        try {
-            return XposedHelpers.findClass(
-                    "com.android.wm.shell.shared.GroupedTaskInfo", classLoader);
-        } catch (Throwable ignored) {
-            // ColorOS 15.8.21 still exposes shell's grouped tasks from the util package.
-            return XposedHelpers.findClass(
-                    "com.android.wm.shell.util.GroupedRecentTaskInfo", classLoader);
-        }
-    }
-
-    private static boolean isTaskInfoRunning(Object groupedTaskInfo, String getter) {
-        try {
-            Object taskInfo = XposedHelpers.callMethod(groupedTaskInfo, getter);
-            if (taskInfo == null) return false;
-            return XposedHelpers.getBooleanField(taskInfo, "isRunning");
-        } catch (Throwable ignored) { }
-        return false;
+        RecentsHideNotRunningHooks.hook(lpparam);
     }
 
     private static final ThreadLocal<String> sPendingKillPkg = new ThreadLocal<>();
@@ -2271,18 +2199,6 @@ public final class LauncherHooks {
             Object wm = XposedHelpers.callMethod(wc, "getWindowingMode");
             return wm instanceof Integer && (Integer) wm == 5;
         } catch (Throwable ignored) { }
-        return false;
-    }
-
-    static boolean callerInQuickstepPath() {
-        for (StackTraceElement e : new Throwable().getStackTrace()) {
-            String cn = e.getClassName();
-            if (cn == null) continue;
-            if (cn.startsWith("com.android.quickstep")
-                    && !cn.toLowerCase().contains("lock")) {
-                return true;
-            }
-        }
         return false;
     }
 
