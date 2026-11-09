@@ -527,4 +527,6 @@
     <string name="system_app_description_nas_virtual_data">虛擬數據連線協同</string>
     <string name="system_app_description_nas_network">行動網路與耗電策略</string>
     <string name="system_app_description_nas_smart_communication">行動通訊品質最佳化</string>
+    <string name="system_app_description_removal_prevents_unlock">解除安裝後開機無法解鎖</string>
+    <string name="system_app_description_removal_prevents_network">解除安裝後無法連接網路</string>
 </resources>

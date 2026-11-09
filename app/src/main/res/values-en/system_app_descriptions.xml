@@ -527,4 +527,6 @@
     <string name="system_app_description_nas_virtual_data">Virtual data coordination</string>
     <string name="system_app_description_nas_network">Cellular network power policies</string>
     <string name="system_app_description_nas_smart_communication">Cellular quality optimization</string>
+    <string name="system_app_description_removal_prevents_unlock">Removal prevents unlocking after boot</string>
+    <string name="system_app_description_removal_prevents_network">Removal prevents network connectivity</string>
 </resources>

@@ -527,4 +527,6 @@
     <string name="system_app_description_nas_virtual_data">虚拟数据连接协同</string>
     <string name="system_app_description_nas_network">蜂窝网络与功耗策略</string>
     <string name="system_app_description_nas_smart_communication">蜂窝通信质量优化</string>
+    <string name="system_app_description_removal_prevents_unlock">卸载后开机无法解锁</string>
+    <string name="system_app_description_removal_prevents_network">卸载后无法连接网络</string>
 </resources>
