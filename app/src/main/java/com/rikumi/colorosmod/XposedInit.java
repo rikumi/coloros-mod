@@ -1031,6 +1031,7 @@ public class XposedInit extends XposedModule {
             SystemServerHooks.hookStatusBarThirdPartyOverlayEvents(systemServerLpparam());
             SystemServerHooks.hookCompactCanvasCaptionInsets(systemServerLpparam());
             com.rikumi.colorosmod.hooks.TabletCutoutInsetsHooks.hook(sSystemServerClassLoader, this);
+            com.rikumi.colorosmod.hooks.QqNativeTabletLayoutHooks.hook(sSystemServerClassLoader, this);
             SystemServerHooks.hookCompactFlexibleCaptionBar(systemServerLpparam());
             sSystemServerHooked = true;
         } else {
@@ -1303,6 +1304,7 @@ public class XposedInit extends XposedModule {
             // system_server: 将画布分屏嵌入应用的状态栏 inset 同步缩至三点控制栏的新高度。
             SystemServerHooks.hookCompactCanvasCaptionInsets(lpparam);
             com.rikumi.colorosmod.hooks.TabletCutoutInsetsHooks.hook(lpparam.classLoader, this);
+            com.rikumi.colorosmod.hooks.QqNativeTabletLayoutHooks.hook(lpparam.classLoader, this);
             // system_server: 同步缩小悬浮小窗顶部控制栏、系统上报高度与触摸区。
             SystemServerHooks.hookCompactFlexibleCaptionBar(lpparam);
         }
