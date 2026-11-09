@@ -352,10 +352,7 @@ public final class MergedRadiantHooks {
                 frame.addView(circle, Math.min(1, frame.getChildCount()), new FrameLayout.LayoutParams(1, 1));
             }
             int state = XposedHelpers.getIntField(tile, "mTileIconState");
-            int activeColor = enabled(tile) ? activeWhite(tile)
-                    : (Integer) XposedHelpers.callMethod(XposedHelpers.callStaticMethod(qsHelper, "getInstance"),
-                            "getActiveColorWithDarkMode", tile.getContext());
-            card.shape.setColor(state == 2 ? activeColor : 0x1affffff);
+            card.shape.setColor(state == 2 ? Color.WHITE : 0x1affffff);
 
             int size = Math.max(1, Math.round(38f * unit));
             Drawable leafBackground = backgroundLeaf(tile);
