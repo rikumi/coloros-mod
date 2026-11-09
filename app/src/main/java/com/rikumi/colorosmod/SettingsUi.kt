@@ -84,6 +84,7 @@ import io.github.suqi8.coui.kmp.basic.HorizontalDivider
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.IconButton
 import io.github.suqi8.coui.kmp.basic.Slider
+import io.github.suqi8.coui.kmp.basic.SliderDefaults
 import io.github.suqi8.coui.kmp.basic.SmallTitle
 import io.github.suqi8.coui.kmp.basic.SmallTitleDefaults
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
@@ -841,13 +842,22 @@ fun SettingsMasterToggle(
 @Composable
 fun SettingsSlider(
     value: Float,
+    referenceValue: Float,
     onValueChange: (Float) -> Unit,
     onValueChangeFinished: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Slider(
-        value = value, onValueChange = onValueChange,
-        onValueChangeFinished = onValueChangeFinished, modifier = modifier,
+        value = value,
+        onValueChange = onValueChange,
+        onValueChangeFinished = onValueChangeFinished,
+        modifier = modifier,
+        colors = SliderDefaults.sliderColors(
+            keyPointColor = Color.White.copy(alpha = 0.3f),
+            keyPointForegroundColor = Color.White,
+        ),
+        showKeyPoints = true,
+        keyPoints = listOf(referenceValue.coerceIn(0f, 1f)),
     )
 }
 
@@ -1022,11 +1032,9 @@ private fun SettingsSwitchRow(
             checked = checked,
             onCheckedChange = {
                 if (it) {
-                    val stored = if (item.rootBacked) item.sliderDefault
-                        else prefs.getInt(item.sliderKey, if (item.sliderFollowsSystem) 0 else item.sliderDefault)
-                    intVal = (if (item.sliderFollowsSystem && stored == 0) item.sliderDefault else stored)
-                        .coerceIn(item.sliderMin, item.sliderMax)
+                    intVal = item.sliderDefault.coerceIn(item.sliderMin, item.sliderMax)
                     if (item.rootBacked) rootValue = intVal
+                    else if (!item.sliderFollowsSystem) setInt(ctx, item.sliderKey, intVal)
                 }
                 checked = it
                 expanded = it
@@ -1080,6 +1088,8 @@ private fun SettingsSwitchRow(
             ) {
                 SettingsSlider(
                     value = ((intVal - item.sliderMin).toFloat() /
+                            (item.sliderMax - item.sliderMin).coerceAtLeast(1)).coerceIn(0f, 1f),
+                    referenceValue = ((item.sliderDefault - item.sliderMin).toFloat() /
                             (item.sliderMax - item.sliderMin).coerceAtLeast(1)).coerceIn(0f, 1f),
                     onValueChange = { f ->
                         val nv = (item.sliderMin + (f * stepCount).roundToInt() * item.sliderStep)
