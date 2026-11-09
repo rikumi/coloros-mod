@@ -40,10 +40,10 @@
     <string name="ui_notification_subtitle">"Smaller silent notification subtitle"</string>
     <string name="ui_notification_padding">"Increase vertical padding"</string>
     <string name="ui_statusbar_settings">"Status bar settings"</string>
-    <string name="ui_merge_dual_sim">"Combine dual-SIM signal indicators"</string>
+    <string name="ui_merge_dual_sim">"Draw stacked dual-SIM signal"</string>
     <string name="ui_hide_battery_percent">"Hide status bar battery percent sign"</string>
     <string name="ui_hide_roaming">"Hide status bar roaming icon"</string>
-    <string name="ui_signal_network_type">"Network type label"</string>
+    <string name="ui_signal_network_type">"Drawn signal network type label"</string>
     <string name="ui_option_default_display">"Default"</string>
     <string name="ui_option_separate_display">"Independent"</string>
     <string name="ui_option_hide">"Hide"</string>

@@ -362,12 +362,10 @@ private val NOTIF: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_statusbar_settings),
     SwitchItem("statusbar_monochrome_notification_icons_enabled", R.string.ui_statusbar_monochrome_notification_icons),
     SwitchItem("merge_dual_sim_signal", R.string.ui_merge_dual_sim),
+    SwitchItem(XposedInit.KEY_STACKED_SIGNAL_WIFI_RIGHT, R.string.ui_network_icon_position,
+        masterManaged = true),
     SwitchItem("hide_battery_percent_sign_enabled", R.string.ui_hide_battery_percent),
     SwitchItem("hide_roaming_icon", R.string.ui_hide_roaming),
-    SelectItem(XposedInit.KEY_NETWORK_ICON_POSITION, R.string.ui_network_icon_position,
-        listOf(R.string.ui_network_icon_position_unchanged, R.string.ui_network_icon_position_wifi_left,
-            R.string.ui_network_icon_position_mobile_left),
-        masterManaged = true, masterEnabledValue = 1),
     SelectItem("signal_network_type_mode", R.string.ui_signal_network_type, listOf(R.string.ui_option_default_display, R.string.ui_option_separate_display, R.string.ui_option_hide)),
     SelectItem("status_bar_clock_font", R.string.ui_statusbar_font, listOf(R.string.ui_option_system_default, R.string.ui_font_inter, R.string.ui_font_manrope, R.string.ui_font_rubik, R.string.ui_font_lato)),
     SelectItem("status_bar_clock_weight", R.string.ui_statusbar_weight, listOf(R.string.ui_option_follow_system, R.string.ui_weight_100, R.string.ui_weight_200, R.string.ui_weight_300, R.string.ui_weight_400, R.string.ui_weight_500, R.string.ui_weight_600, R.string.ui_weight_700, R.string.ui_weight_800, R.string.ui_weight_900)),
@@ -592,7 +590,7 @@ private val List<SettingsItem>.switches: List<SwitchItem> get() = filterIsInstan
 // 分类/全局顶部“一键启用”所管理的项目；目录屏蔽项也属于可启用功能。
 private val SettingsItem.availableOnDevice: Boolean
     get() = when {
-        this is SelectItem && key == XposedInit.KEY_NETWORK_ICON_POSITION -> Build.VERSION.SDK_INT >= 37
+        this is SwitchItem && key == XposedInit.KEY_STACKED_SIGNAL_WIFI_RIGHT -> Build.VERSION.SDK_INT >= 37
         this !is SwitchItem -> true
         key == "qs_bg_brightness_enabled" || key == "qs_bg_opacity_enabled" -> Build.VERSION.SDK_INT >= 37
         key == PlayStoreUpdatePolicy.KEY -> Build.VERSION.SDK_INT >= 37
@@ -1604,6 +1602,14 @@ internal fun Context.settingsPrefs(): SharedPreferences {
     if (!de.contains("signal_network_type_mode") && de.contains("separate_network_type")) {
         if (de.edit().putInt("signal_network_type_mode",
                 if (de.getBoolean("separate_network_type", false)) 1 else 0).commit()) {
+            SettingsProvider.notifySettingsChanged(this)
+        }
+    }
+    if (!de.contains(XposedInit.KEY_STACKED_SIGNAL_WIFI_RIGHT)
+            && de.contains(XposedInit.KEY_NETWORK_ICON_POSITION)) {
+        val enabled = de.getInt(XposedInit.KEY_NETWORK_ICON_POSITION, 0) == 1
+        if (de.edit().putBoolean(XposedInit.KEY_STACKED_SIGNAL_WIFI_RIGHT, enabled)
+                .remove(XposedInit.KEY_NETWORK_ICON_POSITION).commit()) {
             SettingsProvider.notifySettingsChanged(this)
         }
     }

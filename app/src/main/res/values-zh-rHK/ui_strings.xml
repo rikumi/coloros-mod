@@ -40,10 +40,10 @@
     <string name="ui_notification_subtitle">"縮小通知靜默區域副標題"</string>
     <string name="ui_notification_padding">"增加通知上下內邊距"</string>
     <string name="ui_statusbar_settings">"狀態欄設定"</string>
-    <string name="ui_merge_dual_sim">"合併雙卡信號"</string>
+    <string name="ui_merge_dual_sim">"自繪製堆疊雙卡訊號"</string>
     <string name="ui_hide_battery_percent">"隱藏狀態欄電量百分號"</string>
     <string name="ui_hide_roaming">"隱藏狀態欄漫遊圖示"</string>
-    <string name="ui_signal_network_type">"信號制式文字"</string>
+    <string name="ui_signal_network_type">"自繪製訊號制式文字"</string>
     <string name="ui_option_default_display">"預設顯示"</string>
     <string name="ui_option_separate_display">"獨立顯示"</string>
     <string name="ui_option_hide">"隱藏"</string>

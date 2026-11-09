@@ -1,7 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="ui_network_icon_position">Change Wi-Fi and mobile data icon positions</string>
-    <string name="ui_network_icon_position_unchanged">Do not change</string>
-    <string name="ui_network_icon_position_wifi_left">Wi-Fi on the left</string>
-    <string name="ui_network_icon_position_mobile_left">Mobile data on the left</string>
+    <string name="ui_network_icon_position">Keep drawn stacked signal to the right of Wi-Fi</string>
 </resources>

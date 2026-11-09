@@ -3,8 +3,6 @@ package com.rikumi.colorosmod.hooks;
 import static com.rikumi.colorosmod.XposedInit.*;
 
 import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.Paint;
 import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.content.Context;
@@ -45,6 +43,7 @@ public final class SignalHooks {
     private static final WeakHashMap<View, Mobile> mobiles = new WeakHashMap<>();
     private static final WeakHashMap<ViewGroup, View.OnAttachStateChangeListener> containers = new WeakHashMap<>();
     private static final ThreadLocal<ViewGroup> layoutContainer = new ThreadLocal<>();
+    private static final ThreadLocal<Boolean> networkOrderApplied = new ThreadLocal<>();
     private static final HashMap<Integer, Boolean> bottomActivityResources = new HashMap<>();
     private static int mobileActivityId;
     private static ConnectivityManager connectivity;
@@ -87,18 +86,7 @@ public final class SignalHooks {
                     prepare(root);
                     enterLayout(p, root);
                 }
-                @Override protected void afterHookedMethod(MethodHookParam p) {
-                    // applyToView resets each child's translation while updateStates runs.
-                    // Reorder only after all native state translations have been applied.
-                    applyNetworkIconOrder((ViewGroup) p.thisObject);
-                    leaveLayout(p);
-                }
-            });
-            XposedHelpers.findAndHookMethod(container, "onLayout", boolean.class, int.class, int.class,
-                    int.class, int.class, new XC_MethodHook() {
-                @Override protected void afterHookedMethod(MethodHookParam p) {
-                    applyNetworkIconOrder((ViewGroup) p.thisObject);
-                }
+                @Override protected void afterHookedMethod(MethodHookParam p) { leaveLayout(p); }
             });
 
             XposedHelpers.findAndHookMethod(modern, "isIconVisible", new XC_MethodHook() {
@@ -145,7 +133,8 @@ public final class SignalHooks {
                     Mobile mobile = findSignal(p.thisObject);
                     if (mobile == null || mobile.second == null) return;
                     // 分别保存和恢复两排的画布状态，保证上排裁剪不影响下排。
-                    drawStackedSignals(canvas, mobile, mobile.second);
+                    drawUpperSignal(canvas, mobile.signal);
+                    drawLowerSignal(canvas, mobile.signal, mobile.second.signal);
                     p.setResult(null);
                 }
                 @Override protected void afterHookedMethod(MethodHookParam p) {
@@ -154,7 +143,6 @@ public final class SignalHooks {
                 }
             });
             Class<?> mobileView = XposedHelpers.findClass(MOBILE, pkg.classLoader);
-            hookStackedNetworkType(pkg);
             XposedHelpers.findAndHookMethod(mobileView, "dispatchDraw", Canvas.class, new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     Mobile mobile = mobiles.get(p.thisObject);
@@ -177,6 +165,18 @@ public final class SignalHooks {
             Class<?> binder = XposedHelpers.findClass(binding != null
                     ? "com.oplus.systemui.statusbar.pipeline.mobile.ui.view.AbstractOplusStatusBarMobileViewBinder"
                     : "com.oplus.systemui.statusbar.pipeline.mobile.ui.view.OplusStatusBarMobileViewBinder", pkg.classLoader);
+            if (binding != null && android.os.Build.VERSION.SDK_INT >= 37) {
+                XposedHelpers.findAndHookMethod(CONTAINER + "$StatusIconState", pkg.classLoader,
+                        "applyToView", View.class, new XC_MethodHook() {
+                            @Override protected void beforeHookedMethod(MethodHookParam p) {
+                                ViewGroup root = layoutContainer.get();
+                                if (root == null || ((View) p.args[0]).getParent() != root
+                                        || Boolean.TRUE.equals(networkOrderApplied.get())) return;
+                                networkOrderApplied.set(true);
+                                applyNetworkIconOrder(root);
+                            }
+                        });
+            }
             XposedHelpers.findAndHookMethod(binder, "bindCustEx",
                     XposedHelpers.findClass("com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.LocationBasedMobileViewModel", pkg.classLoader),
                     ViewGroup.class, XposedHelpers.findClass("kotlinx.coroutines.flow.Flow", pkg.classLoader),
@@ -239,7 +239,6 @@ public final class SignalHooks {
                 XposedHelpers.findAndHookMethod(binding, "updateSignalIcon", model, new XC_MethodHook() {
                     @Override protected void afterHookedMethod(MethodHookParam p) {
                         Object signal = XposedHelpers.callMethod(p.thisObject, "getIconView");
-                        updateSignalLevels(findSignal(signal), p.args[0]);
                         invalidatePrimary(signal);
                         if (findSignal(signal) != null) requestUpdate();
                     }
@@ -273,7 +272,6 @@ public final class SignalHooks {
                 XposedHelpers.findAndHookMethod(binder, "bindCustEx$updateSignalIcon", ImageView.class, model,
                         new XC_MethodHook() {
                             @Override protected void afterHookedMethod(MethodHookParam p) {
-                                updateSignalLevels(findSignal(p.args[0]), p.args[1]);
                                 invalidatePrimary(p.args[0]);
                                 if (findSignal(p.args[0]) != null) requestUpdate();
                             }
@@ -292,8 +290,10 @@ public final class SignalHooks {
 
     private static void enterLayout(XC_MethodHook.MethodHookParam p, ViewGroup root) {
         p.setObjectExtra("previousSignalContainer", layoutContainer.get());
+        p.setObjectExtra("previousNetworkOrderApplied", networkOrderApplied.get());
         p.setObjectExtra("signalLayoutEntered", true);
         layoutContainer.set(root);
+        networkOrderApplied.set(false);
     }
 
     private static void leaveLayout(XC_MethodHook.MethodHookParam p) {
@@ -301,113 +301,41 @@ public final class SignalHooks {
         ViewGroup previous = (ViewGroup) p.getObjectExtra("previousSignalContainer");
         if (previous == null) layoutContainer.remove();
         else layoutContainer.set(previous);
+        Boolean previousOrder = (Boolean) p.getObjectExtra("previousNetworkOrderApplied");
+        if (previousOrder == null) networkOrderApplied.remove();
+        else networkOrderApplied.set(previousOrder);
     }
 
     private static void applyNetworkIconOrder(ViewGroup root) {
-        int mode = readIntCached(KEY_NETWORK_ICON_POSITION, 0);
-        if (mode != 1 && mode != 2) return;
+        if (!readBoolCached(KEY_MERGE_DUAL_SIGNAL, false)
+                || !readBoolCached(KEY_STACKED_SIGNAL_WIFI_RIGHT, false)) return;
+        int mode = NetworkIconOrder.WIFI;
         int tag = id(root, "status_bar_view_state_tag");
         List<Object> states = new ArrayList<>();
         List<View> views = new ArrayList<>();
-        List<Boolean> hasStates = new ArrayList<>();
         for (int i = 0; i < root.getChildCount(); i++) {
             View view = root.getChildAt(i);
             Object state = view.getTag(tag);
-            int kind = networkIconKind(view);
-            if (state != null) {
-                // Underflow-hidden and merged secondary SIM roots do not occupy a visible slot.
-                if (XposedHelpers.getIntField(state, "visibleState") != 0) continue;
-            } else if (kind == NetworkIconOrder.OTHER || view.getVisibility() != View.VISIBLE
-                    || view.getWidth() <= 0) {
-                // The native ColorOS 17 stacked SIM Compose icon can be added
-                // outside StatusIconController and has no StatusIconState tag.
-                continue;
-            }
+            // Underflow-hidden and merged secondary SIM roots do not occupy a visible slot.
+            if (state == null || XposedHelpers.getIntField(state, "visibleState") != 0) continue;
             states.add(state);
             views.add(view);
-            hasStates.add(state != null);
         }
         int size = states.size();
         float[] x = new float[size], widths = new float[size];
         int[] kinds = new int[size];
         for (int i = 0; i < size; i++) {
             View view = views.get(i);
+            x[i] = ((Number) XposedHelpers.callMethod(states.get(i), "getXTranslation")).floatValue();
             widths[i] = view.getWidth();
-            if (hasStates.get(i)) {
-                float translation = ((Number) XposedHelpers.callMethod(states.get(i), "getXTranslation")).floatValue();
-                // StatusIconState stores translation relative to the child's layout slot.
-                x[i] = view.getLeft() + translation;
-            } else {
-                x[i] = view.getX();
-            }
-            kinds[i] = networkIconKind(view);
+            String name = view.getClass().getName();
+            if (MOBILE.equals(name)) kinds[i] = NetworkIconOrder.MOBILE;
+            else if ("com.oplus.systemui.statusbar.phone.signal.widget.OplusModernStatusBarWifiView".equals(name))
+                kinds[i] = NetworkIconOrder.WIFI;
         }
         float[] positions = NetworkIconOrder.positions(x, widths, kinds, mode);
         for (int i = 0; i < size; i++) {
-            if (positions[i] == x[i]) continue;
-            View view = views.get(i);
-            if (hasStates.get(i)) {
-                Object state = states.get(i);
-                XposedHelpers.callMethod(state, "setXTranslation", positions[i] - view.getLeft());
-                // updateStates has already applied native positions; re-apply
-                // only entries whose physical order changed.
-                XposedHelpers.callMethod(state, "applyToView", view);
-            } else {
-                // State-less native Compose icons use view coordinates directly.
-                view.setTranslationX(positions[i] - view.getLeft());
-            }
-        }
-    }
-
-    private static int networkIconKind(View view) {
-        if (MOBILE.equals(view.getClass().getName()))
-            return NetworkIconOrder.MOBILE;
-        for (Class<?> type = view.getClass(); type != null; type = type.getSuperclass()) {
-            String name = type.getName();
-            if (name.equals("com.oplus.systemui.statusbar.phone.signal.widget.OplusModernStatusBarWifiView")
-                    || name.equals("com.android.systemui.statusbar.pipeline.wifi.ui.view.ModernStatusBarWifiView"))
-                return NetworkIconOrder.WIFI;
-        }
-        int composeKind = stackedComposeNetworkKind(view);
-        if (composeKind != NetworkIconOrder.OTHER) return composeKind;
-        return NetworkIconOrder.OTHER;
-    }
-
-    private static int stackedComposeNetworkKind(View view) {
-        if (!"com.android.systemui.statusbar.pipeline.shared.ui.view.SingleBindableStatusBarComposeIconView"
-                .equals(view.getClass().getName())) return NetworkIconOrder.OTHER;
-        try {
-            String slot = (String) XposedHelpers.callMethod(view, "getSlot");
-            if (slot == null) return NetworkIconOrder.OTHER;
-            String normalized = slot.toLowerCase(java.util.Locale.ROOT);
-            if (normalized.contains("wifi")) return NetworkIconOrder.WIFI;
-            if (normalized.contains("mobile") || normalized.contains("cellular"))
-                return NetworkIconOrder.MOBILE;
-            int slotId = view.getResources().getIdentifier(
-                    "usb_contaminant_not_detected_title", "string", "android");
-            if (slotId != 0 && view.getContext().getString(slotId).equals(slot))
-                return NetworkIconOrder.MOBILE;
-            return NetworkIconOrder.OTHER;
-        } catch (Throwable ignored) { return NetworkIconOrder.OTHER; }
-    }
-
-    private static void hookStackedNetworkType(XC_LoadPackage.LoadPackageParam pkg) {
-        String[] viewModels = {
-                "com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.StackedMobileIconViewModelImpl",
-                "com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.StackedMobileIconViewModelKairos"
-        };
-        for (String name : viewModels) {
-            Class<?> viewModel = XposedHelpers.findClassIfExists(name, pkg.classLoader);
-            if (viewModel == null) continue;
-            try {
-                XposedHelpers.findAndHookMethod(viewModel, "getNetworkTypeIcon", new XC_MethodHook() {
-                    @Override protected void beforeHookedMethod(MethodHookParam p) {
-                        if (networkTypeMode(true) == 2) p.setResult(null);
-                    }
-                });
-            } catch (Throwable t) {
-                log("stacked mobile type mode unavailable for " + name + ": " + t);
-            }
+            if (positions[i] != x[i]) XposedHelpers.callMethod(states.get(i), "setXTranslation", positions[i]);
         }
     }
 
@@ -814,66 +742,44 @@ public final class SignalHooks {
         return view.getResources().getIdentifier(name, "id", "com.android.systemui");
     }
 
-    private static void updateSignalLevels(Mobile mobile, Object model) {
-        if (mobile == null || model == null) return;
+    private static void drawUpperSignal(Canvas canvas, ImageView upper) {
+        Drawable drawable = upper.getDrawable();
+        int width = upper.getWidth(), height = upper.getHeight();
+        if (drawable == null || width <= 0 || height <= 0) return;
+        int save = canvas.save();
         try {
-            mobile.signalLevel = ((Number) XposedHelpers.callMethod(model, "getLevel")).intValue();
-            mobile.signalLevels = ((Number) XposedHelpers.callMethod(model, "getNumberOfLevels")).intValue();
-            mobile.signal.invalidate();
-        } catch (Throwable ignored) { }
+            // 将上排原有绘制范围上下各内缩 0.5dp。
+            float halfDp = 0.5f * density(upper);
+            float oneDp = density(upper);
+            float bottom = height * 0.65f + density(upper);
+            canvas.clipRect(0, halfDp, width, bottom - halfDp);
+            canvas.translate(0, halfDp + halfDp);
+            canvas.scale(1f, Math.max(0f, (bottom - 2f * halfDp - oneDp) / bottom));
+            canvas.translate(upper.getPaddingLeft(), upper.getPaddingTop());
+            canvas.concat(upper.getImageMatrix());
+            drawable.draw(canvas);
+        } finally { canvas.restoreToCount(save); }
     }
 
-    private static void drawStackedSignals(Canvas canvas, Mobile primary, Mobile secondary) {
-        ImageView view = primary.signal;
-        int width = view.getWidth(), height = view.getHeight();
-        int maxLevels = Math.max(primary.signalLevels, secondary.signalLevels);
-        int bars = Math.max(1, maxLevels - 1);
-        if (width <= 0 || height <= 0 || primary.signalLevels <= 0 || secondary.signalLevels <= 0) return;
-
-        float sp = view.getResources().getDisplayMetrics().scaledDensity;
-        boolean fiveBars = bars == 5;
-        float iconWidth = (fiveBars ? 18.5f : 16f) * sp;
-        float iconHeight = 12f * sp;
-        float spacing = (fiveBars ? 1f : 1.5f) * sp;
-        float horizontalPadding = (fiveBars ? 1.5f : 2f) * sp;
-        float baseHeight = (fiveBars ? 3.5f : 4.5f) * sp;
-        float barWidth = (iconWidth - 2 * horizontalPadding - (bars - 1) * spacing) / bars;
-        float xOffset = (width - iconWidth) / 2f + horizontalPadding;
-        float yOffset = (height - iconHeight) / 2f;
-        float secondaryHeight = 3f * sp;
-        float verticalGap = 1.5f * sp;
-        int color = signalColor(view);
-        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        paint.setStyle(Paint.Style.FILL);
-        int primaryCount = Math.min(bars, primary.signalLevels);
-        int secondaryCount = Math.min(bars, secondary.signalLevels);
-        for (int index = 1; index <= bars; index++) {
-            float left = xOffset + (index - 1) * (barWidth + spacing);
-            if (index <= secondaryCount) {
-                float top = yOffset + iconHeight - secondaryHeight;
-                drawSignalBar(canvas, paint, color, secondary.signalLevel, index,
-                        left, top, barWidth, secondaryHeight);
-            }
-            if (index <= primaryCount) {
-                float barHeight = baseHeight + (index - 1) * sp;
-                float bottom = yOffset + iconHeight - secondaryHeight - verticalGap;
-                drawSignalBar(canvas, paint, color, primary.signalLevel, index,
-                        left, bottom - barHeight, barWidth, barHeight);
-            }
+    private static void drawLowerSignal(Canvas canvas, ImageView upper, ImageView lower) {
+        Drawable drawable = lower.getDrawable();
+        int width = upper.getWidth(), height = upper.getHeight();
+        if (drawable == null || drawable.getBounds().isEmpty() || width <= 0 || height <= 0
+                || lower.getWidth() <= 0 || lower.getHeight() <= 0) return;
+        int save = canvas.save();
+        try {
+            // 在原有位置基础上向下移动 0.5dp。
+            float oneDp = density(upper);
+            canvas.translate(0, height * 0.395f + oneDp);
+            canvas.scale(1f, 0.5f);
+            canvas.clipRect(0, height * 0.65f - oneDp, width, height);
+            canvas.scale((float) width / lower.getWidth(), (float) height / lower.getHeight());
+            canvas.translate(lower.getPaddingLeft(), lower.getPaddingTop());
+            canvas.concat(lower.getImageMatrix());
+            drawable.draw(canvas);
+        } finally {
+            canvas.restoreToCount(save);
         }
-    }
-
-    private static int signalColor(ImageView view) {
-        ColorStateList tint = view.getImageTintList();
-        if (tint != null) return tint.getColorForState(view.getDrawableState(), tint.getDefaultColor());
-        return 0xffffffff;
-    }
-
-    private static void drawSignalBar(Canvas canvas, Paint paint, int color, int level, int index,
-                                      float left, float top, float width, float height) {
-        paint.setColor(index <= level ? color : (color & 0x00ffffff) | ((Math.round(Color.alpha(color) * .3f)) << 24));
-        float radius = width / 2f;
-        canvas.drawRoundRect(new RectF(left, top, left + width, top + height), radius, radius, paint);
     }
 
     public static void onSettingsSnapshotPublished() {
@@ -943,6 +849,7 @@ public final class SignalHooks {
         mobiles.clear();
         containers.clear();
         layoutContainer.remove();
+        networkOrderApplied.remove();
         bottomActivityResources.clear();
         mobileActivityId = 0;
     }
@@ -984,7 +891,6 @@ public final class SignalHooks {
         TextView label, roamingLabel;
         int typeVisibility, typeImageVisibility;
         String rat = "";
-        int signalLevel = -1, signalLevels = -1;
         final float groupAlpha;
         final int groupMarginEnd;
         Mobile primary, second;
