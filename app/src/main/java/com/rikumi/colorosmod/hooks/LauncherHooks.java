@@ -1607,24 +1607,44 @@ public final class LauncherHooks {
     }
 
     public static void hookRecentsBackgroundTransparent(final XC_LoadPackage.LoadPackageParam lpparam) {
+        final Class<?> overviewScrimClass;
         try {
-            Class<?> overviewScrimClass = XposedHelpers.findClass(
+            overviewScrimClass = XposedHelpers.findClass(
                     "com.android.launcher3.graphics.OplusOverviewScrim", lpparam.classLoader);
-            XC_MethodHook clearScrim = new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
-                    if (overviewScrimClass.isInstance(param.thisObject)
-                            && readBool(KEY_RECENTS_BG_TRANSPARENT_ENABLED, false)) {
-                        param.args[0] = 0f;
-                    }
+        } catch (Throwable t) {
+            log("HOOK FAIL launcher recents scrim class: " + Log.getStackTraceString(t));
+            return;
+        }
+
+        XC_MethodHook clearScrim = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                if (overviewScrimClass.isInstance(param.thisObject)
+                        && readBool(KEY_RECENTS_BG_TRANSPARENT_ENABLED, false)) {
+                    param.args[0] = 0f;
                 }
-            };
-            // ColorOS 17 的双通道入口改为静态 access$setScrimProgress，
-            // 各入口最终均调用 Scrim 的实现，在父类统一过滤。
+            }
+        };
+        // 桌面状态动画与返回手势分别使用单参数和带 channel 的双参数入口。
+        try {
             XposedHelpers.findAndHookDeclaredMethod(
                     "com.android.launcher3.graphics.Scrim", lpparam.classLoader,
                     "setScrimProgress", float.class, clearScrim);
+            log("HOOK OK launcher Scrim#setScrimProgress(float)");
+        } catch (Throwable t) {
+            log("HOOK FAIL launcher Scrim#setScrimProgress(float): " + Log.getStackTraceString(t));
+        }
 
+        try {
+            XposedHelpers.findAndHookDeclaredMethod(
+                    "com.android.launcher3.graphics.Scrim", lpparam.classLoader,
+                    "setScrimProgress", float.class, int.class, clearScrim);
+            log("HOOK OK launcher Scrim#setScrimProgress(float,int)");
+        } catch (Throwable t) {
+            log("HOOK FAIL launcher Scrim#setScrimProgress(float,int): " + Log.getStackTraceString(t));
+        }
+
+        try {
             XposedHelpers.findAndHookMethod(
                     "com.android.launcher3.graphics.Scrim", lpparam.classLoader,
                     "draw", Canvas.class, new XC_MethodHook() {
@@ -1636,9 +1656,8 @@ public final class LauncherHooks {
                             }
                         }
                     });
-
         } catch (Throwable t) {
-            log("HOOK FAIL launcher recents scrim: " + Log.getStackTraceString(t));
+            log("HOOK FAIL launcher recents scrim draw: " + Log.getStackTraceString(t));
         }
 
         try {
