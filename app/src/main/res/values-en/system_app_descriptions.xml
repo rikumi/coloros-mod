@@ -128,7 +128,7 @@
     <string name="system_app_description_engineer_network">Telephony engineering tests, network diagnostics</string>
     <string name="system_app_description_esim">eSIM downloads and management</string>
     <string name="system_app_description_ether">Game performance control, cloud policies, thermal prediction</string>
-    <string name="system_app_description_exsystem">vendor system extension services</string>
+    <string name="system_app_description_exsystem">Affects screenshots and other core system functions</string>
     <string name="system_app_description_eyeprotect">Eye comfort display, color temperature controls</string>
     <string name="system_app_description_facebook_pending">Social feeds, messaging</string>
     <string name="system_app_description_facebook_service_pending">Facebook service integration</string>
@@ -342,7 +342,7 @@
     <string name="system_app_description_scene">scene recognition and services</string>
     <string name="system_app_description_screen_recorder">system screen recording unavailable</string>
     <string name="system_app_description_screen_share">Screen sharing, remote assistance</string>
-    <string name="system_app_description_screenshot">Native screenshots, scrolling capture, and editing</string>
+    <string name="system_app_description_screenshot">Affects system screenshot functionality</string>
     <string name="system_app_description_sdk_sandbox">Android SDK Runtime isolation and SDK activity hosting</string>
     <string name="system_app_description_search">Home screen search, app and content search</string>
     <string name="system_app_description_search_pending">Home screen search, app and content search</string>

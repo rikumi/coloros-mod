@@ -128,7 +128,7 @@
     <string name="system_app_description_engineer_network">通信工程测试、网络调试</string>
     <string name="system_app_description_esim"> eSIM 下载和管理</string>
     <string name="system_app_description_ether">游戏性能调控、云控策略、温度预测</string>
-    <string name="system_app_description_exsystem">厂商系统扩展服务</string>
+    <string name="system_app_description_exsystem">影响截屏等核心系统功能</string>
     <string name="system_app_description_eyeprotect">护眼显示、色温调节</string>
     <string name="system_app_description_facebook_pending">社交动态、即时通信</string>
     <string name="system_app_description_facebook_service_pending">Facebook 服务集成</string>
@@ -342,7 +342,7 @@
     <string name="system_app_description_scene">场景识别、场景服务</string>
     <string name="system_app_description_screen_recorder">系统录屏</string>
     <string name="system_app_description_screen_share">屏幕共享、远程协助</string>
-    <string name="system_app_description_screenshot">原生截屏、长截图及截图编辑</string>
+    <string name="system_app_description_screenshot">影响系统截屏功能</string>
     <string name="system_app_description_sdk_sandbox">Android SDK Runtime 隔离运行及 SDK 界面承载</string>
     <string name="system_app_description_search">桌面搜索、应用与内容搜索</string>
     <string name="system_app_description_search_pending">桌面搜索、应用与内容搜索</string>

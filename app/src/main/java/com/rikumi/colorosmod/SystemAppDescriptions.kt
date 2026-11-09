@@ -42,6 +42,8 @@ internal object SystemAppDescriptions {
         "com.google.android.gms.policy_sidecar_aps" to R.string.system_app_recommendation_keep,
         "com.android.systemui.overlay.fingerprint.anim.melodicstream.icon" to R.string.system_app_recommendation_removable,
         "com.android.systemui.overlay.fingerprint.anim.melodicstream.press" to R.string.system_app_recommendation_removable,
+        "com.oplus.screenshot" to R.string.system_app_recommendation_keep,
+        "com.oplus.exsystemservice" to R.string.system_app_recommendation_keep,
         // ColorOS 17 PKT110: static dependency review; no uninstall/runtime validation.
         "com.juphoon.cloud.sdkoverlay" to R.string.system_app_recommendation_keep,
         "com.ct.ertclib.dc.overlay" to R.string.system_app_recommendation_keep,
@@ -219,6 +221,7 @@ internal object SystemAppDescriptions {
         "com.android.captiveportallogin",
         "com.android.photopicker",
         "com.oplus.screenshot",
+        "com.oplus.exsystemservice",
         "com.android.nfc",
         "com.android.se",
         "com.android.settings.intelligence",
