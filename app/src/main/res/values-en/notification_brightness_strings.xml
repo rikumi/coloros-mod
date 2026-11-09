@@ -4,6 +4,4 @@
     <string name="ui_qs_bg_opacity">Custom tile background opacity</string>
     <string name="ui_notification_bg_brightness">Custom notification background brightness</string>
     <string name="ui_notification_bg_opacity">Custom notification background opacity</string>
-    <string name="ui_qs_bg_enhancement">Custom tile background saturation boost</string>
-    <string name="ui_notification_bg_enhancement">Custom notification background saturation boost</string>
 </resources>

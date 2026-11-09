@@ -10,7 +10,6 @@ import android.graphics.drawable.ColorDrawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
-import com.rikumi.colorosmod.TileBackgroundEnhancement;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -79,21 +78,6 @@ final class MaterialBackgroundBrightnessHooks {
             Class<?> renderer = XposedHelpers.findClass(
                     "com.oplusos.systemui.common.blurability.platformblur.PlatformBlurDrawable", lp.classLoader);
             platformRenderer = renderer;
-            TileBackgroundSaturationHooks.hook(lp.classLoader);
-            // The source list identifies the surface even if the caller's
-            // PlatformBlurDrawable.applyBlurConfig was inlined by ART.
-            Class<?> blend = XposedHelpers.findClass("com.oplus.posteffect.drawable.BlendDrawable", lp.classLoader);
-            XposedHelpers.findAndHookMethod(blend, "setShaderBlendParams", ArrayList.class, new XC_MethodHook() {
-                @Override protected void afterHookedMethod(MethodHookParam p) {
-                    if (p.hasThrowable()) return;
-                    WeakReference<Object> source;
-                    synchronized (MaterialBackgroundBrightnessHooks.class) {
-                        source = shaderSources.get(new Key(p.args[0]));
-                    }
-                    Object config = source == null ? null : source.get();
-                    if (config != null) applySaturation(p.thisObject, kind(config));
-                }
-            });
             // Modify the actual renderer output. The helper may have been inlined;
             // tagging its input and hooking the helper does not guarantee execution.
             XposedBridge.hookAllMethods(renderer, "applyBlurConfig", new XC_MethodHook() {
@@ -205,20 +189,10 @@ final class MaterialBackgroundBrightnessHooks {
         } catch (Throwable error) { log("material background brightness hook failed: " + error); }
     }
 
-    private static void applySaturation(Object drawable, Integer kind) {
-        TileBackgroundSaturationHooks.Surface surface = null;
-        if (!restoring) {
-            if (Integer.valueOf(TILE).equals(kind)) surface = TileBackgroundSaturationHooks.Surface.TILE;
-            else if (Integer.valueOf(NOTIFICATION).equals(kind)) surface = TileBackgroundSaturationHooks.Surface.NOTIFICATION;
-        }
-        TileBackgroundSaturationHooks.apply(drawable, surface);
-    }
-
     @SuppressWarnings("unchecked")
     private static void applyToRenderer(Object renderer, Object config, float blurAmount) {
         Integer kind = kind(config);
         Object drawable = XposedHelpers.getObjectField(renderer, "blurDrawable");
-        applySaturation(drawable, kind);
         if (restoring || kind == null) return;
         String enabled = kind == TILE ? "qs_bg_brightness_enabled" : NotificationBackgroundBrightnessHooks.ENABLED;
         String value = kind == TILE ? "qs_bg_brightness_percent" : NotificationBackgroundBrightnessHooks.VALUE;
@@ -336,8 +310,7 @@ final class MaterialBackgroundBrightnessHooks {
     }
 
     private static boolean tileMaterialEnabled() {
-        return readBoolCached("qs_bg_brightness_enabled", false) || readBoolCached("qs_bg_opacity_enabled", false)
-                || readBoolCached(TileBackgroundEnhancement.ENABLED, false);
+        return readBoolCached("qs_bg_brightness_enabled", false) || readBoolCached("qs_bg_opacity_enabled", false);
     }
 
     private static int tileOpacityPercent() {
@@ -402,14 +375,10 @@ final class MaterialBackgroundBrightnessHooks {
     static void refresh() {
         String settings = (readBoolCached("qs_bg_brightness_enabled", false) ? "on:" + percent("qs_bg_brightness_percent", 75) : "off")
                 + ":" + (readBoolCached("qs_bg_opacity_enabled", false) ? "on:" + tileOpacityPercent() : "off")
-                + ":" + (readBoolCached(TileBackgroundEnhancement.ENABLED, false) ? "on:" + TileBackgroundEnhancement.clamp(
-                    readIntCached(TileBackgroundEnhancement.VALUE, TileBackgroundEnhancement.DEFAULT)) : "off")
                 + ":" + (readBoolCached(NotificationBackgroundBrightnessHooks.ENABLED, false)
                     ? "on:" + NotificationBackgroundBrightnessHooks.brightnessPercent() : "off")
                 + ":" + (readBoolCached(NotificationBackgroundBrightnessHooks.OPACITY_ENABLED, false)
-                    ? "on:" + NotificationBackgroundBrightnessHooks.opacityPercent() : "off")
-                + ":" + (readBoolCached(TileBackgroundEnhancement.NOTIFICATION_ENABLED, false) ? "on:" + TileBackgroundEnhancement.clamp(
-                    readIntCached(TileBackgroundEnhancement.NOTIFICATION_VALUE, TileBackgroundEnhancement.DEFAULT)) : "off");
+                    ? "on:" + NotificationBackgroundBrightnessHooks.opacityPercent() : "off");
         if (settings.equals(lastSettings)) return;
         lastSettings = settings;
         new Handler(Looper.getMainLooper()).post(() -> {
@@ -456,7 +425,6 @@ final class MaterialBackgroundBrightnessHooks {
     }
     static void cleanup() {
         restoring = true;
-        TileBackgroundSaturationHooks.cleanup();
         refreshProxies(tileProxies, TILE);
         refreshProxies(notificationProxies, NOTIFICATION);
         refreshGroupHeaders();
