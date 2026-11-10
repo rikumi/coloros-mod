@@ -69,6 +69,7 @@
     <string name="system_app_description_car_key">Digital car keys</string>
     <string name="system_app_description_carlink">Car connectivity, in-car apps</string>
     <string name="system_app_description_carrier_config">carrier network and call configuration</string>
+    <string name="system_app_description_carrier_config_keep">Affects essential telephony and SMS functions</string>
     <string name="system_app_description_carrier_helper">device support services</string>
     <string name="system_app_description_carrier_notices_pending">Regional configuration notifications</string>
     <string name="system_app_description_carrier_setup">Carrier app defaults and network activation setup</string>

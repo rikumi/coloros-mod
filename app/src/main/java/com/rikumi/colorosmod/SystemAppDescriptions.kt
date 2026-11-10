@@ -44,6 +44,7 @@ internal object SystemAppDescriptions {
         "com.android.systemui.overlay.fingerprint.anim.melodicstream.press" to R.string.system_app_recommendation_removable,
         "com.oplus.screenshot" to R.string.system_app_recommendation_keep,
         "com.oplus.exsystemservice" to R.string.system_app_recommendation_keep,
+        "com.android.carrierconfig" to R.string.system_app_recommendation_keep,
         // ColorOS 17 PKT110: static dependency review; no uninstall/runtime validation.
         "com.juphoon.cloud.sdkoverlay" to R.string.system_app_recommendation_keep,
         "com.ct.ertclib.dc.overlay" to R.string.system_app_recommendation_keep,
@@ -517,7 +518,7 @@ internal object SystemAppDescriptions {
         "com.android.calllogbackup" to R.string.system_app_description_calllog_backup,
         "com.android.cameraextensions" to R.string.system_app_description_camera_extensions,
         "com.android.captiveportallogin" to R.string.system_app_description_portal,
-        "com.android.carrierconfig" to R.string.system_app_description_carrier_config,
+        "com.android.carrierconfig" to R.string.system_app_description_carrier_config_keep,
         "com.android.carrierconfig.oplus.overlay" to R.string.system_app_description_overlay_telephony_pending,
         "com.android.carrierconfig.overlay.product" to R.string.system_app_description_overlay_telephony_pending,
         "com.android.carrierconfig.platform" to R.string.system_app_description_carrier_config,

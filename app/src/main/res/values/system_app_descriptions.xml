@@ -69,6 +69,7 @@
     <string name="system_app_description_car_key">数字车钥匙</string>
     <string name="system_app_description_carlink">车机互联、车载应用</string>
     <string name="system_app_description_carrier_config">运营商网络和通话配置</string>
+    <string name="system_app_description_carrier_config_keep">影响电话短信等基础通信功能</string>
     <string name="system_app_description_carrier_helper">设备辅助服务</string>
     <string name="system_app_description_carrier_notices_pending">地区配置通知</string>
     <string name="system_app_description_carrier_setup">运营商默认应用和网络开通引导</string>

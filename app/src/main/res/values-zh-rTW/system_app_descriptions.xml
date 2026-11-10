@@ -69,6 +69,7 @@
     <string name="system_app_description_car_key">數字車鑰匙</string>
     <string name="system_app_description_carlink">車機互聯、車載應用程式</string>
     <string name="system_app_description_carrier_config">運營商網路和通話配置</string>
+    <string name="system_app_description_carrier_config_keep">影響電話簡訊等基礎通信功能</string>
     <string name="system_app_description_carrier_helper">裝置輔助服務</string>
     <string name="system_app_description_carrier_notices_pending">地區配置通知</string>
     <string name="system_app_description_carrier_setup">運營商默認應用程式和網路開通引導</string>

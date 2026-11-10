@@ -99,7 +99,14 @@ public final class SystemIconPackHooks {
             if (context == null) return original;
             var resources = (android.content.res.Resources) p.thisObject;
             ResourceIcon icon = resourceIcon(context, resources, (Integer) p.args[0]);
-            return icon == null ? original : replace(context, context.getPackageManager(), icon.item(), icon.app(), (Integer) p.args[1], original);
+            if (icon == null) return original;
+            Drawable themed = themed(context, context.getPackageManager(), icon.item(), icon.app(), (Integer) p.args[1]);
+            if (themed == null) return original;
+            // Splash screens apply their own icon mask and scale. Return the icon-pack
+            // drawable at that level instead of rasterizing it into the legacy source
+            // icon, which would preserve the source icon's nested background/mask.
+            if (isSplashScreenIconLoad()) return themed;
+            return SystemIconDrawableCompat.replace(context.getResources(), original, themed);
         }, int.class, int.class, android.content.res.Resources.Theme.class);
         install(android.graphics.BitmapFactory.class, "decodeResource", p -> {
             if (!(p.getResult() instanceof Bitmap original)) return p.getResult();
@@ -199,6 +206,17 @@ public final class SystemIconPackHooks {
             Object current = XposedHelpers.callStaticMethod(thread, "currentActivityThread");
             return current == null ? null : (Context) XposedHelpers.callMethod(current, "getSystemContext");
         } catch (Throwable ignored) { return null; }
+    }
+    private static boolean isSplashScreenIconLoad() {
+        try {
+            for (StackTraceElement frame : Thread.currentThread().getStackTrace()) {
+                String owner = frame.getClassName();
+                if (owner.startsWith("android.window.SplashScreenView")
+                        || owner.startsWith("com.android.wm.shell.startingsurface.SplashscreenContentDrawer")
+                        || owner.startsWith("com.android.wm.shell.startingsurface.SplashScreenViewBuilder")) return true;
+            }
+        } catch (Throwable ignored) { }
+        return false;
     }
     private record ResourceIcon(PackageItemInfo item, ApplicationInfo app) {}
     private static ResourceIcon resourceIcon(Context context, android.content.res.Resources resources, int id) {
