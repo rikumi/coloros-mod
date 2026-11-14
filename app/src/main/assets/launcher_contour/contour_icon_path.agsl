@@ -1,0 +1,91 @@
+uniform float uGlowDepth;
+uniform float uGlowAlpha;
+uniform float3 uGlowGeometry;
+uniform shader uMask;
+uniform float uMaskDepth;
+uniform float2 u_size; uniform float u_corner; uniform float u_weight;
+layout(color) uniform vec4 uColor;
+uniform float uRatio;
+uniform float u_fadeDistance;
+uniform float[6] uNearLineParams;
+uniform float[6] uFarLineParams;
+struct GradientInputParams {float2 size; float weight; float corner; float sdf; float2 resolution; float2 pos;};
+struct LineParams {float width;float alpha;float2 fadeToSides;float2 fadeTowardsCenter;};
+struct GradientStrokeResult {vec4 color;float sdf;};
+float RBox(float2 p,float2 b,float r){
+    float2 q=abs(p)-b+r;
+    return min(max(q.x,q.y),0.)+length(max(q,0.))-r;
+}
+float getDis(float2 pos,float2 halfsize){
+    float2 rect=abs(pos-halfsize);
+    return rect.x+rect.y;
+}
+float3 getLineFadeTowardCenter(float2 u_lineFadeTowardsCenter, float lineWidth) {
+    float x = clamp(u_lineFadeTowardsCenter.x, 0.0000001, 1.0);
+    float y = clamp(u_lineFadeTowardsCenter.y, 0.0000001, 1.0 - x);
+    float z = clamp((1.0 - x - y), 0.00000001, 1.0);
+    float3 lineFadeTowardsCenter = lineWidth * float3(x, y, z);
+    lineFadeTowardsCenter.y += lineFadeTowardsCenter.x;
+    lineFadeTowardsCenter.z += lineFadeTowardsCenter.y;
+    lineFadeTowardsCenter *= -1.;
+    return lineFadeTowardsCenter;
+}
+float getLineAlpha(LineParams lineParams, float rectSdf, float distanceAll, float distancePart) {
+    float2 fade = float2(lineParams.fadeToSides.x, lineParams.fadeToSides.x + lineParams.fadeToSides.y);
+    float alpha = lineParams.alpha*smoothstep(fade.y*distanceAll, fade.x*distanceAll, distancePart);
+    float3 fadeTowardsCenter = getLineFadeTowardCenter(lineParams.fadeTowardsCenter, lineParams.width);
+    float sdf = smoothstep(0., fadeTowardsCenter.x, rectSdf)-smoothstep(fadeTowardsCenter.y,fadeTowardsCenter.z,rectSdf);
+    return alpha * sdf;
+}
+GradientStrokeResult gradientStrokeColorWithRatio(float2 fragCoord, GradientInputParams inputParams) {
+    float2 halfSize = inputParams.size / 2.0;
+    float2 pos = fragCoord - 0.5*inputParams.resolution - inputParams.pos;
+    float2 dir_pos= pos / max(length(pos), 0.001);
+    float2 dirAbs_pos = abs(dir_pos);
+    float2 pos_n = min(float2(dirAbs_pos.xy*halfSize.yx/max(vec2(.001),dirAbs_pos.yx)),halfSize)*sign(dir_pos);
+    float2 halfSize_symobol = float2(-halfSize.y,halfSize.x);
+    float flag = mix(-1.0,1.0, step(uRatio,0.5))*dot(halfSize_symobol,pos_n);
+    float distanceAll= inputParams.size.x + inputParams.size.y;
+    float dis_point = distanceAll*min(uRatio,1.0-uRatio)*2.0;
+    float dis_pos = getDis(pos_n,halfSize);
+    float distance_near = mix(dis_point+dis_pos,abs(dis_point-dis_pos),step(0.,flag));
+    distance_near=min(2.*distanceAll-distance_near,distance_near);
+    float corner = min(inputParams.corner, min(halfSize.x, halfSize.y));
+float rectSdf = -uMask.eval(fragCoord).r * uMaskDepth;
+LineParams nearLineParams = LineParams(uNearLineParams[0], uNearLineParams[1], float2(uNearLineParams[2], uNearLineParams[3]), float2(uNearLineParams[4], uNearLineParams[5]));
+   LineParams farLineParams = LineParams(uFarLineParams[0], uFarLineParams[1], float2(uFarLineParams[2], uFarLineParams[3]), float2(uFarLineParams[4], uFarLineParams[5]));
+   float lineNearAlpha = getLineAlpha(nearLineParams, rectSdf, u_fadeDistance, distance_near);
+   float lineFarAlpha = getLineAlpha(farLineParams, rectSdf, u_fadeDistance, distanceAll-distance_near);
+   float lineAlpha = clamp(lineNearAlpha + lineFarAlpha, 0.0, 1.0);
+   return GradientStrokeResult(vec4(uColor.xyz, lineAlpha), rectSdf);
+}
+// UX Design 17.0.18: ShadowStyle 2 and a5.e's dimension-independent padding.
+// Reflect the native vertical offset to direct the inner light toward Flyme's bottom edge.
+float bottomGlow(vec2 coords) {
+    vec2 halfSize = u_size * 0.5;
+    vec2 pos = coords - halfSize;
+    pos.y += uGlowGeometry.z;
+    vec2 expanded = halfSize + uGlowGeometry.xy;
+    float corner = min(min(expanded.x, expanded.y), max(uGlowDepth * 1.2, u_corner));
+    float sdf = RBox(pos, expanded, corner);
+    float fade = smoothstep(-max(uGlowDepth, 0.001), 0.0, sdf);
+    fade = pow(fade, 4.0) * 0.7 + fade * 0.3;
+    // The source effect surrounds the whole shape. This module requests bottom light only.
+    float bottom = smoothstep(u_size.y * 0.45, u_size.y * 0.65, coords.y);
+    float alpha = uGlowAlpha * fade;
+    // Native ShadowEdge alpha dithering with soft-light blending.
+    vec2 uv = coords * 0.013;
+    float noise = fract(sin(dot(uv.yx, vec2(79.1214, 78.233))) * 43760.5453);
+    float n = clamp((noise - 0.5) * 0.01 + 0.5, 0.0, 1.0);
+    float low = alpha - (1.0 - 2.0 * n) * alpha * (1.0 - alpha);
+    float high = alpha + (2.0 * n - 1.0) * (sqrt(alpha) - alpha);
+    return clamp(mix(low, high, step(0.5, n)), 0.0, 1.0) * bottom;
+}
+vec4 main(vec2 coords) {
+ GradientInputParams inputParams = GradientInputParams(u_size, u_weight, u_corner, 0.0, u_size, float2(0.0, 0.0));
+ GradientStrokeResult strokeResult = gradientStrokeColorWithRatio(coords, inputParams);
+ float antiAliasing = uMask.eval(coords).a;
+ float glow = bottomGlow(coords);
+ float alpha = clamp(strokeResult.color.a + glow, 0.0, 1.0) * antiAliasing;
+ return vec4(strokeResult.color.rgb * alpha, alpha);
+}

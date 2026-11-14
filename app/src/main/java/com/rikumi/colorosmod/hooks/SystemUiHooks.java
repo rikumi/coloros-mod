@@ -70,6 +70,7 @@ public final class SystemUiHooks {
         // Feature 18 — 悬浮小窗贴边挂机: 真正的提交逻辑在 system_server(android 作用域), 见 hookFloatWindowEdgeHangSystemServer。
         GestureHooks.hookGestureBarHeight(lpparam);
         AppNavigationHooks.hook(lpparam);
+        SplashScreenHooks.hook(lpparam);
         FloatWindowRotationHooks.hook(lpparam);
         GestureHooks.hookGestureBarLongPressDisable(lpparam);
         GestureHooks.hookMBack(lpparam);

@@ -1285,6 +1285,7 @@ public class XposedInit extends XposedModule {
         } else if ("com.oplus.athena".equals(lpparam.packageName)) {
             com.rikumi.colorosmod.hooks.RecentsClearMemoryHooks.hookAthena(lpparam);
         } else if ("android".equals(lpparam.packageName)) {
+            com.rikumi.colorosmod.hooks.SplashScreenHooks.hookSystemServer(lpparam.classLoader, this);
             com.rikumi.colorosmod.hooks.MBackQuickBackBypass.hook(lpparam.classLoader);
             com.rikumi.colorosmod.hooks.PlayStoreUpdateHooks.hook(lpparam);
             com.rikumi.colorosmod.hooks.WifiBssidHooks.hook(lpparam);

@@ -55,6 +55,8 @@ public final class LauncherHooks {
     public static void onSettingsSnapshotPublished(java.util.Map<String, Integer> settings) {
         TaskbarGestureHooks.onSettingsSnapshotPublished();
         LauncherIconGapHooks.onSettingsSnapshotPublished(settings);
+        LauncherIconContourHooks.onSettingsSnapshotPublished(settings);
+        LauncherWidgetContourHooks.onSettingsSnapshotPublished(settings);
         FolderGridHooks.onSettingsSnapshotPublished(settings);
         LauncherPopupBrightnessHooks.refresh();
         LauncherStartupRefresh.onSettingsSnapshotPublished();
@@ -732,6 +734,8 @@ public final class LauncherHooks {
         LauncherPopupBrightnessHooks.cleanup();
         LauncherIdleRefresh.cleanup();
         LauncherIconClarityHooks.cleanup();
+        LauncherIconContourHooks.cleanup();
+        LauncherWidgetContourHooks.cleanup();
         DrawerInstallTimeHooks.cleanupForHotReload();
         sLastPowerSaveTaskLockEnabled = null;
         new android.os.Handler(android.os.Looper.getMainLooper()).removeCallbacksAndMessages(sPowerSaveTaskLockToken);
@@ -927,6 +931,10 @@ public final class LauncherHooks {
 
     public static void hookLauncher(final XC_LoadPackage.LoadPackageParam lpparam) {
         log(">>> matched launcher, classLoader=" + lpparam.classLoader);
+        try { LauncherIconContourHooks.hook(lpparam); }
+        catch (Throwable error) { log("launcher icon contour unavailable: " + error); }
+        try { LauncherWidgetContourHooks.hook(lpparam); }
+        catch (Throwable error) { log("launcher widget contour unavailable: " + error); }
         try { TaskbarGestureHooks.hook(lpparam); }
         catch (Throwable error) { log("taskbar gesture hooks unavailable: " + error); }
         try { LauncherIconClarityHooks.hook(lpparam); }

@@ -3,6 +3,7 @@ package com.rikumi.colorosmod.xposed;
 import android.util.Log;
 
 import java.lang.reflect.Member;
+import java.lang.reflect.Method;
 import java.util.Set;
 
 import io.github.libxposed.api.XposedInterface;
@@ -46,6 +47,11 @@ public final class XposedBridge {
 
     public static void hookMethod(Member hookMethod, XC_MethodHook callback) {
         XposedHelpers.hookMethod(hookMethod, callback);
+    }
+
+    public static void deoptimize(Method method) {
+        try { framework().deoptimize(method); }
+        catch (Throwable ignored) {}
     }
 
     public static Set<XC_MethodHook.Unhook> hookAllConstructors(Class<?> hookClass, XC_MethodHook callback) {

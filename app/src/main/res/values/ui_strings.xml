@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="ui_launcher_icon_contour">图标轮廓光</string>
+    <string name="ui_launcher_widget_contour">小组件背景轮廓光</string>
     <string name="ui_desktop_layout">"桌面布局"</string>
     <string name="ui_icon_gap">"增加图标与名称间距"</string>
     <string name="ui_drawer">"桌面抽屉"</string>
@@ -98,6 +100,10 @@
     <string name="ui_animation_scale">"微调系统动画时长"</string>
     <string name="ui_unit_multiplier">"倍"</string>
     <string name="ui_gesture_visual">"手势视觉"</string>
+    <string name="ui_app_splash_screen">"应用 SplashScreen"</string>
+    <string name="ui_splash_screen_default">"默认"</string>
+    <string name="ui_splash_screen_hide">"隐藏 SplashScreen"</string>
+    <string name="ui_splash_screen_hide_icon">"隐藏图标"</string>
     <string name="ui_gesture_bar_width">"调整手势条长度"</string>
     <string name="ui_gesture_bar_animation">"禁止手势条动画效果"</string>
     <string name="ui_gesture_bar_animation_hint">"理论可解决 OxygenOS 关不掉助手动画的问题"</string>
