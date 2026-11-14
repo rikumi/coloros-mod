@@ -30,10 +30,12 @@ public final class FingerprintRingHooks {
     private static final String RING = "colorosmod.fingerprintRing";
     private static WeakReference<Object> sMech = new WeakReference<>(null);
     private static volatile boolean sEnabled;
+    private static FingerprintIconFields sIconFields;
 
     public static void hook(XC_LoadPackage.LoadPackageParam lp) {
         try {
             Class<?> iconClass = XposedHelpers.findClass(ICON, lp.classLoader);
+            sIconFields = new FingerprintIconFields(XposedHelpers.findClass(MECH, lp.classLoader));
             XposedBridge.hookAllConstructors(iconClass, new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     sMech = new WeakReference<>(p.args[1]);
@@ -69,19 +71,16 @@ public final class FingerprintRingHooks {
                     });
             XposedHelpers.findAndHookMethod(MECH, lp.classLoader, "loadAnimDrawables",
                     new XC_MethodHook() {
-                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                        @Override protected void afterHookedMethod(MethodHookParam p) throws IllegalAccessException {
                             sMech = new WeakReference<>(p.thisObject);
                             if (!readBool(KEY_KEYGUARD_FINGERPRINT_RING_ENABLED, false)) return;
                             // Missing overlays may leave either field null. Native hit testing also
                             // requires these fields, so a drawing-only replacement is insufficient.
-                            for (String field : new String[]{"imMobileDrawable", "imMobileDrawableDark"}) {
-                                if (XposedHelpers.getObjectField(p.thisObject, field) == null) {
-                                    XposedHelpers.setObjectField(p.thisObject, field, new RingDrawable());
-                                }
-                            }
+                            sIconFields.fillMissing(p.thisObject, RingDrawable::new);
                             ImageView view = (ImageView) XposedHelpers.getObjectField(p.thisObject, "fpIcon");
                             if (view != null && view.getDrawable() == null) {
-                                view.setImageDrawable((Drawable) XposedHelpers.getObjectField(p.thisObject, "imMobileDrawable"));
+                                Object drawable = sIconFields.first(p.thisObject);
+                                view.setImageDrawable(drawable instanceof Drawable art ? art : new RingDrawable());
                             }
                         }
                     });
@@ -100,11 +99,7 @@ public final class FingerprintRingHooks {
             if (mech == null) return;
             try {
                 // Discard only our missing-resource placeholders before restoring native art.
-                for (String field : new String[]{"imMobileDrawable", "imMobileDrawableDark"}) {
-                    if (XposedHelpers.getObjectField(mech, field) instanceof RingDrawable) {
-                        XposedHelpers.setObjectField(mech, field, null);
-                    }
-                }
+                sIconFields.clearMatching(mech, drawable -> drawable instanceof RingDrawable);
                 ImageView icon = (ImageView) XposedHelpers.getObjectField(mech, "fpIcon");
                 if (icon != null && icon.getDrawable() instanceof RingDrawable) icon.setImageDrawable(null);
                 XposedHelpers.callMethod(mech, "loadAnimDrawables");

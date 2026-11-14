@@ -15,49 +15,48 @@ import java.util.WeakHashMap;
 public final class DrawerIndexHooks {
     private static final String DRAWER_VIEW = "colorosmod_drawer_index_view";
     private static final Map<Object, Boolean> helpers = Collections.synchronizedMap(new WeakHashMap<>());
+    private static DrawerIndexAccess access;
 
     public static void hook(XC_LoadPackage.LoadPackageParam lp) {
         try {
             Class<?> helper = XposedHelpers.findClass(
                     "com.android.launcher3.allapps.LetterIndexFastScrollHelper", lp.classLoader);
+            access = new DrawerIndexAccess(helper);
             XposedBridge.hookAllConstructors(helper, new XC_MethodHook() {
-                @Override protected void afterHookedMethod(MethodHookParam p) {
+                @Override protected void afterHookedMethod(MethodHookParam p) throws ReflectiveOperationException {
                     if (!isDrawer(p.thisObject)) return;
                     helpers.put(p.thisObject, Boolean.TRUE);
-                    Object view = XposedHelpers.callMethod(p.thisObject, "getMFastScroller");
+                    Object view = access.fastScroller(p.thisObject);
                     if (view != null) {
                         XposedHelpers.setAdditionalInstanceField(view, DRAWER_VIEW, Boolean.TRUE);
                         if (DrawerInstallTimeHooks.enabled()) XposedHelpers.callMethod(view, "setVisibility", 8);
                     }
                 }
             });
-            hookVisibility(helper, Integer.class);
-            // ColorOS 15.8.21 takes only Integer; newer list implementations may add the index.
-            hookVisibility(helper, Integer.class, int.class);
+            // New launchers inline visibility calculation into this method, removing
+            // getFastScrollerVisibility. Gate the stable update entry instead.
+            XposedBridge.hookAllMethods(helper, "updateFastScrollerVisibility", new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) throws ReflectiveOperationException {
+                    if (!blocked(p.thisObject)) return;
+                    Object view = access.fastScroller(p.thisObject);
+                    if (view != null) XposedHelpers.callMethod(view, "setVisibility", 8);
+                    p.setResult(null);
+                }
+            });
             hookHelperMethod(helper, "isHitInParent", new Class<?>[]{MotionEvent.class}, false);
             hookHelperMethod(helper, "isInContinueEvent", new Class<?>[0], false);
-            hookHelperMethod(helper, "onKey", new Class<?>[]{CharSequence.class}, true);
-            hookHelperMethod(helper, "onKey",
-                    new Class<?>[]{int.class, int.class, int.class, CharSequence.class}, true);
+            for (String method : new String[]{"onKey", "onNameClick"})
+                XposedBridge.hookAllMethods(helper, method, new XC_MethodHook() {
+                    @Override protected void beforeHookedMethod(MethodHookParam p) {
+                        if (blocked(p.thisObject)) p.setResult(null);
+                    }
+                });
             hookTouchLayout(lp.classLoader);
             hookTouchSearch(lp.classLoader);
             hookSectionChange(lp.classLoader);
             hookRecyclerLetterScroll(lp.classLoader);
             log("HOOK OK drawer index compatibility");
         } catch (Throwable t) { log("HOOK FAIL drawer index gates: " + t); }
-    }
-
-    private static void hookVisibility(Class<?> helper, Class<?>... signature) {
-        try {
-            Object[] args = new Object[signature.length + 1];
-            System.arraycopy(signature, 0, args, 0, signature.length);
-            args[signature.length] = new XC_MethodHook() {
-                @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    if (blocked(p.thisObject)) p.setResult(8);
-                }
-            };
-            XposedHelpers.findAndHookMethod(helper, "getFastScrollerVisibility", args);
-        } catch (Throwable t) { log("drawer fast-scroller visibility signature unavailable: " + t); }
     }
 
     private static void hookHelperMethod(Class<?> helper, String method, Class<?>[] signature,
@@ -160,14 +159,14 @@ public final class DrawerIndexHooks {
     private static void refreshHelper(Object helper) {
         try {
             if (DrawerInstallTimeHooks.enabled()) {
-                Object view = XposedHelpers.callMethod(helper, "getMFastScroller");
+                Object view = access.fastScroller(helper);
                 if (view != null) {
                     Object pending = XposedHelpers.removeAdditionalInstanceField(view,
                             "colorosmod_clear_letter_highlight");
                     if (pending instanceof Runnable) XposedHelpers.callMethod(view, "removeCallbacks", pending);
                     XposedHelpers.callMethod(view, "closing");
                 }
-                XposedHelpers.callMethod(helper, "setCanStartAnim", false);
+                access.disableAnimation(helper);
                 Object recycler = XposedHelpers.callMethod(helper, "getActiveRecyclerView");
                 if (recycler != null) {
                     XposedHelpers.callMethod(recycler, "stopScroll");
