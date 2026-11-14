@@ -562,6 +562,7 @@ public class XposedInit extends XposedModule {
             MergedRadiantHooks.refresh();
             MergedSettingsRotationHooks.refresh();
             StatusBarExtrasHooks.refresh();
+            ChargingInfoHooks.refresh();
             MonochromeNotificationHooks.refresh();
             com.rikumi.colorosmod.hooks.NotificationBackgroundBrightnessHooks.refresh();
             com.rikumi.colorosmod.hooks.RoundNotificationClearAllHooks.refresh();
@@ -796,6 +797,7 @@ public class XposedInit extends XposedModule {
             catch (Throwable t) { log("merged card ratio cleanup failed: " + t); }
             try { StatusBarExtrasHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("status extras hot reload cleanup failed: " + t); }
+            ChargingInfoHooks.cleanupForHotReload();
             try { StatusBarFontHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("status font hot reload cleanup failed: " + t); }
             try { KeyguardHooks.cleanupForHotReload(); }
@@ -901,7 +903,8 @@ public class XposedInit extends XposedModule {
             return false;
         }
         try {
-            Object[] state = new Object[26];
+            Object[] state = new Object[27];
+            state[26] = ChargingInfoHooks.captureHosts();
             state[25] = com.rikumi.colorosmod.hooks.RoundNotificationClearAllHooks.capture();
             state[24] = com.rikumi.colorosmod.hooks.SliderActiveCornersHooks.capture();
             state[22] = com.rikumi.colorosmod.hooks.KeyguardClockFontHooks.captureHotReloadHosts();
@@ -1124,6 +1127,9 @@ public class XposedInit extends XposedModule {
                             if (state.length > 12) StatusBarFontHooks.restoreHotReloadHosts(state[12]);
                             if (state.length > 14) QsHooks.restoreHotReloadNames(state[14]);
                             if (state.length > 15) StatusBarExtrasHooks.restoreHotReloadHosts(state[15]);
+                            if (state.length > 26) ChargingInfoHooks.restoreHosts(state[26]);
+                            if (state.length > 12) ChargingInfoHooks.restoreInRoots(state[12]);
+                            if (state.length > 15) ChargingInfoHooks.restoreInRoots(state[15]);
                             if (state.length > 13) QsHooks.restoreNamesInRoots(state[13]);
                         } catch (Throwable t) {
                             log("onHotReloaded: restore status font hosts failed: " + t);

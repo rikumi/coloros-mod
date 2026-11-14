@@ -9,6 +9,7 @@ import android.database.MatrixCursor;
 import android.net.Uri;
 
 public class SettingsProvider extends ContentProvider {
+    private final ChargingInputReader chargingInputReader = new ChargingInputReader();
     public static final String AUTHORITY = "com.rikumi.colorosmod.settings";
     public static final String PREF_NAME = "settings";
     // 一次性取回全部设置的特殊键, 供被 hook 进程后台预热(见 XposedInit#startSettingsLoader)。
@@ -69,6 +70,27 @@ public class SettingsProvider extends ContentProvider {
 
     @Override
     public android.os.Bundle call(String method, String arg, android.os.Bundle extras) {
+        if (ChargingInfo.METHOD.equals(method)) {
+            Context context = getContext();
+            if (context == null) return null;
+            int uid = android.os.Binder.getCallingUid();
+            boolean allowed = uid == android.os.Process.myUid();
+            try { allowed |= uid == context.getPackageManager().getPackageUid("com.android.systemui", 0); }
+            catch (android.content.pm.PackageManager.NameNotFoundException ignored) {}
+            if (!allowed) throw new SecurityException("Only SystemUI may read charging input");
+            android.os.Bundle result = new android.os.Bundle();
+            SharedPreferences preferences = prefs();
+            int mode = preferences == null ? 0 : preferences.getInt(ChargingInfoHooks.KEY, 0);
+            if (ChargingInfo.enabled(mode)) {
+                long identity = android.os.Binder.clearCallingIdentity();
+                try {
+                    result.putString("sample_micro", chargingInputReader.read(mode == ChargingInfo.POWER_PROTOCOL));
+                    if (mode == ChargingInfo.POWER_PROTOCOL) result.putString("protocol", chargingInputReader.protocol());
+                    result.putString("status", chargingInputReader.status());
+                } finally { android.os.Binder.restoreCallingIdentity(identity); }
+            }
+            return result;
+        }
         if (!FolderGridSettings.NATIVE_GRID.equals(method))
             return super.call(method, arg, extras);
         Context context = getContext();

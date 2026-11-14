@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="ui_statusbar_charging_info">状态栏显示充电功率</string>
+    <string name="ui_charging_info_off">关闭</string>
+    <string name="ui_charging_info_power">功率值</string>
+    <string name="ui_charging_info_voltage_current">电压电流值</string>
+    <string name="ui_charging_info_power_protocol">协议+功率值</string>
     <string name="ui_launcher_icon_contour">图标轮廓光</string>
     <string name="ui_launcher_widget_contour">小组件背景轮廓光</string>
     <string name="ui_desktop_layout">"桌面布局"</string>

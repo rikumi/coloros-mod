@@ -2231,6 +2231,12 @@ public final class LauncherHooks {
 
     public static void hookIndicatorHotseatSize(final XC_LoadPackage.LoadPackageParam lpparam,
                                                   final float density) {
+        if (XposedHelpers.findClassIfExists("com.android.launcher.layoutparam.HotseatParam",
+                lpparam.classLoader) == null) {
+            try { LauncherDockGapHooks.hook(lpparam.classLoader, density); }
+            catch (Throwable t) { log("HOOK FAIL workspace page-to-Dock gap: " + t); }
+            return;
+        }
         try {
             XposedHelpers.findAndHookMethod(
                     "com.android.launcher.layoutparam.HotseatParam", lpparam.classLoader,

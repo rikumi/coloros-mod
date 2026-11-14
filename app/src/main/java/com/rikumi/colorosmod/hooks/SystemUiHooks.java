@@ -65,6 +65,7 @@ public final class SystemUiHooks {
         // Feature 17 — 流体云出现时不隐藏电量百分比: 始终注入, 运行时按 KEY_FLUID_CLOUD_KEEP_PERCENT_ENABLED 门控。
         StatusBarHooks.hookFluidCloudKeepPercent(lpparam);
         StatusBarExtrasHooks.hookPercent(lpparam);
+        com.rikumi.colorosmod.ChargingInfoHooks.hook(lpparam);
         SignalHooks.hookDualSignal(lpparam);
         StatusBarFontHooks.hookStatusBarFont(lpparam);
         // Feature 18 — 悬浮小窗贴边挂机: 真正的提交逻辑在 system_server(android 作用域), 见 hookFloatWindowEdgeHangSystemServer。

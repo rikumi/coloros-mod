@@ -241,6 +241,9 @@ public final class KeyguardHooks {
 
     public static void hookBouncerSwipeBack(final XC_LoadPackage.LoadPackageParam lpparam) {
 
+        try { PasswordDialSwipeHooks.hook(lpparam.classLoader, KeyguardHooks::dismissBouncer); }
+        catch (Throwable t) { log("HOOK FAIL password dial swipe back: " + t); }
+
         try {
             XposedBridge.hookAllConstructors(
                     XposedHelpers.findClass(CLS_STATUS_BAR_KEYGUARD_VIEW_MANAGER, lpparam.classLoader),
