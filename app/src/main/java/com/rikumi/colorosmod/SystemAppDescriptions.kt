@@ -38,6 +38,7 @@ internal object SystemAppDescriptions {
 
     // User-reviewed classification overrides personal retention and temporary device state.
     private val recommendationOverrides = mapOf(
+        "com.android.server.telecom" to R.string.system_app_recommendation_keep,
         "com.globaldrag.dragplugin" to R.string.system_app_recommendation_removable,
         "com.google.android.gms.policy_sidecar_aps" to R.string.system_app_recommendation_keep,
         "com.android.systemui.overlay.fingerprint.anim.melodicstream.icon" to R.string.system_app_recommendation_removable,
@@ -143,7 +144,7 @@ internal object SystemAppDescriptions {
         "com.oplus.cast" to R.string.system_app_recommendation_removable,
         "com.oplus.dfs" to R.string.system_app_recommendation_removable,
         "com.oplus.phonenoareainquire" to R.string.system_app_recommendation_removable,
-        "com.ted.number" to R.string.system_app_recommendation_removable,
+        "com.ted.number" to R.string.system_app_recommendation_possible,
         "com.tencent.soter.soterserver" to R.string.system_app_recommendation_keep,
         "com.oplus.aiunit" to R.string.system_app_recommendation_keep,
         "com.google.android.ext.shared" to R.string.system_app_recommendation_removable,

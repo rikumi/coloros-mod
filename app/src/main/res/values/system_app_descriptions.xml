@@ -61,7 +61,7 @@
     <string name="system_app_description_calendar_pending">日程管理、日历提醒</string>
     <string name="system_app_description_calendar_storage">日历事件存储、同步及日程提醒</string>
     <string name="system_app_description_calendar_sync_pending">Google 日历同步</string>
-    <string name="system_app_description_caller_id">陌生号码识别</string>
+    <string name="system_app_description_caller_id">骚扰电话和短信拦截</string>
     <string name="system_app_description_calllog_backup">通话记录备份和恢复</string>
     <string name="system_app_description_callservice">VoIP 通话状态、音频及系统通话样式联动</string>
     <string name="system_app_description_camera">原生拍照、录像模式及系统拍摄入口</string>
@@ -383,7 +383,7 @@
     <string name="system_app_description_systemhelper">运营商网络状态和应用统计</string>
     <string name="system_app_description_systemui">通知栏和锁屏等系统界面异常</string>
     <string name="system_app_description_talkback">屏幕朗读、无障碍操作</string>
-    <string name="system_app_description_telecom">通话调度和音频路由</string>
+    <string name="system_app_description_telecom">影响接打电话</string>
     <string name="system_app_description_telephony_storage">短信和电话数据存储；IMS 服务依赖此组件，卸载可能导致服务反复崩溃和系统卡顿</string>
     <string name="system_app_description_terminal_pending">Linux 终端、虚拟机管理</string>
     <string name="system_app_description_tethering">热点、USB 及蓝牙网络共享</string>

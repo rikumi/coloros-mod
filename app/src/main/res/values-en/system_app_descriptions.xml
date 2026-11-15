@@ -61,7 +61,7 @@
     <string name="system_app_description_calendar_pending">Calendar events, reminders</string>
     <string name="system_app_description_calendar_storage">Calendar event storage, sync, and reminders</string>
     <string name="system_app_description_calendar_sync_pending">Google Calendar synchronization</string>
-    <string name="system_app_description_caller_id">unknown caller identification</string>
+    <string name="system_app_description_caller_id">Spam call and SMS blocking</string>
     <string name="system_app_description_calllog_backup">Call history backup and restore</string>
     <string name="system_app_description_callservice">VoIP call state, audio, and system call presentation integration</string>
     <string name="system_app_description_camera">Native photo and video modes and system camera entry points</string>
@@ -383,7 +383,7 @@
     <string name="system_app_description_systemhelper">Carrier-mandated collection of network signal and app statistics</string>
     <string name="system_app_description_systemui">notifications, the lock screen and system UI</string>
     <string name="system_app_description_talkback">Screen reading, accessible controls</string>
-    <string name="system_app_description_telecom">call management and audio routing</string>
+    <string name="system_app_description_telecom">Affects making and receiving phone calls</string>
     <string name="system_app_description_telephony_storage">SMS and telephony data storage; required by IMS services. Removing it may cause repeated service crashes and system stuttering</string>
     <string name="system_app_description_terminal_pending">Linux terminal, virtual machine management</string>
     <string name="system_app_description_tethering">Wi-Fi hotspot, USB, and Bluetooth tethering</string>
