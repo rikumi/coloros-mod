@@ -5,6 +5,7 @@ set -eu
 BASE=/data/adb/coloros-mod-fonts
 SELF=$BASE/backend.sh
 CACHE=/data/fonts/files/coloros-mod-webview
+CONFIGS=$CACHE/configs
 TAB=$(printf '\t')
 fail() { echo "coloros-mod fonts: $*" >&2; exit 1; }
 trace() {
@@ -20,7 +21,13 @@ config_target() {
 }
 # Bind sources must belong to the namespace being modified. /proc/1/root paths
 # retain init's mount objects and are rejected by the kernel in other namespaces.
-init_path() { echo "$BASE/v2/$1"; }
+init_path() {
+    if [ -f "$CONFIGS/$1/ready" ]; then echo "$CONFIGS/$1"; else echo "$BASE/v2/$1"; fi
+}
+# Recognize existing binds while their snapshot is republished outside /data/adb.
+owns_file() {
+    [ "$3" -ef "$CONFIGS/$1/configs/$2" ] || [ "$3" -ef "$BASE/v2/$1/configs/$2" ]
+}
 in_namespace() {
     target_pid=$1; shift
     # Toybox nsenter has no --root option. chroot also resets cwd to the target tree.
@@ -106,11 +113,13 @@ if [ "${1:-}" = worker ]; then
     if [ "$action" = prepare ]; then
         valid_version "$version" || fail 'invalid snapshot'
         input=$BASE/snapshots/$version
-        stage=$BASE/v2/$version
+        stage=$CONFIGS/$version
         # Recovery only publishes immutable hash-named files. Never truncate a mapped font.
-        mkdir -p "$CACHE" "$stage/configs"
+        mkdir -p "$CACHE" "$CONFIGS" "$stage/configs"
         chmod 0755 "$CACHE"
         chcon u:object_r:font_data_file:s0 "$CACHE"
+        chmod 0700 "$CONFIGS"
+        chcon u:object_r:font_data_file:s0 "$CONFIGS"
         for file in "$input"/font-*.ttf; do
             [ -f "$file" ] || continue
             name=${file##*/}; name=${name#font-}; name=${name%.ttf}
@@ -198,7 +207,7 @@ if [ "${1:-}" = worker ]; then
         [ -n "$1" ] || return 0
         src=$(init_path "$1")
         while IFS="$TAB" read -r target name; do
-            if [ "$target" -ef "$src/configs/$name" ]; then umount "$target" || return 1; fi
+            if owns_file "$1" "$name" "$target"; then umount "$target" || return 1; fi
         done < "$src/configs.list"
     }
     [ -z "$version" ] || valid_version "$version" || fail 'invalid snapshot'
@@ -210,8 +219,7 @@ if [ "${1:-}" = worker ]; then
         if [ -n "$tag" ]; then
             owned_count=$((owned_count + 1))
             valid_version "$tag" || fail 'unrecognized font XML mount'
-            owner=$(init_path "$tag")
-            [ "$target" -ef "$owner/configs/$name" ] || fail 'mount ownership changed; left it untouched'
+            owns_file "$tag" "$name" "$target" || fail 'mount ownership changed; left it untouched'
         elif [ -n "$old" ] && is_mountpoint "$target"; then
             fail 'configuration replaced externally; left it untouched'
         fi

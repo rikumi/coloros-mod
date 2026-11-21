@@ -1,5 +1,5 @@
 from pathlib import Path
-import subprocess,tempfile
+import os,subprocess,tempfile
 source=(Path(__file__).resolve().parents[1] / 'app/src/main/assets/system-font-mounts.sh').read_text()
 selection=source[source.index('selected_pids()'):source.index('namespace_id()')]
 with tempfile.TemporaryDirectory() as t:
@@ -100,3 +100,38 @@ for scoped,mode,before,after,expected in [
   r=subprocess.run(['sh','-eu'],input=f'BASE={p}\nmode={mode}\n'+policy+'\necho "$cleanup_all"\n',text=True,capture_output=True,check=True)
   assert r.stdout.strip()==str(expected),(scoped,mode,before,after,r)
 print('PASS: global cleanup runs only for initial migration, removals and restore; routine apply/resume/additions stay scoped')
+
+ownership=source[source.index('init_path()'):source.index('in_namespace()')]
+with tempfile.TemporaryDirectory() as t:
+ p=Path(t);base=p/'adb';configs=p/'fonts/configs';target=p/'fonts.xml'
+ legacy=base/'v2'/old;published=configs/old
+ for directory in [legacy,published]:
+  (directory/'configs').mkdir(parents=True)
+  (directory/'configs/cfg-0.xml').write_text('<fonts/>')
+ (legacy/'ready').touch()
+ os.link(str(legacy/'configs/cfg-0.xml'),str(target))
+ setup=f'BASE={base}\nCONFIGS={configs}\n'+ownership
+ for migrated in [False,True]:
+  if migrated: (published/'ready').touch()
+  r=subprocess.run(['sh','-eu'],input=setup+f'owns_file {old} cfg-0.xml {target}\ninit_path {old}\n',text=True,capture_output=True,check=True)
+  assert r.stdout.strip()==str(published if migrated else legacy),r
+ target.unlink();target.write_text('<unrelated/>')
+ r=subprocess.run(['sh','-eu'],input=setup+f'owns_file {old} cfg-0.xml {target}\n',text=True,capture_output=True)
+ assert r.returncode!=0,r
+print('PASS: published snapshots use /data/fonts; legacy bind ownership remains recognizable; unrelated files are rejected')
+
+prepare=source[source.index('    if [ "$action" = prepare ]; then'):source.index('    old=$(current_version)')]
+with tempfile.TemporaryDirectory() as t:
+ p=Path(t);base=p/'adb';cache=p/'fonts';stock=p/'system/etc/fonts.xml';stock.parent.mkdir(parents=True);stock.write_text('<fonts/>')
+ snapshot=base/'snapshots'/new;snapshot.mkdir(parents=True)
+ xml=f'<!-- coloros-mod-fonts:{new} --><fonts/>'
+ (snapshot/'cfg-0.xml').write_text(xml)
+ (snapshot/'configs.list').write_text(f'{stock}\tcfg-0.xml\n')
+ setup=f'BASE={base}\nCACHE={cache}\nCONFIGS=$CACHE/configs\nversion={new}\naction=prepare\nTAB=$(printf "\\t")\nvalid_version() {{ return 0; }}\nconfig_target() {{ return 0; }}\nchcon() {{ :; }}\nfail() {{ exit 1; }}\n'
+ code=prepare.replace("grep -q '^/system/etc/fonts.xml'", "grep -q '^"+str(stock)+"'")
+ r=subprocess.run(['sh','-eu'],input=setup+code,text=True,capture_output=True,check=True)
+ published=cache/'configs'/new
+ assert (published/'configs/cfg-0.xml').read_text()==xml
+ assert (published/'ready').is_file() and not (base/'v2').exists()
+ assert (published/'configs/cfg-0.xml').stat().st_mode & 0o777 == 0o444
+print('PASS: preparation publishes immutable XML outside /data/adb without creating a legacy bind source')
