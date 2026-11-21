@@ -106,7 +106,6 @@ public final class WifiBssidHooks {
         List<XC_MethodHook.Unhook> installed = new ArrayList<>();
         List<io.github.libxposed.api.XposedInterface.HookHandle> candidateHooks = new ArrayList<>();
         try {
-            Class<?> manager = XposedHelpers.findClass("com.android.server.wifi.WifiConfigManager", loader);
             Class<?> candidates = XposedHelpers.findClass("com.android.server.wifi.WifiCandidates", loader);
             Class<?> selector = XposedHelpers.findClass("com.android.server.wifi.WifiNetworkSelector", loader);
             XC_MethodHook selection = new XC_MethodHook() {
@@ -124,22 +123,6 @@ public final class WifiBssidHooks {
             for (String name : new String[]{"handleScanResults", "getAllScanOptimizationNetworks", "retrievePnoNetworkList",
                     "startConnectivityScan", "handleConnectionAttemptEnded"})
                 installed.addAll(XposedBridge.hookAllMethods(connectivity, name, selection));
-            XC_MethodHook externalCopies = new XC_MethodHook() {
-                @Override protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                    if (SELECTION.get() <= 0 || p.getResult() == null || p.hasThrowable()) return;
-                    Object result = p.getResult();
-                    if (result instanceof List<?>) for (Object config : (List<?>) result) enableWhitelistCopy(config);
-                    else enableWhitelistCopy(result);
-                }
-            };
-            Set<XC_MethodHook.Unhook> copies = new HashSet<>();
-            // These documented getters return external copies. Do not intercept
-            // internal getters or the shared copy builder used by UI broadcasts.
-            for (String name : new String[]{"getConfiguredNetwork", "getConfiguredNetworks", "getSavedNetworks",
-                    "getSavedNetworkForScanDetailAndCache"})
-                copies.addAll(XposedBridge.hookAllMethods(manager, name, externalCopies));
-            if (copies.isEmpty()) throw new NoSuchMethodException("external WiFi configuration getters");
-            installed.addAll(copies);
             int count = 0;
             for (Method method : candidates.getDeclaredMethods()) {
                 if (!method.getName().equals("add") || method.getReturnType() != boolean.class) continue;
@@ -232,13 +215,5 @@ public final class WifiBssidHooks {
         }
     }
 
-    private static void enableWhitelistCopy(Object config) throws ReflectiveOperationException {
-        if (config == null) return;
-        JSONObject rule = WifiBssidPolicy.find(rules(), WifiBssidPolicy.profile(config));
-        if (rule != null && rule.optInt("mode", 0) == 1)
-            config.getClass().getField("allowAutojoin").setBoolean(config,
-                    (rule.optJSONArray("bssids") != null && rule.optJSONArray("bssids").length() > 0)
-                            || WifiBssidConnection.hasBypass(WifiBssidPolicy.profile(config)));
-    }
     private WifiBssidHooks() {}
 }

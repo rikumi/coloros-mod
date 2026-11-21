@@ -236,26 +236,39 @@ final class WifiBssidRoaming {
     }
 
     static void cleanup() {
+        List<State> snapshot;
         synchronized (clients) {
-            for (State state : clients.values()) {
-                Object owner = state.client.get();
-                if (owner == null) continue;
-                Handler handler = (Handler) XposedHelpers.callMethod(owner, "getHandler");
-                handler.post(() -> {
-                    try { restrict(state, false, XposedHelpers.callMethod(owner, "getConnectedWifiConfiguration")); }
-                    catch (Throwable error) { log("WiFi roaming restoration failed: " + error); }
-                });
-            }
+            snapshot = new ArrayList<>(clients.values());
             clients.clear();
+        }
+        for (State state : snapshot) {
+            Object owner = state.client.get();
+            if (owner == null) continue;
+            postToClient(owner, () -> {
+                try { restrict(state, false, XposedHelpers.callMethod(owner, "getConnectedWifiConfiguration")); }
+                catch (Throwable error) { log("WiFi roaming restoration failed: " + error); }
+            });
         }
     }
 
+    private static void postToClient(Object owner, Runnable action) {
+        try {
+            Handler handler = (Handler) XposedHelpers.callMethod(owner, "getHandler");
+            // ClientModeImpl disposes its StateMachine/Handler when STA stops.
+            // A live Java object can therefore outlast its WiFi message queue.
+            // Null handlers and rejected posts are normal during teardown.
+            if (handler != null) handler.post(action);
+        } catch (Throwable error) { log("WiFi roaming dispatch skipped: " + error); }
+    }
+
     static void refresh() {
+        List<State> snapshot;
         synchronized (clients) {
-            for (State state : clients.values()) {
-                Object owner = state.client.get();
-                if (owner != null) ((Handler) XposedHelpers.callMethod(owner, "getHandler")).post(() -> enforce(owner));
-            }
+            snapshot = new ArrayList<>(clients.values());
+        }
+        for (State state : snapshot) {
+            Object owner = state.client.get();
+            if (owner != null) postToClient(owner, () -> enforce(owner));
         }
     }
     private WifiBssidRoaming() { }

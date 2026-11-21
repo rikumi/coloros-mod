@@ -764,7 +764,8 @@ public class XposedInit extends XposedModule {
         if (sIsSystemServer) {
             try { SystemServerHooks.cleanupForHotReload(); }
             catch (Throwable t) { log("system_server hot reload cleanup failed: " + t); }
-            com.rikumi.colorosmod.hooks.WifiBssidHooks.cleanupForHotReload();
+            try { com.rikumi.colorosmod.hooks.WifiBssidHooks.cleanupForHotReload(); }
+            catch (Throwable t) { log("WiFi hot reload cleanup failed: " + t); }
             return;
         }
         if ("com.android.settings".equals(sHookedPackageName)) {

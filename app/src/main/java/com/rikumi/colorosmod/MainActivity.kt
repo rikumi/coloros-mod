@@ -1665,6 +1665,10 @@ internal fun setBool(ctx: Context, key: String, value: Boolean) {
     val editor = prefs.edit().putBoolean(key, value)
     if (key == "qs_merged_hollow" && !value) editor.putBoolean("qs_merged_radiant", false)
     editor.commit()
+    if (key == XposedInit.KEY_WIFI_AP_FILTER_ENABLED && value) {
+        val context = ctx.applicationContext
+        Thread({ WifiBssidMigration.migrate(context) }, "wifi-autojoin-migration").start()
+    }
     if (key == "system_font_disable_replacement") {
         val context = ctx.applicationContext
         SystemFontStore.enqueue { SystemFontStore.syncReplacementSettings(context) }

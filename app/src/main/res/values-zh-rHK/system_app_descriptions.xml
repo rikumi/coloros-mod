@@ -298,6 +298,7 @@
     <string name="system_app_description_overlay_wallpaper">壁紙選擇界面資源</string>
     <string name="system_app_description_overlay_wifi">WLAN 配置資源</string>
     <string name="system_app_description_overlay_wifi_pending">WLAN 配置資源</string>
+    <string name="system_app_description_personal_hotspot">影響個人熱點功能</string>
     <string name="system_app_description_ovoice">小布語音技能、系統指令執行</string>
     <string name="system_app_description_owk">跨裝置高精度時間同步</string>
     <string name="system_app_description_owork">辦公工具、文檔輔助</string>

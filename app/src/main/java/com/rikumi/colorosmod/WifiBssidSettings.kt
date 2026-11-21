@@ -56,6 +56,24 @@ internal object WifiBssidSettings {
     private val scanMutex = Mutex()
     private val mutex = Mutex()
 
+    internal fun execute(context: Context, operation: String, request: JSONObject = JSONObject()): JSONObject {
+        fun quote(value: String) = "'" + value.replace("'", "'\\''") + "'"
+        val payload = Base64.encodeToString(request.toString().toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP)
+        val command = "CLASSPATH=${quote(context.applicationInfo.sourceDir)} /system/bin/app_process /system/bin " +
+            "com.rikumi.colorosmod.WifiBssidCommand ${quote(operation)} ${quote(payload)}"
+        val process = ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
+        val reader = Executors.newSingleThreadExecutor()
+        try {
+            process.outputStream.close()
+            val output = reader.submit<String> { process.inputStream.bufferedReader().use { it.readText() } }
+            check(process.waitFor(45, TimeUnit.SECONDS)) { "WiFi operation timed out" }
+            val text = output.get(2, TimeUnit.SECONDS).trim()
+            check(process.exitValue() == 0) { text.takeLast(1000) }
+            val json = text.lineSequence().lastOrNull { it.startsWith("{") } ?: error("Missing WiFi response")
+            return JSONObject(json)
+        } finally { process.destroyForcibly(); reader.shutdownNow() }
+    }
+
     suspend fun perform(context: Context, operation: String, request: JSONObject = JSONObject()): Boolean = (if (operation == "scan") scanMutex else mutex).withLock {
         if (operation == "scan") {
             scanning = true
@@ -63,21 +81,7 @@ internal object WifiBssidSettings {
         } else busy = true
         try {
             val response = withContext(Dispatchers.IO) {
-                fun quote(value: String) = "'" + value.replace("'", "'\\''") + "'"
-                val payload = Base64.encodeToString(request.toString().toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP)
-                val command = "CLASSPATH=${quote(context.applicationInfo.sourceDir)} /system/bin/app_process /system/bin " +
-                    "com.rikumi.colorosmod.WifiBssidCommand ${quote(operation)} ${quote(payload)}"
-                val process = ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
-                val reader = Executors.newSingleThreadExecutor()
-                try {
-                    process.outputStream.close()
-                    val output = reader.submit<String> { process.inputStream.bufferedReader().use { it.readText() } }
-                    check(process.waitFor(45, TimeUnit.SECONDS)) { "WiFi operation timed out" }
-                    val text = output.get(2, TimeUnit.SECONDS).trim()
-                    check(process.exitValue() == 0) { text.takeLast(1000) }
-                    val json = text.lineSequence().lastOrNull { it.startsWith("{") } ?: error("Missing WiFi response")
-                    JSONObject(json)
-                } finally { process.destroyForcibly(); reader.shutdownNow() }
+                execute(context, operation, request)
             }
             if (operation == "scan" || operation == "connect-once") {
                 // A scan may finish after a policy edit: retain the latest rules.

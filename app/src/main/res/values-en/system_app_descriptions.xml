@@ -298,6 +298,7 @@
     <string name="system_app_description_overlay_wallpaper">Wallpaper picker UI resources</string>
     <string name="system_app_description_overlay_wifi">Wi-Fi configuration resources</string>
     <string name="system_app_description_overlay_wifi_pending">Wi-Fi configuration resources</string>
+    <string name="system_app_description_personal_hotspot">Affects personal hotspot functionality</string>
     <string name="system_app_description_ovoice">Breeno voice skills, system command execution</string>
     <string name="system_app_description_owk">High-precision cross-device time synchronization</string>
     <string name="system_app_description_owork">Office tools, document assistance</string>

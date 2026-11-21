@@ -56,6 +56,50 @@ public final class WifiBssidCommand {
         }
         throw new IOException("System auto-connect setting was not applied");
     }
+    private static void writeRules(AtomicFile file, JSONArray rules) throws Exception {
+        byte[] bytes = rules.toString().getBytes(StandardCharsets.UTF_8);
+        if (bytes.length > 1024 * 1024) throw new IOException("WiFi policy too large");
+        FileOutputStream output = file.startWrite();
+        try {
+            Os.fchmod(output.getFD(), 0600);
+            output.write(bytes);
+            file.finishWrite(output);
+        } catch (Throwable error) { file.failWrite(output); throw error; }
+    }
+
+    /** Persist progress per profile; later system auto-connect choices remain untouched. */
+    private static boolean migrateAutojoin(AtomicFile file, JSONArray rules) throws Exception {
+        boolean pending = false;
+        for (int i = 0; i < rules.length(); i++) pending |= rules.getJSONObject(i).optInt("autojoinMigration", 0) < 1;
+        if (!pending) return true;
+        Map<String, WifiConfiguration> saved = new HashMap<>();
+        for (WifiConfiguration config : configurations()) saved.put(WifiBssidPolicy.profile(config), config);
+        Map<WifiConfiguration, Boolean> previous = new LinkedHashMap<>();
+        boolean changed = false, complete = true;
+        try {
+            for (int i = 0; i < rules.length(); i++) {
+                JSONObject rule = rules.getJSONObject(i);
+                if (rule.optInt("autojoinMigration", 0) >= 1) continue;
+                WifiConfiguration config = saved.get(rule.getString("id"));
+                // Credential-encrypted networks may not be loaded at locked boot yet.
+                if (config == null) { complete = false; continue; }
+                if (!changed) WifiBssidReadiness.requireReady();
+                boolean enabled = autojoinValue(config);
+                previous.put(config, enabled);
+                if (!enabled) autojoin(config, true);
+                rule.put("autojoinMigration", 1);
+                changed = true;
+            }
+            if (changed) writeRules(file, rules);
+        } catch (Throwable error) {
+            for (Map.Entry<WifiConfiguration, Boolean> entry : previous.entrySet()) {
+                try { autojoin(entry.getKey(), entry.getValue()); }
+                catch (Throwable rollback) { error.addSuppressed(rollback); }
+            }
+            throw error;
+        }
+        return complete;
+    }
     public static void main(String[] args) {
         try {
             if (android.os.Process.myUid() != 0 || args.length != 2) throw new SecurityException("Root is required");
@@ -115,12 +159,13 @@ public final class WifiBssidCommand {
                 if (file.getBaseFile().length() > 1024 * 1024) throw new IOException("WiFi policy too large");
                 JSONArray rules = file.getBaseFile().exists()
                         ? new JSONArray(new String(file.readFully(), StandardCharsets.UTF_8)) : new JSONArray();
+                boolean migrated = migrateAutojoin(file, rules);
                 JSONObject now = current();
                 String operation = args[0], id = request.optString("id");
                 WifiConfiguration changed = null;
                 boolean previous = false;
                 try {
-                    if (!operation.equals("list")) {
+                    if (!operation.equals("list") && !operation.equals("migrate-autojoin")) {
                         if (!operation.equals("remove") && !operation.equals("delete-ap")) {
                             try { WifiBssidReadiness.requireReady(); }
                             catch (Exception inactive) {
@@ -133,9 +178,11 @@ public final class WifiBssidCommand {
                             changed = config(id); previous = autojoinValue(changed);
                             if (WifiBssidPolicy.find(rules, id) == null) {
                                 rules.put(new JSONObject().put("id", id).put("ssid", now.getString("ssid"))
-                                        .put("mode", 0).put("bssids", new JSONArray()).put("originalAutojoin", previous));
+                                        .put("mode", 0).put("bssids", new JSONArray()).put("originalAutojoin", previous)
+                                        .put("autojoinMigration", 1));
                             }
-                            autojoin(changed, WifiBssidPolicy.find(rules, id).optInt("mode", 0) == 0);
+                            autojoin(changed, true);
+                            WifiBssidPolicy.find(rules, id).put("autojoinMigration", 1);
                         } else {
                             JSONObject rule = WifiBssidPolicy.find(rules, id);
                             if (rule == null) throw new IOException("WiFi policy no longer exists");
@@ -143,7 +190,7 @@ public final class WifiBssidCommand {
                                 int mode = request.getInt("mode");
                                 if (mode != 0 && mode != 1) throw new IllegalArgumentException("Invalid filter mode");
                                 changed = config(id); previous = autojoinValue(changed);
-                                autojoin(changed, mode == 0); rule.put("mode", mode);
+                                autojoin(changed, true); rule.put("mode", mode).put("autojoinMigration", 1);
                             } else if (operation.equals("add-ap")) {
                                 if (now == null || !id.equals(now.getString("id")))
                                     throw new IOException("Current AP belongs to a different WiFi");
@@ -180,20 +227,14 @@ public final class WifiBssidCommand {
                                     if (id.equals(rules.getJSONObject(i).getString("id"))) rules.remove(i);
                             } else throw new IllegalArgumentException("Unknown WiFi operation");
                         }
-                        byte[] bytes = rules.toString().getBytes(StandardCharsets.UTF_8);
-                        if (bytes.length > 1024 * 1024) throw new IOException("WiFi policy too large");
-                        FileOutputStream output = file.startWrite();
-                        try {
-                            Os.fchmod(output.getFD(), 0600);
-                            output.write(bytes);
-                            file.finishWrite(output);
-                        } catch (Throwable error) { file.failWrite(output); throw error; }
+                        writeRules(file, rules);
                     }
                 } catch (Throwable error) {
                     if (changed != null) try { autojoin(changed, previous); } catch (Throwable rollback) { error.addSuppressed(rollback); }
                     throw error;
                 }
-                System.out.println(new JSONObject().put("rules", rules).put("current", now == null ? JSONObject.NULL : now));
+                System.out.println(new JSONObject().put("rules", rules).put("current", now == null ? JSONObject.NULL : now)
+                        .put("autojoinMigrationComplete", migrated));
             }
             System.exit(0);
         } catch (Throwable error) {

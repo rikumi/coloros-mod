@@ -38,6 +38,7 @@ internal object SystemAppDescriptions {
 
     // User-reviewed classification overrides personal retention and temporary device state.
     private val recommendationOverrides = mapOf(
+        "com.android.wifi.resources.overlay" to R.string.system_app_recommendation_keep,
         "com.android.server.telecom" to R.string.system_app_recommendation_keep,
         "com.globaldrag.dragplugin" to R.string.system_app_recommendation_removable,
         "com.google.android.gms.policy_sidecar_aps" to R.string.system_app_recommendation_keep,
@@ -658,7 +659,7 @@ internal object SystemAppDescriptions {
         "com.android.wifi.dialog" to R.string.system_app_description_wifi_dialog,
         "com.android.wifi.mainline.resources.overlay" to R.string.system_app_description_overlay_wifi_redundant,
         "com.android.wifi.resources" to R.string.system_app_description_wifi_resources,
-        "com.android.wifi.resources.overlay" to R.string.system_app_description_overlay_wifi_pending,
+        "com.android.wifi.resources.overlay" to R.string.system_app_description_personal_hotspot,
         "com.android.wifi.resources.overlay.oplus" to R.string.system_app_description_overlay_wifi_pending,
         "com.coloros.accessibilityassistant" to R.string.system_app_description_accessibility_assistant,
         "com.coloros.activation" to R.string.system_app_description_activation,

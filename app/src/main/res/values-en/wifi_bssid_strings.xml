@@ -3,7 +3,7 @@
     <string name="wifi_bssid_group">Wi-Fi AP filtering</string>
     <string name="wifi_bssid_add_wifi">Edit current Wi-Fi</string>
     <string name="wifi_bssid_mode">Filter mode</string>
-    <string name="wifi_bssid_mode_subtitle">Blocklist enables system auto-connect; allowlist disables it</string>
+    <string name="wifi_bssid_mode_subtitle">System auto-connect will be enabled to ensure this feature works</string>
     <string name="wifi_bssid_blacklist">Blocklist</string>
     <string name="wifi_bssid_whitelist">Allowlist</string>
     <string name="wifi_bssid_add_ap">Add current AP</string>

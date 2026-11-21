@@ -3,7 +3,7 @@
     <string name="wifi_bssid_group">Wi-Fi AP 过滤</string>
     <string name="wifi_bssid_add_wifi">修改当前 Wi-Fi</string>
     <string name="wifi_bssid_mode">过滤模式</string>
-    <string name="wifi_bssid_mode_subtitle">黑名单将开启系统自动连接，反之关闭</string>
+    <string name="wifi_bssid_mode_subtitle">将开启系统自动连接，以确保功能生效</string>
     <string name="wifi_bssid_blacklist">黑名单</string>
     <string name="wifi_bssid_whitelist">白名单</string>
     <string name="wifi_bssid_add_ap">添加当前 AP</string>

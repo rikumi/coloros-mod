@@ -27,6 +27,7 @@ public class SettingsProvider extends ContentProvider {
         if (getContext() != null) {
             Context context = getContext().getApplicationContext();
             FontFailureLog.initialize(context);
+            new Thread(() -> WifiBssidMigration.migrate(context), "wifi-autojoin-migration").start();
             new Thread(() -> SystemFontMounts.INSTANCE.resume(context), "font-mount-recovery").start();
         }
         return true;

@@ -10,7 +10,10 @@ class SystemFontBootReceiver : BroadcastReceiver() {
                 Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED)) return
         val result = goAsync()
         Thread {
-            try { SystemFontMounts.resume(context.applicationContext) }
+            try {
+                WifiBssidMigration.migrate(context.applicationContext)
+                SystemFontMounts.resume(context.applicationContext)
+            }
             finally { result.finish() }
         }.start()
     }
