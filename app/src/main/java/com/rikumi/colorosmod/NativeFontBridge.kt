@@ -91,7 +91,8 @@ internal object NativeFontBridge {
                 listOf(file.readBytes().also { FontOperation.check() })
             } else {
                 val assets = when (role) {
-                    "latin" -> listOf("clock_fonts/${if (choice == 1) "Inter" else "Manrope"}.ttf")
+                    "latin" -> if (choice == 4) listOf("clock_fonts/Figtree.ttf", "clock_fonts/Figtree-Italic.ttf")
+                        else listOf("clock_fonts/${if (choice == 1) "Inter" else "Manrope"}.ttf")
                     else -> {
                         val name = listOf("MapleMono", "JetBrainsMono", "FiraCode", "CascadiaCode")[choice.coerceIn(0, 3)]
                         if (choice == 2) listOf("system_fonts/$name.ttf")

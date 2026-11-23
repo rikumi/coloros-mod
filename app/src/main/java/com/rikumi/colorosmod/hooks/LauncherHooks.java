@@ -55,6 +55,8 @@ public final class LauncherHooks {
     public static void onSettingsSnapshotPublished(java.util.Map<String, Integer> settings) {
         TaskbarGestureHooks.onSettingsSnapshotPublished();
         LauncherIconGapHooks.onSettingsSnapshotPublished(settings);
+        LauncherIconAppearanceHooks.onSettingsSnapshotPublished(settings);
+        LauncherIconPackFallbackHooks.onSettingsSnapshotPublished(settings);
         LauncherIconContourHooks.onSettingsSnapshotPublished(settings);
         LauncherWidgetContourHooks.onSettingsSnapshotPublished(settings);
         FolderGridHooks.onSettingsSnapshotPublished(settings);
@@ -170,6 +172,7 @@ public final class LauncherHooks {
         XposedHelpers.callMethod(model, "forceReload");
         // forceReload 只重新绑定模型，不保证每个已有图标重新设置名称间距。
         LauncherIconGapHooks.refresh();
+        LauncherIconAppearanceHooks.refresh();
     }
 
     public static Object captureHotReloadSettings() {
@@ -525,6 +528,7 @@ public final class LauncherHooks {
         saved.add(new Object[] { "idleRefreshActivity", LauncherIdleRefresh.captureActivity() });
         saved.add(new Object[] { "folderGrid", FolderGridHooks.captureHost() });
         saved.add(new Object[] { "iconGapViews", LauncherIconGapHooks.captureViews() });
+        saved.add(new Object[] { "iconAppearanceViews", LauncherIconAppearanceHooks.captureViews() });
         saved.add(new Object[] { "taskbarGestureControllers", TaskbarGestureHooks.captureControllers() });
         synchronized (sDrawerIconStates) {
             for (java.util.Map.Entry<Object, DrawerIconState> entry : sDrawerIconStates.entrySet()) {
@@ -600,6 +604,10 @@ public final class LauncherHooks {
             }
             if (state.length >= 2 && "taskbarGestureControllers".equals(state[0])) {
                 TaskbarGestureHooks.restoreControllers(state[1]);
+                continue;
+            }
+            if (state.length >= 2 && "iconAppearanceViews".equals(state[0])) {
+                LauncherIconAppearanceHooks.restoreViews(state[1]);
                 continue;
             }
             if (state.length >= 2 && "iconGapViews".equals(state[0])) {
@@ -729,11 +737,13 @@ public final class LauncherHooks {
         LauncherStartupRefresh.cleanup();
         LauncherIconCacheRefreshHooks.cleanup();
         LauncherIconGapHooks.cleanup();
+        LauncherIconAppearanceHooks.cleanup();
         FolderGridHooks.cleanup();
         FolderGridCenteringHooks.cleanup();
         LauncherPopupBrightnessHooks.cleanup();
         LauncherIdleRefresh.cleanup();
         LauncherIconClarityHooks.cleanup();
+        LauncherIconPackFallbackHooks.cleanup();
         LauncherIconContourHooks.cleanup();
         LauncherWidgetContourHooks.cleanup();
         DrawerInstallTimeHooks.cleanupForHotReload();
@@ -937,6 +947,8 @@ public final class LauncherHooks {
         catch (Throwable error) { log("launcher widget contour unavailable: " + error); }
         try { TaskbarGestureHooks.hook(lpparam); }
         catch (Throwable error) { log("taskbar gesture hooks unavailable: " + error); }
+        try { LauncherIconPackFallbackHooks.hook(lpparam); }
+        catch (Throwable error) { log("ColorOS 15 icon pack fallback unavailable: " + error); }
         try { LauncherIconClarityHooks.hook(lpparam); }
         catch (Throwable error) { log("launcher icon clarity unavailable: " + error); }
         try { LauncherIconCacheRefreshHooks.hook(lpparam); }
@@ -951,8 +963,10 @@ public final class LauncherHooks {
                     "finishBindingItems", XposedHelpers.findClass("com.android.launcher3.util.IntSet", lpparam.classLoader),
                     new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
-                            if (p.thisObject instanceof android.app.Activity activity)
+                            if (p.thisObject instanceof android.app.Activity activity) {
                                 LauncherIconGapHooks.onWorkspaceBound(activity.getWindow().getDecorView());
+                                LauncherIconAppearanceHooks.onWorkspaceBound(activity.getWindow().getDecorView());
+                            }
                             LauncherStartupRefresh.onBound(p.thisObject, lpparam.classLoader);
                             synchronized (sHiddenSettingsLock) {
                                 if (!sModelReloadActive || !sInitialModelReloadPending || sPendingModelReloads > 0) return;
@@ -971,6 +985,8 @@ public final class LauncherHooks {
 
         hookPopupBgBlur(lpparam);
 
+        try { LauncherIconAppearanceHooks.hook(lpparam); }
+        catch (Throwable error) { log("launcher icon appearance hooks unavailable: " + error); }
         try { LauncherIconGapHooks.hook(lpparam); }
         catch (Throwable error) { log("launcher icon-label spacing hooks unavailable: " + error); }
         try { FolderGridHooks.hook(lpparam); }
@@ -1401,6 +1417,10 @@ public final class LauncherHooks {
     }
 
     public static void hookFolderSpringDuration(final XC_LoadPackage.LoadPackageParam lpparam) {
+        if (Build.VERSION.SDK_INT == 35) {
+            LegacyFolderAnimationHooks.hook(lpparam);
+            return;
+        }
         try {
             final Class<?> wrapperClass = XposedHelpers.findClass(
                     "com.android.launcher3.folder.RtSpringAnimatorWrapper", lpparam.classLoader);
@@ -2880,7 +2900,10 @@ public final class LauncherHooks {
 
     public static void hookPopupBgBlur(final XC_LoadPackage.LoadPackageParam lpparam) {
         LauncherPopupBrightnessHooks.hook(lpparam);
-        if (!LauncherPopupDynamicBlurHooks.hook(lpparam)) {
+        boolean sourceHooked = Build.VERSION.SDK_INT == 35
+                ? LauncherPopupLegacyBlurHooks.hook(lpparam)
+                : LauncherPopupDynamicBlurHooks.hook(lpparam);
+        if (!sourceHooked) {
             hookPopupBgBlurSource(lpparam);
             hookPopupWallpaperBlurRadius(lpparam);
         }
@@ -3002,7 +3025,7 @@ public final class LauncherHooks {
                                 }
 
                                 target.opening = open;
-                                view.setAlpha(open ? (target.sourceReady ? 1f : 0f) : target.progress);
+                                view.setAlpha(popupBlurAlpha(target));
                                 applyPopupBgEffect(view, target.progress);
                                 XposedHelpers.setAdditionalInstanceField(view,
                                         "colorosmod_popup_blur_animator", anim);
@@ -3049,7 +3072,7 @@ public final class LauncherHooks {
                     target.progress = value;
                     applyPopupBgEffect(target.view, value);
 
-                    target.view.setAlpha(target.opening ? (target.sourceReady ? 1f : 0f) : value);
+                    target.view.setAlpha(popupBlurAlpha(target));
                 }
             };
 
@@ -3073,8 +3096,17 @@ public final class LauncherHooks {
                 animator.setCurrentPlayTime(0L);
                 animator.resume();
             }
-            view.setAlpha(1f);
+            view.setAlpha(popupBlurAlpha(target));
         }
+    }
+
+    static float popupBlurAlpha(PopupBlurTarget target) {
+        if (target.opening && !target.sourceReady) return 0f;
+        // ColorOS 15 snapshots include wallpaper blend and mirror transforms.
+        // Revealing the whole clear snapshot at progress 0 flashes those changes
+        // before the first blur frame. Retain its native alpha transition too.
+        return target.opening && Build.VERSION.SDK_INT != 35
+                ? 1f : Math.max(0f, Math.min(1f, target.progress));
     }
 
     private static PopupBlurTarget popupBlurTarget(View view) {
@@ -3096,7 +3128,7 @@ public final class LauncherHooks {
         view.setRenderEffect(effect);
     }
 
-    private static void applyPopupBlendBrightness(Object[] args) {
+    static void applyPopupBlendBrightness(Object[] args) {
         float k = popupBgBrightnessScale();
         if (k >= 1f) return;
         if (((Integer) args[4]) != 1) return;

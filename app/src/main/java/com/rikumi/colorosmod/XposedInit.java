@@ -562,6 +562,7 @@ public class XposedInit extends XposedModule {
             MergedRadiantHooks.refresh();
             MergedSettingsRotationHooks.refresh();
             StatusBarExtrasHooks.refresh();
+            com.rikumi.colorosmod.hooks.LegacyChargingAnimationHooks.refresh();
             ChargingInfoHooks.refresh();
             MonochromeNotificationHooks.refresh();
             com.rikumi.colorosmod.hooks.NotificationBackgroundBrightnessHooks.refresh();
@@ -1369,12 +1370,18 @@ public class XposedInit extends XposedModule {
 
     // 跨进程读取 int 设置(如滑条值), 通道与 readBool 相同; Provider 里不存在的键回落到 def。
     public static int readInt(String key, int def) {
+        // 0 selects the native layout; the feature's default is the relaxed layout (2).
+        if (KEY_NOTIFICATION_LAYOUT_STYLE.equals(key) && android.os.Build.VERSION.SDK_INT < 36)
+            return 0;
         Object v = settingsValue(key);
         if (v instanceof Number) return ((Number) v).intValue();
         return def;
     }
 
     public static int readIntCached(String key, int def) {
+        // 0 selects the native layout; the feature's default is the relaxed layout (2).
+        if (KEY_NOTIFICATION_LAYOUT_STYLE.equals(key) && android.os.Build.VERSION.SDK_INT < 36)
+            return 0;
         Integer snapshot = sSnapshot.get(key);
         if (snapshot != null) return snapshot;
         Object[] cached = sCache.get(key);

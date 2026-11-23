@@ -95,6 +95,7 @@ internal object SystemFontMounts {
     @Synchronized
     private fun sync(context: Context, service: XposedService, manifest: String) {
         val app = context.applicationContext
+        retireLegacyModule(app)
         val prefs = app.settingsPrefs()
         if (!prefs.getBoolean(ENABLED, false)) { resume(app, waitForCompletion = true); return }
         runCatching {
@@ -170,6 +171,7 @@ internal object SystemFontMounts {
     @Synchronized
     fun resume(context: Context, waitForCompletion: Boolean = false) {
         val result = runCatching {
+            retireLegacyModule(context)
             val prefs = context.settingsPrefs()
             if (!prefs.getBoolean(CONFIGURED, false) && !prefs.getBoolean(REQUESTED, false)) return
             if (!prefs.getBoolean(ENABLED, false)) {
@@ -191,9 +193,30 @@ internal object SystemFontMounts {
     /** Used when retiring the filesystem backend; only mounts owned by this backend are detached. */
     @Synchronized
     fun restore(context: Context) {
+        retireLegacyModule(context)
         // Upgrade the worker even when disabling, so old namespace bugs cannot block restore.
         execute(installBackend(backendInstaller(context)) + "/system/bin/sh $ROOT/backend.sh restore", TRANSACTION_TIMEOUT_SECONDS)
         check(context.settingsPrefs().edit().putBoolean(CONFIGURED, false).putBoolean(REQUESTED, false).commit())
+    }
+
+    private fun retireLegacyModule(context: Context) {
+        val prefs = context.settingsPrefs()
+        if (prefs.getBoolean("legacy_mount_module_retired", false)) return
+        if (prefs.getBoolean("system_mount_module_migrated", false) || prefs.contains("boot_animation_style")) {
+            val directory = File(context.createDeviceProtectedStorageContext().cacheDir, "legacy_mount_cleanup")
+                .also { check(it.isDirectory || it.mkdirs()) }
+            val script = File(directory, "cleanup.sh")
+            context.assets.open("retire-legacy-mount-module.sh").use { input -> script.outputStream().use { input.copyTo(it) } }
+            execute("/system/bin/sh ${quote(script.absolutePath)}", TRANSACTION_TIMEOUT_SECONDS)
+            directory.deleteRecursively()
+        }
+        val de = context.createDeviceProtectedStorageContext()
+        File(de.filesDir, "boot_animations").deleteRecursively()
+        File(de.cacheDir, "boot_animation_stage").deleteRecursively()
+        File(de.cacheDir, "system_mount_module").deleteRecursively()
+        check(prefs.edit().remove("boot_animation_style").remove("boot_animation_custom_hash")
+            .remove("boot_animation_assets_revision").remove("system_mount_module_migrated")
+            .putBoolean("legacy_mount_module_retired", true).commit())
     }
 
     private fun backendInstaller(context: Context, bytes: ByteArray? = null): File {

@@ -228,6 +228,11 @@ public final class NotificationHooks {
 
     public static void hookNotificationSwipeToDismiss(
             final XC_LoadPackage.LoadPackageParam lpparam) {
+        if (android.os.Build.VERSION.SDK_INT <= 35) {
+            try { LegacyNotificationSwipeHooks.hook(lpparam); }
+            catch (Throwable error) { log("legacy notification swipe hooks unavailable: " + error); }
+            return;
+        }
         try {
             XposedHelpers.findAndHookMethod(
                     "com.oplus.systemui.notification.row.NotificationMenuRowExtImpl",

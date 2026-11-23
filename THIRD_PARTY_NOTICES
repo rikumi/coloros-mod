@@ -19,6 +19,9 @@ also packaged there as coloros-mod-LICENSE for binary redistribution.
 - Noto 3D emoji font: SIL OFL 1.1 (noto-3d-OFL.txt).
 - Twemoji artwork: CC BY 4.0 (twemoji-NOTICE, twemoji-LICENSE-GRAPHICS).
   The downloaded third-party font conversion requires separate verification.
+- Figtree: Copyright 2022 The Figtree Project Authors
+  (https://github.com/erikdkennedy/figtree), SIL OFL 1.1
+  (app/src/main/assets/clock_fonts/figtree-OFL.txt).
 - Bundled fonts: SIL OFL 1.1. Retain the *-OFL.txt notices in
   app/src/main/assets/clock_fonts/ and system_fonts/ alongside the fonts.
 

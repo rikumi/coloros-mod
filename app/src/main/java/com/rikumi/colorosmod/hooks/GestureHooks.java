@@ -401,7 +401,7 @@ public final class GestureHooks {
             state = new GestureTouchWindowState();
             GESTURE_TOUCH_WINDOWS.put(root, state);
         }
-        if (!isNavigationBarVisible(findHandleInTree(root))) {
+        if (requiresLegacyLandscapeInput(root) || !isNavigationBarVisible(findHandleInTree(root))) {
             state.touchActive = false;
             state.downTime = -1;
         }
@@ -430,7 +430,7 @@ public final class GestureHooks {
                     GESTURE_TOUCH_WINDOWS.put(root, state);
                 }
                 try {
-                    if (!isNavigationBarVisible(findHandleInTree(root))) {
+                    if (requiresLegacyLandscapeInput(root) || !isNavigationBarVisible(findHandleInTree(root))) {
                         state.touchActive = false;
                         state.downTime = -1;
                     }
@@ -968,8 +968,19 @@ public final class GestureHooks {
 
     static boolean isGestureBlockActive(android.view.View view) {
         return readBool(KEY_GESTURE_TOUCH_THROUGH_ENABLED, false)
+                && !requiresLegacyLandscapeInput(view)
                 && isNavigationBarVisible(view)
                 && !isShadeExpanded(view) && !isImeVisible(view);
+    }
+
+    static boolean requiresLegacyLandscapeInput(android.view.View view) {
+        // ColorOS 15's landscape swipe-up consumer requires the original navigation
+        // window admission/transfer path. The protected-window replay adapter only
+        // exists on newer SystemUI; do not claim this stream on the legacy phone.
+        return view != null && android.os.Build.VERSION.SDK_INT == 35
+                && !com.rikumi.colorosmod.TabletDevice.isTablet()
+                && view.getResources().getConfiguration().orientation
+                    == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
     }
 
     static boolean shouldBlockGestureReplay(View handle, MotionEvent event) {

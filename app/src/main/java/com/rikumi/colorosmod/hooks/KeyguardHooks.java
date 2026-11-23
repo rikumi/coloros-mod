@@ -508,6 +508,7 @@ public final class KeyguardHooks {
             "com.oplus.systemui.keyguard.charginganim.ChargingAnimationImpl";
 
     public static void hookKeyguardNoChargeAnim(final XC_LoadPackage.LoadPackageParam lpparam) {
+        if (LegacyChargingAnimationHooks.hook(lpparam)) return;
         try {
             XposedHelpers.findAndHookMethod(CLS_CHARGING_ANIMATION_IMPL, lpparam.classLoader,
                     "updateAnimeState", int.class, String.class, new XC_MethodHook() {

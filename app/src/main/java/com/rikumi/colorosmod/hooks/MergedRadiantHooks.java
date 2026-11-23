@@ -45,6 +45,12 @@ public final class MergedRadiantHooks {
         try {
             highlightClass = XposedHelpers.findClass("com.oplus.systemui.qs.base.tile.OplusQSHighlightTileView", pkg.classLoader);
             normalClass = XposedHelpers.findClass("com.oplus.systemui.qs.base.tile.OplusQSTileBaseView", pkg.classLoader);
+            if (android.os.Build.VERSION.SDK_INT == 35) {
+                tileState = XposedHelpers.findClass("com.android.systemui.plugins.qs.QSTile$State", pkg.classLoader);
+                LegacyMergedHollowHooks.hook(pkg);
+                LegacyRadiantTrackHooks.hook(pkg);
+                return;
+            }
             blurProvider = XposedHelpers.findClass("com.oplusos.systemui.common.util.QSBlurConfigProvider", pkg.classLoader);
             activeBlurHasMirrorScale = false;
             try {
@@ -208,7 +214,7 @@ public final class MergedRadiantHooks {
         return (Integer) XposedHelpers.callMethod(XposedHelpers.getStaticObjectField(flags, name), "getAttr");
     }
 
-    private static boolean merged(View view) {
+    static boolean merged(View view) {
         for (View current = view; current != null; current = current.getParent() instanceof View parent ? parent : null) {
             String name = current.getClass().getName();
             if (name.equals("com.oplus.systemui.qs.OplusQSTileMediaContainer")
@@ -218,16 +224,16 @@ public final class MergedRadiantHooks {
         }
         return false;
     }
-    private static boolean enabled(View view) {
+    static boolean enabled(View view) {
         return !restoring && readBool(KEY_QS_MERGED_HOLLOW, false)
                 && readBool(KEY_QS_MERGED_RADIANT, false) && merged(view);
     }
-    private static boolean circleEnabled(View view) {
+    static boolean circleEnabled(View view) {
         if (restoring || !readBool(KEY_QS_MERGED_HOLLOW, false) || !merged(view)) return false;
         View tile = tileOwner(view);
         return tile != null && highlightClass.isInstance(tile);
     }
-    private static View tileOwner(View view) {
+    static View tileOwner(View view) {
         for (View current = view; current != null; current = current.getParent() instanceof View parent ? parent : null)
             if (highlightClass != null && (highlightClass.isInstance(current) || normalClass.isInstance(current))) return current;
         return null;
@@ -255,6 +261,7 @@ public final class MergedRadiantHooks {
                 ? (drawable.getClass().getSimpleName().equals("MixColorTileDrawable") ? 0 : activeWhite(tile)) : null;
     }
     private static int activeWhite(View view) {
+        if (android.os.Build.VERSION.SDK_INT == 35) return LegacyMergedHollowHooks.activeWhite(view);
         // Match OplusQsVerticalSeekBar.updateColor when mix-color rendering is unavailable.
         boolean theme = (Boolean) XposedHelpers.callStaticMethod(colorUtil, "isGlobalThemeApplied", view.getContext());
         boolean dark = (Boolean) XposedHelpers.callStaticMethod(colorUtil, "isNeedDarkThemeColor", view.getContext(), false);
@@ -292,6 +299,24 @@ public final class MergedRadiantHooks {
         try { XposedHelpers.callMethod(proxy, "setTintList", tint); }
         finally { settingTint = previous; }
     }
+    static void updateLegacyCard(View tile) {
+        bind(tile);
+        updateCard(tile);
+    }
+
+    static void onLegacyTouch(View tile, MotionEvent event) {
+        Card card = cards.get(tile);
+        if (card == null || !circleEnabled(tile)) return;
+        if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) { card.circleClick = false; return; }
+        if (event.getActionMasked() != MotionEvent.ACTION_DOWN) return;
+        View circle = card.circle == null ? null : card.circle.get();
+        if (circle == null || !(circle.getParent() instanceof View frame)) { card.circleClick = false; return; }
+        float dx = event.getX() - frame.getX() - circle.getX() - circle.getWidth() / 2f;
+        float dy = event.getY() - frame.getY() - circle.getY() - circle.getHeight() / 2f;
+        float radius = circle.getWidth() / 2f;
+        card.circleClick = dx * dx + dy * dy <= radius * radius;
+    }
+
     private static void bind(View tile) {
         if (cards.containsKey(tile)) return;
         Card card = new Card();
@@ -352,7 +377,7 @@ public final class MergedRadiantHooks {
                 frame.addView(circle, Math.min(1, frame.getChildCount()), new FrameLayout.LayoutParams(1, 1));
             }
             int state = XposedHelpers.getIntField(tile, "mTileIconState");
-            card.shape.setColor(state == 2 ? Color.WHITE : 0x1affffff);
+            card.shape.setColor(state == 2 ? (enabled(tile) ? activeWhite(tile) : Color.WHITE) : 0x1affffff);
 
             int size = Math.max(1, Math.round(38f * unit));
             Drawable leafBackground = backgroundLeaf(tile);
@@ -391,6 +416,17 @@ public final class MergedRadiantHooks {
             int left = frame.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL
                     ? frame.getWidth() - inset - size : inset;
             int top = (frame.getHeight() - size) / 2;
+            if (android.os.Build.VERSION.SDK_INT == 35) {
+                FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) circle.getLayoutParams();
+                int gravity = Gravity.START | Gravity.CENTER_VERTICAL;
+                if (params.width != size || params.height != size || params.gravity != gravity
+                        || params.getMarginStart() != inset) {
+                    params.width = params.height = size;
+                    params.gravity = gravity;
+                    params.setMarginStart(inset);
+                    circle.setLayoutParams(params);
+                }
+            }
             circle.layout(left, top, left + size, top + size);
             icon.setTranslationX(left + size / 2f - icon.getLeft() - icon.getWidth() / 2f);
             if (indicator != null && indicator.getVisibility() != View.GONE) indicator.setVisibility(View.GONE);
@@ -406,7 +442,9 @@ public final class MergedRadiantHooks {
         tile.invalidate();
     }
     private static Drawable backgroundLeaf(View tile) {
-        Drawable leaf = (Drawable) XposedHelpers.getObjectField(tile, "mBgDrawable");
+        Drawable leaf = android.os.Build.VERSION.SDK_INT == 35
+                ? (Drawable) XposedHelpers.callMethod(tile, "getBackgroundDrawable")
+                : (Drawable) XposedHelpers.getObjectField(tile, "mBgDrawable");
         while (leaf instanceof DrawableWrapper parent && parent.getDrawable() != null) {
             if (leaf.getClass().getSimpleName().equals("MixColorTileDrawable")
                     || leaf.getClass().getSimpleName().equals("GradientTileDrawable")) break;
@@ -433,7 +471,7 @@ public final class MergedRadiantHooks {
             int layoutId = resource(tile, "oplus_separate_highlight_qs_tile_label", "layout");
             ViewGroup nativeLabels = (ViewGroup) LayoutInflater.from(tile.getContext()).inflate(layoutId, group, false);
             subtitle = nativeLabels.findViewById(resource(tile, "tile_label_desc", "id"));
-            nativeLabels.removeView(subtitle);
+            if (subtitle.getParent() instanceof ViewGroup parent) parent.removeView(subtitle);
             card.nativeLabelOrientation = group.getOrientation();
             card.nativeTitleHeight = title.getLayoutParams().height;
             group.setOrientation(LinearLayout.VERTICAL);
@@ -464,7 +502,8 @@ public final class MergedRadiantHooks {
         TextView current = (TextView) subtitle.getCurrentView();
         if (!TextUtils.equals(current.getText(), text)) subtitle.setCurrentText(text);
         float size = tile.getResources().getDimension(resource(tile, "qs_highlight_tile_text_desc_size", "dimen")) * scale;
-        int lineHeight = Math.round(tile.getResources().getDimension(resource(tile, "qs_highlight_tile_label_desc_line_height", "dimen")) * scale);
+        int lineHeightId = resource(tile, "qs_highlight_tile_label_desc_line_height", "dimen");
+        int lineHeight = lineHeightId == 0 ? 0 : Math.round(tile.getResources().getDimension(lineHeightId) * scale);
         ColorStateList color = tile.getContext().getColorStateList(resource(tile,
                 "status_bar_qs_highlight_tile_label_second_color_active", "color"));
         TextView titleText = (TextView) title.getCurrentView();
@@ -503,7 +542,7 @@ public final class MergedRadiantHooks {
                 view.setLayoutParams(params);
             }
             if (view.getTextSize() != size) view.setTextSize(TypedValue.COMPLEX_UNIT_PX, size);
-            if (view.getLineHeight() != lineHeight) view.setLineHeight(lineHeight);
+            if (lineHeight > 0 && view.getLineHeight() != lineHeight) view.setLineHeight(lineHeight);
             if (!view.getTextColors().equals(color)) view.setTextColor(color);
         }
         if (titleText.getWidth() > 0 && current.getWidth() > 0) {
@@ -533,6 +572,10 @@ public final class MergedRadiantHooks {
         return tile.getResources().getIdentifier(name, type, "com.android.systemui");
     }
     private static void refreshBackground(View tile) {
+        if (android.os.Build.VERSION.SDK_INT == 35) {
+            LegacyMergedHollowHooks.refreshTile(tile);
+            return;
+        }
         Drawable wrapper = (Drawable) XposedHelpers.getObjectField(tile, "mBgDrawable");
         Drawable leaf = backgroundLeaf(tile);
         if (leaf != null && (leaf.getClass().getSimpleName().equals("MixColorTileDrawable")
@@ -544,6 +587,10 @@ public final class MergedRadiantHooks {
         handler.post(refreshTask);
     }
     private static void refreshNow() {
+            if (android.os.Build.VERSION.SDK_INT == 35) {
+                LegacyMergedHollowHooks.refresh();
+                LegacyRadiantTrackHooks.refresh();
+            }
             for (View icon : new ArrayList<>(volumeIcons.keySet())) if (icon != null) refreshVolumeIcon(icon);
             for (View tile : new ArrayList<>(cards.keySet())) if (tile != null) updateCard(tile);
             for (View icon : new ArrayList<>(icons.keySet())) if (icon != null) {
@@ -604,6 +651,13 @@ public final class MergedRadiantHooks {
         refreshNow();
     }
     private static void restoreTree(View view) {
+        if (android.os.Build.VERSION.SDK_INT == 35) {
+            if (normalClass != null && normalClass.isInstance(view) && merged(view)) LegacyMergedHollowHooks.track(view);
+            if (highlightClass != null && highlightClass.isInstance(view) && merged(view)) bind(view);
+            if (view instanceof ViewGroup group)
+                for (int i = 0; i < group.getChildCount(); i++) restoreTree(group.getChildAt(i));
+            return;
+        }
         if (volumeIconClass.isInstance(view) && merged(view)) volumeIcons.put(view, true);
         if (merged(view) && (highlightClass.isInstance(view) || normalClass.isInstance(view))) {
             if (highlightClass.isInstance(view)) bind(view);
@@ -618,6 +672,10 @@ public final class MergedRadiantHooks {
             for (int i = 0; i < group.getChildCount(); i++) restoreTree(group.getChildAt(i));
     }
     public static void cleanupForHotReload() {
+        if (android.os.Build.VERSION.SDK_INT == 35) {
+            LegacyRadiantTrackHooks.cleanup();
+            LegacyMergedHollowHooks.cleanup();
+        }
         handler.removeCallbacksAndMessages(null);
         restoring = true;
         try {

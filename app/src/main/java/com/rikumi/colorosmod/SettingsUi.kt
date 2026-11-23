@@ -132,7 +132,7 @@ internal val SETTINGS_GROUP_TITLE_START = SmallTitleDefaults.InsideMargin.calcul
 internal val LocalSettingsTitlePadding = staticCompositionLocalOf { TopAppBarDefaults.TitlePadding }
 
 // 卡片下方留白 = 相邻 section 之间的间距（首页卡片→卡片、子页面卡片→下一节小标题）。
-private val SETTINGS_CARD_BOTTOM_GAP = 16.dp
+internal val SETTINGS_CARD_BOTTOM_GAP = 16.dp
 
 // 分割线两端距离 group 边界的内缩。
 private val SETTINGS_DIVIDER_INSET = 16.dp
@@ -153,6 +153,18 @@ fun SettingsSmallTitle(
     modifier: Modifier = Modifier,
 ) {
     SmallTitle(text = text, modifier = modifier)
+}
+
+@Composable
+internal fun SettingsGroupSubtitle(
+    developerConfirmedSubtitle: String? = null,
+    modifier: Modifier = Modifier,
+) {
+    if (developerConfirmedSubtitle == null) return
+    SmallTitle(
+        text = developerConfirmedSubtitle,
+        modifier = modifier.padding(bottom = 8.dp),
+    )
 }
 
 @Composable
@@ -207,6 +219,7 @@ fun SettingsTopAppBar(
 internal fun SettingsCard(
     modifier: Modifier = Modifier,
     backgroundColor: Color? = null,
+    bottomGap: Dp = SETTINGS_CARD_BOTTOM_GAP,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val baseCard = CardDefaults.defaultColors()
@@ -216,7 +229,7 @@ internal fun SettingsCard(
             start = SETTINGS_GROUP_HMARGIN,
             top = 2.dp,
             end = SETTINGS_GROUP_HMARGIN,
-            bottom = SETTINGS_CARD_BOTTOM_GAP,
+            bottom = bottomGap,
         ),
         cornerRadius = SETTINGS_CARD_CORNER,
         colors = cardColors,

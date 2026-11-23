@@ -3,6 +3,7 @@ package com.rikumi.colorosmod.hooks;
 import android.os.Handler;
 import android.os.Looper;
 import android.widget.TextView;
+import android.widget.FrameLayout;
 import android.view.View;
 import android.view.ViewGroup;
 import com.rikumi.colorosmod.xposed.*;
@@ -14,6 +15,7 @@ final class LauncherIconGapHooks {
     private static final Set<TextView> VIEWS = Collections.newSetFromMap(new WeakHashMap<>());
     private static final Set<View> ROOTS = Collections.newSetFromMap(new WeakHashMap<>());
     private static Class<?> bubbleClass;
+    private static Class<?> folderClass;
     private static volatile boolean active = true;
     private static Integer lastGap;
     private static final Runnable UPDATE = () -> {
@@ -24,6 +26,10 @@ final class LauncherIconGapHooks {
         // 缓存页和回收池中的图标也可能保留首次加载时的间距。
         int changed = 0;
         for (TextView view : views) {
+            if (isFolderTitle(view)) {
+                ((View) view.getParent()).requestLayout();
+                continue;
+            }
             if (!supported(view)) continue;
             if (apply(view)) changed++;
             // Binding can set the correct padding while mDisableRelayout suppresses
@@ -41,7 +47,8 @@ final class LauncherIconGapHooks {
         XC_MethodHook paddingHook = new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam p) {
                 if (!active || p.hasThrowable() || !(p.thisObject instanceof TextView view)
-                        || !(p.getResult() instanceof Integer padding) || !supported(view)) return;
+                        || !(p.getResult() instanceof Integer padding)
+                        || isFolderTitle(view) || !supported(view)) return;
                 p.setResult(padding + extraPadding(view));
             }
         };
@@ -72,6 +79,56 @@ final class LauncherIconGapHooks {
                 }
             }
         });
+        hookFolderTitles(lp.classLoader);
+    }
+
+    private static void hookFolderTitles(ClassLoader loader) {
+        try {
+            folderClass = XposedHelpers.findClass("com.android.launcher3.folder.FolderIcon", loader);
+            Class<?> flexible = null;
+            try {
+                Class<?> candidate = XposedHelpers.findClass(
+                        "com.android.launcher3.folder.FlexibleFolderIcon", loader);
+                candidate.getDeclaredMethod("onLayout", boolean.class,
+                        int.class, int.class, int.class, int.class);
+                XposedBridge.hookAllMethods(candidate, "onLayout", new XC_MethodHook() {
+                    @Override protected void afterHookedMethod(MethodHookParam p) {
+                        if (active && !p.hasThrowable()) applyFolderLayout(p.thisObject);
+                    }
+                });
+                flexible = candidate;
+            } catch (NoSuchMethodException | XposedHelpers.ClassNotFoundError ignored) {
+                // Older folder implementations inherit FrameLayout's layout.
+            }
+            Class<?> flexibleClass = flexible;
+            // Hook FlexibleFolderIcon directly as its compiled super call may inline
+            // FrameLayout.onLayout. The fallback must not shift its title a second time.
+            XposedBridge.hookAllMethods(FrameLayout.class, "onLayout", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (!active || p.hasThrowable()
+                            || (flexibleClass != null && flexibleClass.isInstance(p.thisObject))) return;
+                    applyFolderLayout(p.thisObject);
+                }
+            });
+        } catch (XposedHelpers.ClassNotFoundError ignored) {
+            // Launcher variants without FolderIcon retain application-icon spacing.
+        }
+    }
+
+    private static void applyFolderLayout(Object folder) {
+        if (!folderClass.isInstance(folder)) return;
+        Object name = XposedHelpers.callMethod(folder, "getFolderName");
+        if (!(name instanceof TextView title) || title.getParent() != folder) return;
+        synchronized (VIEWS) { VIEWS.add(title); }
+        // Native layout restores the baseline bounds on every pass. Moving the
+        // bounds leaves the folder animation's translation properties intact.
+        title.offsetTopAndBottom(extraPadding(title));
+    }
+
+    private static boolean isFolderTitle(TextView view) {
+        Object parent = view.getParent();
+        return folderClass != null && folderClass.isInstance(parent)
+                && XposedHelpers.callMethod(parent, "getFolderName") == view;
     }
 
     static void onSettingsSnapshotPublished(Map<String, Integer> settings) {
@@ -111,7 +168,7 @@ final class LauncherIconGapHooks {
 
     private static boolean apply(TextView view) {
         try {
-            if (!supported(view)) return false;
+            if (isFolderTitle(view) || !supported(view)) return false;
             // 17.3.12 直接读取混淆后的参数字段，已无 IconParam / AllAppsParam getter。
             // 显式调用 BubbleTextView 的真实入口也能避开已编译调用点的内联，
             // 并从原生基准重算，不能在现有 compound padding 上反复累加。

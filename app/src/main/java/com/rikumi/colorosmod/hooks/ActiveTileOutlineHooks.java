@@ -189,7 +189,8 @@ public final class ActiveTileOutlineHooks {
                     android.content.Context.class, new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             View tile = (View) p.thisObject;
-                            if (legacyMerged(tile) && readBool(KEY_QS_ACTIVE_COLOR_ENABLED, false))
+                            if (legacyMerged(tile) && readBool(KEY_QS_ACTIVE_COLOR_ENABLED, false)
+                                    && !(android.os.Build.VERSION.SDK_INT == 35 && MergedRadiantHooks.enabled(tile)))
                                 p.setResult(readInt(KEY_QS_ACTIVE_COLOR, DEFAULT_QS_ACTIVE_COLOR));
                         }
                     });

@@ -209,4 +209,7 @@
     <string name="ui_fingerprint_ring">指紋圖示替換為普通環形</string>
     <string name="ui_folder_rows">修改資料夾行數</string>
     <string name="ui_folder_columns">修改資料夾列數</string>
+    <string name="ui_launcher_icon_pack_fallback">修復 ColorOS 15 桌面圖示包適配縮放</string>
+    <string name="ui_launcher_icon_font_size">桌面圖示字體大小</string>
+    <string name="ui_launcher_folder_corner_radius">桌面資料夾圓角大小</string>
 </resources>

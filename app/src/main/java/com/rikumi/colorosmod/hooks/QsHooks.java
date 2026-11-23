@@ -311,7 +311,8 @@ public final class QsHooks {
         Object date = XposedHelpers.getObjectField(footer, "mQsDateView");
         if (clock instanceof View) {
             View v = (View) clock;
-            float scale = ((Number) XposedHelpers.callMethod(footer, "getFontScale")).floatValue();
+            float scale = android.os.Build.VERSION.SDK_INT == 35 ? 1f
+                    : ((Number) XposedHelpers.callMethod(footer, "getFontScale")).floatValue();
             v.setScaleX(scale);
             v.setScaleY(scale);
             v.setTranslationX(0f);
@@ -454,9 +455,21 @@ public final class QsHooks {
                     "applyPanelMirrorScale", boolean.class, float.class, proxyClass,
                     new XC_MethodHook() {
                         @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            // ColorOS 15 commits the mix config inside this method.
+                            // Scale its native lerp input before that single commit.
+                            if (android.os.Build.VERSION.SDK_INT == 35
+                                    && readBool(KEY_QS_BLUR_SCALE_ENABLED, false)) {
+                                int percent = Math.max(0, Math.min(QS_BLUR_SCALE_MAX,
+                                        readInt(KEY_QS_BLUR_SCALE, QS_BLUR_SCALE_DEFAULT)));
+                                param.args[1] = (Float) param.args[1] * (percent / 100f);
+                            }
+                        }
+                        @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             try {
-                                if (!readBool(KEY_QS_BLUR_SCALE_ENABLED, false)) return;
+                                if (android.os.Build.VERSION.SDK_INT == 35
+                                        || !readBool(KEY_QS_BLUR_SCALE_ENABLED, false)) return;
                                 Object proxy = param.args[2];
                                 if (proxy == null) return;
                                 Object config = XposedHelpers.callMethod(proxy, "getBlurConfig");
@@ -635,6 +648,7 @@ public final class QsHooks {
     }
 
     public static void hookQsNormalCornerRadius(final XC_LoadPackage.LoadPackageParam lpparam) {
+        LegacyQsCornerRadiusHooks.hook(lpparam);
 
         try {
             Class<?> layout = XposedHelpers.findClass("com.oplus.systemui.qs.base.seek.OplusQsBaseToggleSliderLayout", lpparam.classLoader);
@@ -708,10 +722,12 @@ public final class QsHooks {
                                 if (!Boolean.TRUE.equals(replayingRadius.get()))
                                     radiusSliders.put(param.thisObject, new Object[]{"updateRadius", param.args[1],
                                             new java.lang.ref.WeakReference<>(param.args[0])});
-                                if (qsCornerRadiusPercent() == null) return;
+                                if (param.thisObject instanceof View view) watchRadiusSize(view);
+                                if (param.args[0] instanceof View slider) watchRadiusSize(slider);
                                 Float px = resolveQsCornerRadiusPx(param.thisObject);
-                                if (px == null) return;
-                                param.args[1] = px;
+                                if (px != null) param.args[1] = px;
+                                else if (param.thisObject instanceof View view)
+                                    param.args[1] = MergedCardRatioHooks.scaleRadius(view, (Float) param.args[1]);
                             } catch (Throwable t) {
                                 log("qs_radius slider fail: " + t);
                             }
@@ -824,7 +840,7 @@ public final class QsHooks {
         return null;
     }
 
-    private static void watchRadiusSize(View view) {
+    static void watchRadiusSize(View view) {
         if (radiusSizeListeners.containsKey(view)) return;
         View.OnLayoutChangeListener listener = (v, l, t, r, b, ol, ot, or, ob) -> {
             if (r - l != or - ol || b - t != ob - ot) {
@@ -846,6 +862,7 @@ public final class QsHooks {
         if (radiusApplied && java.util.Objects.equals(appliedRadius, radius)) return;
         appliedRadius = radius;
         radiusApplied = true;
+        LegacyQsCornerRadiusHooks.refresh();
         // Publish through the native StateFlow so every bound tile redraws its path.
         for (java.util.Map.Entry<Class<?>, Object[]> entry : radiusOutlines.entrySet()) {
             Object[] saved = entry.getValue();
@@ -879,6 +896,7 @@ public final class QsHooks {
     }
 
     public static void cleanupCornerRadiusForHotReload() {
+        LegacyQsCornerRadiusHooks.cleanup();
         radiusHandler.removeCallbacksAndMessages(null);
         for (java.util.Map.Entry<View, View.OnLayoutChangeListener> entry : radiusSizeListeners.entrySet())
             entry.getKey().removeOnLayoutChangeListener(entry.getValue());
@@ -909,8 +927,9 @@ public final class QsHooks {
             if (slider instanceof View child) target = child;
         } catch (Throwable ignored) { }
         try {
-            Object frame = XposedHelpers.getObjectField(view, "mIconFrame");
-            if (frame instanceof View child) target = child;
+            Object background = XposedHelpers.getObjectField(view,
+                    android.os.Build.VERSION.SDK_INT == 35 ? "mBg" : "mIconFrame");
+            if (background instanceof View child) target = child;
         } catch (Throwable ignored) { }
         int shortSide = Math.min(target.getWidth(), target.getHeight());
         try {

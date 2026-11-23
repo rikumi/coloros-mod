@@ -154,7 +154,7 @@ public final class MergedCardRatioHooks {
                             icon.requestLayout();
                         }
                     });
-            XposedHelpers.findAndHookDeclaredMethod(concreteIcon, "onLayout", boolean.class, int.class, int.class,
+            XposedHelpers.findAndHookMethod(concreteIcon, "onLayout", boolean.class, int.class, int.class,
                     int.class, int.class, new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             View icon = (View) p.thisObject;
@@ -545,7 +545,8 @@ public final class MergedCardRatioHooks {
     }
 
     private static String iconSizeField(View icon) {
-        return icon.getClass().getName().equals("com.oplus.systemui.qs.tileimpl.OplusQSIconViewImpl")
+        return android.os.Build.VERSION.SDK_INT != 35
+                && icon.getClass().getName().equals("com.oplus.systemui.qs.tileimpl.OplusQSIconViewImpl")
                 ? "iconSizePx" : "mIconSizePx";
     }
 
@@ -822,11 +823,28 @@ public final class MergedCardRatioHooks {
             float scaled = normal != null ? normal : scaleRadius(view, nativeRadius);
             Float previous = sliderRadii.get(view);
             if (previous == null || Float.compare(previous, scaled) != 0) {
-                XposedHelpers.callMethod(view, "updateCornerRadius");
+                updateSliderRadius(view);
                 sliderRadii.put(view, scaled);
             }
         }
         if (view instanceof ViewGroup group) for (int i = 0; i < group.getChildCount(); i++) applyRadii(group.getChildAt(i));
+    }
+
+    private static void updateSliderRadius(View view) {
+        try {
+            XposedHelpers.callMethod(view, "updateCornerRadius");
+        } catch (NoSuchMethodError oldSystemUi) {
+            // ColorOS 15 recomputes slider corners through its personality callback.
+            // Re-run that native path using the current shape and current resources.
+            try {
+                Object personality = XposedHelpers.getObjectField(view, "personalityManagerEx");
+                XposedHelpers.callMethod(view, "onShapeChanged",
+                        XposedHelpers.callMethod(personality, "getLastShapeType"));
+            } catch (NoSuchFieldError | NoSuchMethodError unsupportedSystemUi) {
+                view.invalidateOutline();
+                view.invalidate();
+            }
+        }
     }
 
     private static Object nativeOutlineSource(View view, Object source) {
@@ -935,7 +953,7 @@ public final class MergedCardRatioHooks {
         }
         if (sliderRadii.remove(view) != null) {
             restoringRadius.set(true);
-            try { XposedHelpers.callMethod(view, "updateCornerRadius"); }
+            try { updateSliderRadius(view); }
             finally { restoringRadius.remove(); }
         }
     }

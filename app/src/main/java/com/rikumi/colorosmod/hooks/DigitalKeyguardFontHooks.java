@@ -65,7 +65,7 @@ final class DigitalKeyguardFontHooks {
                             View view = (View) p.thisObject;
                             View clock = clockHost(view);
                             if (clock == null || !KeyguardClockFontHooks.defaultTheme(clock)) return;
-                            int family = Math.max(0, Math.min(4, readIntCached("keyguard_clock_font", 1)));
+                            int family = Math.max(0, Math.min(5, readIntCached("keyguard_clock_font", 1)));
                             int weight = Math.max(0, Math.min(9, readIntCached("keyguard_clock_weight", 3))) * 100;
                             if (family == 0 && weight == 0) return;
                             p.args[3] = KeyguardClockFontHooks.resolve(view.getContext(), family, weight, (Typeface) p.args[3]);

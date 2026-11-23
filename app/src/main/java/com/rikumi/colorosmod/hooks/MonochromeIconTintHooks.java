@@ -2,6 +2,9 @@ package com.rikumi.colorosmod.hooks;
 
 import android.graphics.Canvas;
 import android.view.View;
+import android.widget.ImageView;
+import android.graphics.drawable.Drawable;
+import android.service.notification.StatusBarNotification;
 import java.util.ArrayList;
 import java.util.WeakHashMap;
 import java.lang.reflect.Method;
@@ -13,6 +16,8 @@ import static com.rikumi.colorosmod.XposedInit.log;
 final class MonochromeIconTintHooks {
     private static final WeakHashMap<View, Boolean> nativeColorable = new WeakHashMap<>();
     private static Method updateIconColor;
+    private static boolean hasColorable;
+    private static final WeakHashMap<View, Drawable> legacyMasks = new WeakHashMap<>();
 
     static void hook(XC_LoadPackage.LoadPackageParam lp) {
         try {
@@ -23,7 +28,12 @@ final class MonochromeIconTintHooks {
                 updateIconColor = iconClass.getDeclaredMethod("updateIconColor$1");
             }
             updateIconColor.setAccessible(true);
-            XposedHelpers.findAndHookMethod(type, lp.classLoader, "setIsIconColorable", boolean.class, new XC_MethodHook() {
+            try {
+                iconClass.getDeclaredField("mIsIconColorable");
+                iconClass.getDeclaredMethod("setIsIconColorable", boolean.class);
+                hasColorable = true;
+            } catch (NoSuchFieldException | NoSuchMethodException legacy) { hasColorable = false; }
+            if (hasColorable) XposedHelpers.findAndHookMethod(type, lp.classLoader, "setIsIconColorable", boolean.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     View view = (View) p.thisObject;
                     boolean mask = MonochromeNotificationHooks.enlargedIcon(view);
@@ -41,11 +51,34 @@ final class MonochromeIconTintHooks {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     View view = (View) p.thisObject;
                     boolean wasTracked = nativeColorable.containsKey(view);
-                    boolean old = XposedHelpers.getBooleanField(view, "mIsIconColorable");
-                    if (prepare(view) && (!wasTracked || !old)) updateColor(view);
+                    boolean old = hasColorable && XposedHelpers.getBooleanField(view, "mIsIconColorable");
+                    if (prepare(view) && (!wasTracked || (hasColorable && !old))) updateColor(view);
                 }
             });
+            if (!hasColorable) hookLegacyDrawable(lp, iconClass);
         } catch (Throwable error) { log("monochrome icon tint hook failed: " + error); }
+    }
+
+    private static void hookLegacyDrawable(XC_LoadPackage.LoadPackageParam lp, Class<?> iconClass) {
+        XposedHelpers.findAndHookMethod("com.oplus.systemui.statusbar.phone.StatusBarIconControllerExImpl", lp.classLoader,
+                "updateStatusBarIconDrawable", Drawable.class, iconClass, StatusBarNotification.class, new XC_MethodHook() {
+                    @Override protected void beforeHookedMethod(MethodHookParam p) {
+                        View view = (View) p.args[1];
+                        if (!MonochromeNotificationHooks.enlargedIcon(view)) { legacyMasks.remove(view); return; }
+                        legacyMasks.put(view, (Drawable) p.args[0]);
+                        int id = view.getResources().getIdentifier("icon_is_grayscale", "id", "com.android.systemui");
+                        if (id != 0) view.setTag(id, true);
+                        // Keep the native PNG/mask path instead of rounding it and asynchronously replacing it.
+                        p.setResult(false);
+                    }
+                });
+        XposedHelpers.findAndHookMethod(ImageView.class, "setImageDrawable", Drawable.class, new XC_MethodHook() {
+            @Override protected void beforeHookedMethod(MethodHookParam p) {
+                Drawable mask = legacyMasks.get(p.thisObject);
+                if (mask != null && p.args[0] != null && MonochromeNotificationHooks.enlargedIcon((View) p.thisObject))
+                    p.args[0] = mask; // Ignore an older vendor coroutine completing after a preference change.
+            }
+        });
     }
 
     private static void updateColor(View view) {
@@ -56,13 +89,14 @@ final class MonochromeIconTintHooks {
 
     private static boolean prepare(View view) {
         if (MonochromeNotificationHooks.enlargedIcon(view)) {
-            nativeColorable.putIfAbsent(view, XposedHelpers.getBooleanField(view, "mIsIconColorable"));
-            XposedHelpers.setBooleanField(view, "mIsIconColorable", true);
+            nativeColorable.putIfAbsent(view, hasColorable && XposedHelpers.getBooleanField(view, "mIsIconColorable"));
+            if (hasColorable) XposedHelpers.setBooleanField(view, "mIsIconColorable", true);
             XposedHelpers.setBooleanField(view, "mShowsConversation", false);
             return true;
         }
         Boolean original = nativeColorable.remove(view);
-        if (original != null) XposedHelpers.setBooleanField(view, "mIsIconColorable", original);
+        if (original != null && hasColorable) XposedHelpers.setBooleanField(view, "mIsIconColorable", original);
+        legacyMasks.remove(view);
         return false;
     }
 
@@ -77,8 +111,9 @@ final class MonochromeIconTintHooks {
     static void cleanup() {
         var saved = new java.util.HashMap<>(nativeColorable);
         nativeColorable.clear();
+        legacyMasks.clear();
         for (var entry : saved.entrySet()) {
-            XposedHelpers.setBooleanField(entry.getKey(), "mIsIconColorable", entry.getValue());
+            if (hasColorable) XposedHelpers.setBooleanField(entry.getKey(), "mIsIconColorable", entry.getValue());
             updateColor(entry.getKey());
             entry.getKey().invalidate();
         }

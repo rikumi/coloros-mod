@@ -32,7 +32,7 @@ import java.util.Objects;
 import java.util.WeakHashMap;
 
 public final class StatusBarFontHooks {
-    private static final String[] FAMILIES = {"系统默认", "Inter", "Manrope", "Rubik", "Lato"};
+    private static final String[] FAMILIES = {"系统默认", "Inter", "Manrope", "Rubik", "Lato", "Figtree"};
     private static final WeakHashMap<TextView, Original> originals = new WeakHashMap<>();
     private static final WeakHashMap<Drawable, Boolean> batteryDrawables = new WeakHashMap<>();
     private static final HashMap<Integer, Typeface> fonts = new HashMap<>();
@@ -248,7 +248,7 @@ public final class StatusBarFontHooks {
         } finally { applying.remove(); }
     }
 
-    private static int family() { return Math.max(0, Math.min(4, readInt(KEY_STATUS_BAR_FONT, 0))); }
+    private static int family() { return Math.max(0, Math.min(5, readInt(KEY_STATUS_BAR_FONT, 0))); }
     private static boolean overridesFont() { return family() > 0 || readInt(KEY_STATUS_BAR_FONT_WEIGHT, 0) > 0; }
     private static Typeface resolve(TextView view, Typeface nativeFont) {
         return resolve(view.getContext(), nativeFont);
@@ -266,7 +266,7 @@ public final class StatusBarFontHooks {
             int weight = selectedWeight == 0 ? (nativeFont == null ? 400 : nativeFont.getWeight()) : selectedWeight;
             weight = Math.max(100, Math.min(900, weight));
             if (family == 2) weight = Math.max(200, Math.min(800, weight));
-            if (family == 3) weight = Math.max(300, weight);
+            if (family == 3 || family == 5) weight = Math.max(300, weight);
             if (family == 4) weight = weight >= 700 ? 700 : weight >= 600 ? 600 : weight >= 500 ? 500 : 400;
             int key = family * 1000 + weight;
             Typeface font = fonts.get(key);

@@ -6,10 +6,23 @@ import android.os.Bundle;
 import android.view.InputEvent;
 import android.view.MotionEvent;
 import java.lang.reflect.Method;
+import java.lang.reflect.Field;
 import java.util.Map;
 
 /** Resolve the platform APIs by their actual signatures, rather than Android version labels. */
 final class NavigationPlatformCompat {
+    static Class<?> navigationClass(ClassLoader loader, String simpleName) throws ClassNotFoundException {
+        try { return loader.loadClass("com.android.systemui.navigationbar.views." + simpleName); }
+        catch (ClassNotFoundException legacy) {
+            return loader.loadClass("com.android.systemui.navigationbar." + simpleName);
+        }
+    }
+
+    static Field navigationHints(Class<?> navigation) throws NoSuchFieldException {
+        try { return navigation.getField("mNavbarFlags"); }
+        catch (NoSuchFieldException legacy) { return navigation.getField("mNavigationIconHints"); }
+    }
+
     static Class<?> captureApi(ClassLoader loader) throws ClassNotFoundException {
         try {
             Class<?> api = loader.loadClass("android.window.ScreenCaptureInternal");
@@ -23,13 +36,18 @@ final class NavigationPlatformCompat {
     static Method recentsStart(ClassLoader loader) throws ReflectiveOperationException {
         Class<?> owner = loader.loadClass("com.android.wm.shell.recents.RecentsTransitionHandler");
         Class<?> app = loader.loadClass("android.app.IApplicationThread");
-        Class<?> runner = loader.loadClass("com.android.wm.shell.recents.IRecentsAnimationRunner");
         try {
-            return owner.getDeclaredMethod("startRecentsTransition", PendingIntent.class, Intent.class,
-                    Bundle.class, loader.loadClass("android.window.WindowContainerTransaction"), app, runner);
+            Class<?> runner = loader.loadClass("com.android.wm.shell.recents.IRecentsAnimationRunner");
+            try {
+                return owner.getDeclaredMethod("startRecentsTransition", PendingIntent.class, Intent.class,
+                        Bundle.class, loader.loadClass("android.window.WindowContainerTransaction"), app, runner);
+            } catch (ClassNotFoundException | NoSuchMethodException fiveParameters) {
+                return owner.getDeclaredMethod("startRecentsTransition", PendingIntent.class, Intent.class,
+                        Bundle.class, app, runner);
+            }
         } catch (ClassNotFoundException | NoSuchMethodException legacy) {
             return owner.getDeclaredMethod("startRecentsTransition", PendingIntent.class, Intent.class,
-                    Bundle.class, app, runner);
+                    Bundle.class, app, loader.loadClass("android.view.IRecentsAnimationRunner"));
         }
     }
 

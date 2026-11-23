@@ -191,8 +191,8 @@ public final class AppNavigationHooks {
         return new Rect();
     }
 
-    private static final String NAV = "com.android.systemui.navigationbar.views.NavigationBarView";
-    private static final String TRANSITIONS = "com.android.systemui.navigationbar.views.NavigationBarTransitions";
+    private Class<?> navigationClass;
+    private Field navigationHints;
     private static final String SHADE_WINDOW = "com.android.systemui.shade.NotificationShadeWindowControllerImpl";
     private static final long SAMPLE_INTERVAL_MS = 50;
     private static final long RECENTS_FOCUS_SETTLE_MS = 500;
@@ -213,13 +213,15 @@ public final class AppNavigationHooks {
 
     void install(ClassLoader loader, AppNavigationHooks.Installer installer) throws ReflectiveOperationException {
         classLoader = loader;
-        Class<?> nav = loader.loadClass(NAV);
+        Class<?> nav = NavigationPlatformCompat.navigationClass(loader, "NavigationBarView");
+        navigationClass = nav;
+        navigationHints = NavigationPlatformCompat.navigationHints(nav);
         nav.getDeclaredMethod("onAttachedToWindow");
         nav.getDeclaredMethod("onDetachedFromWindow");
         nav.getField("mBarTransitions");
         nav.getField("mIsVertical");
         nav.getField("mNavBarMode");
-        Class<?> transitions = loader.loadClass(TRANSITIONS);
+        Class<?> transitions = NavigationPlatformCompat.navigationClass(loader, "NavigationBarTransitions");
         transitions.getField("mView");
         applyIntensity = transitions.getMethod("applyDarkIntensity", float.class);
         Class<?> shadeState = loader.loadClass("com.android.systemui.shade.NotificationShadeWindowState");
@@ -251,7 +253,7 @@ public final class AppNavigationHooks {
         }), info -> main.post(() -> focusedTaskChanged(info)));
         new AppNavigationRecentsHooks(loader).install(installer, this::recentsAnimationChanged);
         startWorkers();
-        installer.hook(NAV, "onAttachedToWindow", chain -> {
+        installer.hook(nav.getName(), "onAttachedToWindow", chain -> {
             Object result = chain.proceed();
             View view = (View) chain.getThisObject();
             State state = new State(view);
@@ -260,7 +262,7 @@ public final class AppNavigationHooks {
             state.tick();
             return result;
         });
-        installer.hook(NAV, "onDetachedFromWindow", chain -> {
+        installer.hook(nav.getName(), "onDetachedFromWindow", chain -> {
             State state = states.remove(chain.getThisObject());
             if (state != null) state.close();
             return chain.proceed();
@@ -286,7 +288,7 @@ public final class AppNavigationHooks {
             }
             return chain.proceed();
         }, shadeState);
-        installer.hook(TRANSITIONS, "applyDarkIntensity", chain -> {
+        installer.hook(transitions.getName(), "applyDarkIntensity", chain -> {
             View view = (View) chain.getThisObject().getClass().getField("mView").get(chain.getThisObject());
             State state = states.get(view);
             if (state != null && state.color != null && enabled() && !shadeVisible && !recentsCached) {
@@ -336,7 +338,7 @@ public final class AppNavigationHooks {
     }
 
     private void discoverNavigation(View view) {
-        if (NAV.equals(view.getClass().getName()) && view.isAttachedToWindow()) {
+        if (navigationClass.isInstance(view) && view.isAttachedToWindow()) {
             if (!states.containsKey(view)) {
                 State state = new State(view);
                 states.put(view, state);
@@ -437,7 +439,7 @@ public final class AppNavigationHooks {
                 int mode = view.getClass().getField("mNavBarMode").getInt(view);
                 android.view.WindowInsets insets = view.getRootWindowInsets();
                 boolean ime = (insets != null && insets.isVisible(android.view.WindowInsets.Type.ime()))
-                        || (view.getClass().getField("mNavbarFlags").getInt(view) & 1) != 0;
+                        || (navigationHints.getInt(view) & 1) != 0;
                 if (!enabled() || !view.isShown() || vertical || mode != 2 || ime || view.getDisplay() == null
                         || (keyguard != null && keyguard.isKeyguardLocked())) {
                     reset();

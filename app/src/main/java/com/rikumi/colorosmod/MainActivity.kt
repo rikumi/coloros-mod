@@ -273,13 +273,14 @@ internal data class SelectItem(
 
 private val DESKTOP: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_desktop_layout),
+    SwitchItem("launcher_icon_font_size_enabled", R.string.ui_launcher_icon_font_size, sliderKey = "launcher_icon_font_size_sp_tenths", sliderMin = 80, sliderMax = 160, sliderStep = 5, sliderDefault = 110, sliderDisplayScale = 0.1f, sliderUnit = "sp"),
     SwitchItem("icon_gap_enabled", R.string.ui_icon_gap, sliderKey = "icon_gap_dp", sliderMax = 8, sliderDefault = 4),
     SwitchItem("indicator_enabled", R.string.ui_indicator, sliderKey = "indicator_dp", sliderMax = 32, sliderDefault = 16, sliderUnit = "dp"),
     SwitchItem("edit_mode_bg_transparent_enabled", R.string.ui_edit_mode_bg),
     SwitchItem("weaken_desktop_customization_bg_enabled", R.string.ui_weaken_desktop_bg),
     SwitchItem("hide_launcher_update_dot_enabled", R.string.ui_hide_launcher_update_dot),
-    SwitchItem("launcher_icon_contour_enabled", R.string.ui_launcher_icon_contour),
-    SwitchItem("launcher_widget_contour_enabled", R.string.ui_launcher_widget_contour),
+    SwitchItem("launcher_icon_contour_enabled", R.string.ui_launcher_icon_contour, masterEnableAllowed = false),
+    SwitchItem("launcher_widget_contour_enabled", R.string.ui_launcher_widget_contour, masterEnableAllowed = false),
     GroupTitleItem(R.string.ui_drawer),
     SwitchItem("drawer_columns_enabled", R.string.ui_drawer_columns),
     SwitchItem("drawer_install_time_sort_enabled", R.string.ui_drawer_install_time_sort),
@@ -287,6 +288,7 @@ private val DESKTOP: List<SettingsItem> = listOf(
     GroupTitleItem(R.string.ui_icon_pack),
     SwitchItem("system_application_icon_pack", R.string.ui_system_application_icon_pack),
     SwitchItem("launcher_icon_pack_clarity_enabled", R.string.ui_launcher_icon_pack_clarity),
+    SwitchItem("launcher_icon_pack_fallback_enabled", R.string.ui_launcher_icon_pack_fallback),
     RefreshIconCacheItem,
     GroupTitleItem(R.string.ui_long_press_menu),
     SwitchItem("disable_launcher_secondary_menu_enabled", R.string.ui_disable_secondary_menu),
@@ -300,6 +302,7 @@ private val DESKTOP: List<SettingsItem> = listOf(
     SwitchItem(FolderGridSettings.COLUMNS_ENABLED, R.string.ui_folder_columns,
         sliderKey = FolderGridSettings.COLUMNS, sliderMin = 3, sliderMax = 4, sliderDefault = 3,
         sliderUnit = "", sliderFollowsSystem = true, masterEnableAllowed = false),
+    SwitchItem("launcher_folder_corner_radius_enabled", R.string.ui_launcher_folder_corner_radius, sliderKey = "launcher_folder_corner_radius_dp", sliderMin = 4, sliderMax = 36, sliderDefault = 12, sliderUnit = "dp"),
     SwitchItem("folder_bg_transparent_enabled", R.string.ui_folder_transparent),
     SwitchItem("folder_anim_duration_enabled", R.string.ui_folder_duration, sliderKey = "folder_anim_duration_ms", sliderMax = 500, sliderDefault = 300, sliderUnit = "ms", sliderMin = 100),
 )
@@ -348,7 +351,7 @@ private val NOTIF: List<SettingsItem> = listOf(
     SwitchItem("notification_pull_expand_enabled", R.string.ui_notification_pull),
     SwitchItem(XposedInit.KEY_NOTIFICATION_ROUND_CLEAR_ALL_ENABLED, R.string.ui_notification_round_clear_all),
     SwitchItem("notification_bg_brightness_enabled", R.string.ui_notification_bg_brightness,
-        sliderKey = "notification_bg_brightness_percent", sliderMin = 50, sliderMax = 100,
+        sliderKey = "notification_bg_brightness_percent", sliderMin = 0, sliderMax = 100,
         sliderDefault = 50, sliderStep = 5, sliderUnit = "%"),
     SwitchItem("notification_bg_opacity_enabled", R.string.ui_notification_bg_opacity,
         sliderKey = "notification_bg_opacity_percent", sliderMin = 40, sliderMax = 100,
@@ -373,7 +376,7 @@ private val NOTIF: List<SettingsItem> = listOf(
         masterManaged = true, masterEnabledValue = 1),
     SwitchItem("hide_roaming_icon", R.string.ui_hide_roaming),
     SelectItem("signal_network_type_mode", R.string.ui_signal_network_type, listOf(R.string.ui_option_default_display, R.string.ui_option_separate_display, R.string.ui_option_hide)),
-    SelectItem("status_bar_clock_font", R.string.ui_statusbar_font, listOf(R.string.ui_option_system_default, R.string.ui_font_inter, R.string.ui_font_manrope, R.string.ui_font_rubik, R.string.ui_font_lato)),
+    SelectItem("status_bar_clock_font", R.string.ui_statusbar_font, listOf(R.string.ui_option_system_default, R.string.ui_font_inter, R.string.ui_font_manrope, R.string.ui_font_rubik, R.string.ui_font_lato, R.string.ui_font_figtree)),
     SelectItem("status_bar_clock_weight", R.string.ui_statusbar_weight, listOf(R.string.ui_option_follow_system, R.string.ui_weight_100, R.string.ui_weight_200, R.string.ui_weight_300, R.string.ui_weight_400, R.string.ui_weight_500, R.string.ui_weight_600, R.string.ui_weight_700, R.string.ui_weight_800, R.string.ui_weight_900)),
     SelectItem("statusbar_lyric_mode", R.string.ui_statusbar_lyric,
         listOf(R.string.ui_lyric_mode_off, R.string.ui_lyric_mode_notification),
@@ -443,7 +446,7 @@ private val LOCKSCREEN: List<SettingsItem> = listOf(
     SwitchItem("keyguard_bouncer_swipe_back_enabled", R.string.ui_bouncer_swipe_back, developerConfirmedSubtitle = R.string.ui_bouncer_swipe_back_hint),
     GroupTitleItem(R.string.ui_lock_visual),
     SelectItem("keyguard_clock_font", R.string.ui_keyguard_clock_font,
-        listOf(R.string.ui_option_system_default, R.string.ui_font_inter, R.string.ui_font_manrope, R.string.ui_font_rubik, R.string.ui_font_lato),
+        listOf(R.string.ui_option_system_default, R.string.ui_font_inter, R.string.ui_font_manrope, R.string.ui_font_rubik, R.string.ui_font_lato, R.string.ui_font_figtree),
         defaultValue = 1, masterManaged = true, masterEnabledValue = 1),
     SwitchItem("keyguard_clock_monospace", R.string.ui_keyguard_clock_monospace, defaultEnabled = true),
     SwitchItem("keyguard_clock_spacing_enabled", R.string.ui_keyguard_clock_spacing,
@@ -522,7 +525,9 @@ private val PURIFICATION: List<SettingsItem> = listOf(
 
 private val SYSTEM_FONTS: List<SettingsItem> = listOf(
     SelectItem("system_font_zh", R.string.ui_system_font_zh, listOf(R.string.ui_font_default, R.string.ui_font_source_han, R.string.ui_font_custom)),
-    SelectItem("system_font_latin", R.string.ui_system_font_latin, listOf(R.string.ui_font_default, R.string.ui_font_inter, R.string.ui_font_manrope, R.string.ui_font_custom)),
+    SelectItem("system_font_latin", R.string.ui_system_font_latin,
+        listOf(R.string.ui_font_default, R.string.ui_font_inter, R.string.ui_font_manrope, R.string.ui_font_figtree, R.string.ui_font_custom),
+        optionValues = listOf(0, 1, 2, 4, 3)),
     SelectItem("system_font_mono", R.string.ui_system_font_mono, listOf(R.string.ui_font_default, R.string.ui_font_maple, R.string.ui_font_jetbrains, R.string.ui_font_fira, R.string.ui_font_cascadia, R.string.ui_font_custom), defaultValue = -1, optionValues = listOf(-1, 0, 1, 2, 3, 4)),
     SelectItem("system_font_emoji", R.string.ui_system_font_emoji, listOf(R.string.ui_font_default, R.string.ui_font_emoji_apple, R.string.ui_font_emoji_joypixels, R.string.ui_font_emoji_twitter, R.string.ui_font_emoji_samsung, R.string.ui_font_emoji_noto_3d, R.string.ui_font_custom), defaultValue = com.rikumi.colorosmod.hooks.SystemFontHooks.DEFAULT_EMOJI, optionValues = listOf(0, 1, 2, 3, 4, 7, 8)),
     SwitchItem("system_font_disable_replacement", R.string.ui_system_font_disable_replacement, developerConfirmedSubtitle = R.string.ui_system_font_disable_replacement_hint),
@@ -598,6 +603,7 @@ private val List<SettingsItem>.switches: List<SwitchItem> get() = filterIsInstan
 // 分类/全局顶部“一键启用”所管理的项目；目录屏蔽项也属于可启用功能。
 private val SettingsItem.availableOnDevice: Boolean
     get() = when {
+        this is SelectItem && key == XposedInit.KEY_NOTIFICATION_LAYOUT_STYLE -> Build.VERSION.SDK_INT >= 36
         this is SwitchItem && key == XposedInit.KEY_STACKED_SIGNAL_WIFI_RIGHT -> Build.VERSION.SDK_INT >= 37
         this !is SwitchItem -> true
         key == "qs_bg_brightness_enabled" || key == "qs_bg_opacity_enabled" -> Build.VERSION.SDK_INT >= 37
@@ -1588,6 +1594,7 @@ internal fun Context.settingsPrefs(): SharedPreferences {
     }
     SettingsProvider.migrateNotificationIconPrefs(this, de)
     SettingsProvider.migrateKeyguardClockSpacing(this, de)
+    SettingsProvider.migrateLauncherIconFontSize(this, de)
     if (!de.contains("statusbar_lyric_mode")
             && (de.contains("statusbar_lyric_enabled") || de.contains("fluid_cloud_lyric_enabled"))) {
         val mode = when {

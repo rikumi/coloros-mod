@@ -129,8 +129,10 @@ public final class SystemFontHooks {
             } else if (slot.equals(ZH) && choice == 1) {
                 sources = com.rikumi.colorosmod.SystemCjkFonts.find().stream()
                         .map(file -> "system:" + file.getAbsolutePath()).toArray(String[]::new);
-            } else if (slot.equals(LATIN) && (choice == 1 || choice == 2)) {
-                sources = new String[]{"clock_fonts/" + (choice == 1 ? "Inter" : "Manrope") + ".ttf"};
+            } else if (slot.equals(LATIN) && (choice == 1 || choice == 2 || choice == 4)) {
+                sources = choice == 4
+                        ? new String[]{"clock_fonts/Figtree.ttf", "clock_fonts/Figtree-Italic.ttf"}
+                        : new String[]{"clock_fonts/" + (choice == 1 ? "Inter" : "Manrope") + ".ttf"};
             } else if (slot.equals(MONO) && choice >= 0 && choice <= 3) {
                 String font = new String[]{"MapleMono", "JetBrainsMono", "FiraCode", "CascadiaCode"}[choice];
                 sources = choice == 2 ? new String[]{"system_fonts/" + font + ".ttf"}

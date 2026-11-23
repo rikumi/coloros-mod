@@ -40,6 +40,7 @@ public class SettingsProvider extends ContentProvider {
         SharedPreferences preferences = (de != null ? de : ctx).getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
         migrateNotificationIconPrefs(ctx, preferences);
         migrateKeyguardClockSpacing(ctx, preferences);
+        migrateLauncherIconFontSize(ctx, preferences);
         HiddenLauncherApps.migrate(ctx, preferences);
         return preferences;
     }
@@ -55,6 +56,16 @@ public class SettingsProvider extends ContentProvider {
                             preferences.getBoolean(statusBarKey, false)).commit()) {
                 notifySettingsChanged(context);
             }
+        }
+    }
+
+    public static void migrateLauncherIconFontSize(Context context, SharedPreferences preferences) {
+        synchronized (preferences) {
+            String oldKey = "launcher_icon_font_size_sp";
+            String key = "launcher_icon_font_size_sp_tenths";
+            if (preferences.contains(key) || !preferences.contains(oldKey)) return;
+            int value = Math.max(80, Math.min(160, preferences.getInt(oldKey, 11) * 10));
+            if (preferences.edit().putInt(key, value).commit()) notifySettingsChanged(context);
         }
     }
 

@@ -36,6 +36,7 @@ public final class LegacyNotificationLayoutHooks {
     private LegacyNotificationLayoutHooks() { }
 
     public static void hook(final XC_LoadPackage.LoadPackageParam lpparam) {
+        if (android.os.Build.VERSION.SDK_INT < 36) return;
         LegacyFrameworkNotificationHooks.hook(lpparam);
         try {
             sRowClass = XposedHelpers.findClass(
@@ -93,7 +94,7 @@ public final class LegacyNotificationLayoutHooks {
     private static final Runnable APPLY_SETTINGS = LegacyNotificationLayoutHooks::applySettingsSnapshot;
 
     public static void onSettingsSnapshotPublished() {
-
+        if (android.os.Build.VERSION.SDK_INT < 36) return;
         MAIN.removeCallbacks(APPLY_SETTINGS);
         MAIN.post(APPLY_SETTINGS);
     }

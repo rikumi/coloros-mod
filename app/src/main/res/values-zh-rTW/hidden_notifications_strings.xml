@@ -31,4 +31,5 @@
     <string name="hidden_notifications_fallback_xposed_updated">模組更新完成</string>
     <string name="hidden_notifications_channel">%1$s（%2$s）</string>
     <string name="hidden_notifications_unknown_channel">未知頻道</string>
+    <string name="hidden_notifications_permission_blocked">若遭攔截，請在應用程式資訊-權限管理-右上角允許後重新嘗試授權；模組不會收集或上傳任何通知資料。</string>
 </resources>

@@ -1,6 +1,8 @@
 package com.rikumi.colorosmod.hooks;
 
 import android.graphics.ColorSpace;
+import android.graphics.Bitmap;
+import android.graphics.Color;
 import android.graphics.Rect;
 import android.hardware.HardwareBuffer;
 import android.os.Handler;
@@ -14,8 +16,9 @@ final class ColorOsNavigationEffect implements AutoCloseable {
     private final Handler main;
     private final SurfaceControl parent, layer;
     private final ColorOsNavigationPolicy policy;
-    private final Method setBuffer, setColorSpace, metadata;
+    private final Method setBuffer, setColorSpace, metadata, setColor;
     private final Object listener;
+    private final BiConsumer<Integer, Float> colors;
     private final Runnable reduce;
     private volatile boolean closed;
     private boolean shortRefresh;
@@ -27,16 +30,24 @@ final class ColorOsNavigationEffect implements AutoCloseable {
     ColorOsNavigationEffect(ClassLoader loader, Handler main, AppNavigationTaskSurface.Target target,
             Rect navigation, BiConsumer<Integer, Float> colors) throws ReflectiveOperationException {
         this.main = main;
+        this.colors = colors;
         policy = target.policy;
         Class<?> transaction = SurfaceControl.Transaction.class;
+        setColor = transaction.getMethod("setColor", SurfaceControl.class, float[].class);
         setBuffer = transaction.getMethod("setBuffer", SurfaceControl.class, HardwareBuffer.class);
         setColorSpace = transaction.getMethod("setColorSpace", SurfaceControl.class, ColorSpace.class);
         metadata = transaction.getMethod("setMetadata", SurfaceControl.class, int.class, int.class);
         Method trusted = transaction.getMethod("setTrustedOverlay", SurfaceControl.class, boolean.class);
         Method relative = transaction.getMethod("setRelativeLayer", SurfaceControl.class, SurfaceControl.class, int.class);
-        Class<?> callback = loader.loadClass("android.view.SurfaceControl$OnColorPickedListener");
-        Method addListener = transaction.getMethod("addOnColorPickedListener", SurfaceControl.class, callback);
-        listener = Proxy.newProxyInstance(loader, new Class<?>[]{callback}, (proxy, method, args) -> {
+        Class<?> callback = null;
+        Method addListener = null;
+        try {
+            callback = loader.loadClass("android.view.SurfaceControl$OnColorPickedListener");
+            addListener = transaction.getMethod("addOnColorPickedListener", SurfaceControl.class, callback);
+        } catch (ClassNotFoundException | NoSuchMethodException legacy) {
+            // ColorOS 15 has no native color-picker layer. Use the captured app edge instead.
+        }
+        listener = addListener == null ? null : Proxy.newProxyInstance(loader, new Class<?>[]{callback}, (proxy, method, args) -> {
             if ("onColorPicked".equals(method.getName())) {
                 int color = ColorOsNavigationPolicy.toArgb((Integer) args[0]);
                 float alpha = (Float) args[1];
@@ -67,7 +78,8 @@ final class ColorOsNavigationEffect implements AutoCloseable {
             crop = local(navigation, target.bounds);
             try (SurfaceControl.Transaction t = new SurfaceControl.Transaction()) {
                 trusted.invoke(t, layer, true);
-                addListener.invoke(t, layer, listener);
+                if (addListener != null) addListener.invoke(t, layer, listener);
+                else t.setAlpha(layer, 0f);
                 t.setLayer(parent, Integer.MIN_VALUE).setPosition(parent, 0, 0).setVisibility(parent, true);
                 // Keep the native fill above the app while its sampling buffer stays below it.
                 relative.invoke(t, layer, target.windowSurface, 1);
@@ -90,15 +102,43 @@ final class ColorOsNavigationEffect implements AutoCloseable {
             throws ReflectiveOperationException {
         if (closed) return false;
         Rect next = local(navigation, bounds);
+        Integer picked = listener == null ? sampleEdge(buffer, colorSpace, next) : null;
+        if (listener == null && picked == null) return false;
         try (SurfaceControl.Transaction t = new SurfaceControl.Transaction()) {
             setBuffer.invoke(t, parent, buffer);
             if (colorSpace != null) setColorSpace.invoke(t, parent, colorSpace);
             if (!crop.equals(next)) t.setCrop(layer, next);
+            if (picked != null) {
+                setColor.invoke(t, layer, new float[]{Color.red(picked) / 255f,
+                        Color.green(picked) / 255f, Color.blue(picked) / 255f});
+                t.setAlpha(layer, 1f);
+            }
             t.apply();
         }
         if (!crop.equals(next)) { crop = next; refresh(200); }
         buffers.replace(buffer);
+        if (picked != null) main.post(() -> { if (!closed) colors.accept(picked, 1f); });
         return true;
+    }
+
+    private static Integer sampleEdge(HardwareBuffer buffer, ColorSpace colorSpace, Rect navigation) {
+        int y = navigation.top - 1;
+        if (y < 0 || y >= buffer.getHeight()) return null;
+        Bitmap hardware = Bitmap.wrapHardwareBuffer(buffer, colorSpace);
+        if (hardware == null) return null;
+        Bitmap strip = null, readable = null;
+        try {
+            strip = Bitmap.createBitmap(hardware, 0, y, hardware.getWidth(), 1);
+            readable = strip.copy(Bitmap.Config.ARGB_8888, false);
+            if (readable == null) return null;
+            int[] pixels = new int[readable.getWidth()];
+            readable.getPixels(pixels, 0, pixels.length, 0, 0, pixels.length, 1);
+            return NavigationEdgeColor.pick(pixels);
+        } finally {
+            if (readable != null) readable.recycle();
+            if (strip != null && strip != hardware) strip.recycle();
+            hardware.recycle();
+        }
     }
 
     synchronized void input(int action, float x, float y) throws ReflectiveOperationException {
@@ -128,7 +168,7 @@ final class ColorOsNavigationEffect implements AutoCloseable {
     }
 
     private synchronized void refreshRate(int rate) throws ReflectiveOperationException {
-        if (closed || frameRate == rate) return;
+        if (closed || listener == null || frameRate == rate) return;
         try (SurfaceControl.Transaction t = new SurfaceControl.Transaction()) {
             metadata.invoke(t, layer, ColorOsNavigationPolicy.FRAME_RATE, rate);
             metadata.invoke(t, layer, ColorOsNavigationPolicy.FULLSCREEN_VARIANCE, policy.fullscreenVariance);

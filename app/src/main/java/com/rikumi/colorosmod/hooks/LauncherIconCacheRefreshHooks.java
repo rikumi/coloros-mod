@@ -76,6 +76,40 @@ final class LauncherIconCacheRefreshHooks {
         else context.registerReceiver(candidate, filter, "android.permission.DUMP", null);
         host = context;
         receiver = candidate;
+        LauncherIconPackFallbackHooks.onLauncherReady();
+    }
+
+    static void refreshIcons() {
+        Context context = host;
+        if (!active || context == null) return;
+        try {
+            Object state = XposedHelpers.callStaticMethod(XposedHelpers.findClass(
+                    "com.android.launcher3.LauncherAppState", context.getClassLoader()), "getInstance", context);
+            Object icons = XposedHelpers.callMethod(state, "getIconCache");
+            Handler worker = (Handler) XposedHelpers.getObjectField(icons, "mWorkerHandler");
+            if (!worker.post(() -> {
+                if (!active || host != context) return;
+                try {
+                    XposedHelpers.callMethod(icons, "clearIconsCacheAndDb");
+                    String name = (String) XposedHelpers.getObjectField(icons, "mDbFileName");
+                    String suffix = ".clarity-v3-bicubic";
+                    if (name != null && !name.isEmpty() && !name.contains("/")) {
+                        Context cacheContext = (Context) XposedHelpers.getObjectField(icons, "mContext");
+                        String other = name.endsWith(suffix)
+                                ? name.substring(0, name.length() - suffix.length()) : name + suffix;
+                        if (cacheContext.getDatabasePath(other).exists() && !cacheContext.deleteDatabase(other))
+                            throw new IllegalStateException("Inactive icon DB could not be cleared");
+                    }
+                    new Handler(android.os.Looper.getMainLooper()).post(() -> {
+                        if (active && host == context)
+                        {
+                            LegacyHiddenAppIconHooks.refresh(context);
+                            XposedHelpers.callMethod(XposedHelpers.callMethod(state, "getModel"), "forceReload");
+                        }
+                    });
+                } catch (Throwable error) { log("icon pack fallback refresh failed: " + error); }
+            })) throw new IllegalStateException("Launcher icon worker is stopped");
+        } catch (Throwable error) { log("icon pack fallback cache unavailable: " + error); }
     }
 
     static void cleanup() {

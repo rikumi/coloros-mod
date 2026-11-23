@@ -32,6 +32,7 @@ public final class MonochromeNotificationHooks {
     private static boolean lastEnabled;
     private static WeakReference<Object> lastManager = new WeakReference<>(null);
     private static final ThreadLocal<Object> statusBarEntry = new ThreadLocal<>();
+    private static final ThreadLocal<Object[]> legacyCreation = new ThreadLocal<>();
 
     private static final class State {
         final WeakReference<Object> manager;
@@ -62,9 +63,13 @@ public final class MonochromeNotificationHooks {
                             try {
                                 lastManager = new WeakReference<>(p.thisObject);
                                 Object pack = XposedHelpers.callMethod(p.args[0], "getIcons");
+                                Object[] creation = legacyCreation.get();
+                                boolean firstLegacyStatusIcon = creation != null && creation[0] == p.args[0]
+                                        && Boolean.TRUE.equals(creation[1]);
+                                if (firstLegacyStatusIcon) creation[1] = false;
                                 if (p.args[2] != XposedHelpers.callMethod(pack, "getStatusBarIcon")
-                                        && p.args[2] != XposedHelpers.callMethod(pack, "getStatusBarChipIcon")
-                                        && statusBarEntry.get() != p.args[0]) return;
+                                        && p.args[2] != MonochromePlatformCompat.chipIcon(pack)
+                                        && statusBarEntry.get() != p.args[0] && !firstLegacyStatusIcon) return;
                                 View target = (View) p.args[2];
                                 State state = new State(p.thisObject, p.args[0], p.args[1], null);
                                 STATES.put(target, state);
@@ -110,13 +115,23 @@ public final class MonochromeNotificationHooks {
             // createIcons installs IconPack only AFTER the first four setIcon calls.
             XposedHelpers.findAndHookMethod(MANAGER, param.classLoader, "createIcons", entry,
                     new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            if (android.os.Build.VERSION.SDK_INT > 35) return;
+                            // In 15 the first setIcon is the status-bar icon; shelf and AOD follow it.
+                            p.setObjectExtra("previousLegacyCreation", legacyCreation.get());
+                            legacyCreation.set(new Object[]{p.args[0], true});
+                        }
                         @Override protected void afterHookedMethod(MethodHookParam p) {
+                            if (android.os.Build.VERSION.SDK_INT <= 35) {
+                                Object[] previous = (Object[]) p.getObjectExtra("previousLegacyCreation");
+                                if (previous == null) legacyCreation.remove(); else legacyCreation.set(previous);
+                            }
                             if (p.hasThrowable()) return;
                             try {
                                 Object pack = XposedHelpers.callMethod(p.args[0], "getIcons");
-                                for (String getter : new String[] { "getStatusBarIcon", "getStatusBarChipIcon" }) {
-                                    Object target = XposedHelpers.callMethod(pack, getter);
-                                    if (target != null) XposedHelpers.callMethod(p.thisObject, "setIcon", p.args[0],
+                                for (Object target : new Object[] { XposedHelpers.callMethod(pack, "getStatusBarIcon"),
+                                        MonochromePlatformCompat.chipIcon(pack) }) {
+                                    if (target != null && !STATES.containsKey(target)) XposedHelpers.callMethod(p.thisObject, "setIcon", p.args[0],
                                             XposedHelpers.callMethod(target, "getStatusBarIcon"), target);
                                 }
                             } catch (Throwable t) { log("monochrome notification create failed: " + t); }
@@ -181,10 +196,9 @@ public final class MonochromeNotificationHooks {
         StatusBarNotification sbn = (StatusBarNotification) XposedHelpers.callMethod(entry, "getSbn");
         Icon icon = notificationMask(view.getContext(), sbn);
         if (icon == null) return null;
-        Class<?> type = XposedHelpers.findClass("com.android.internal.statusbar.StatusBarIcon$Type",
-                manager.getClass().getClassLoader());
-        return XposedHelpers.callMethod(manager, "toStatusBarIcon", icon, entry,
-                XposedHelpers.getStaticObjectField(type, "NotifSmallIcon"));
+        State state = STATES.get(view);
+        Object original = state != null ? state.original : XposedHelpers.callMethod(view, "getStatusBarIcon");
+        return MonochromePlatformCompat.descriptor(manager, entry, icon, original);
     }
 
     static Icon notificationMask(Context host, StatusBarNotification sbn) {
@@ -218,7 +232,7 @@ public final class MonochromeNotificationHooks {
         Object icon = replacement(manager, entry, view);
         if (icon != null) return icon;
         Object pack = XposedHelpers.callMethod(entry, "getIcons");
-        if (view != XposedHelpers.callMethod(pack, "getStatusBarChipIcon")) return null;
+        if (view != MonochromePlatformCompat.chipIcon(pack)) return null;
         // Call chips are controls, not a second missing-notification badge. Use their native fallback symbol.
         ClassLoader loader = manager.getClass().getClassLoader();
         Object phone = XposedHelpers.getStaticObjectField(XposedHelpers.findClass(

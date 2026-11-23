@@ -108,10 +108,17 @@ internal fun HiddenNotificationsScreen(ctx: Context, onBack: () -> Unit, showBac
                         R.string.hidden_notifications_reader_missing else R.string.hidden_notifications_permission_hint))
                 }
                 item {
-                    SettingsCard {
+                    SettingsCard(bottomGap = if (!hasAccess) 0.dp else SETTINGS_CARD_BOTTOM_GAP) {
                         SettingsCategoryRow(null, ctx.getString(R.string.hidden_notifications_permission),
                             onClick = { openNotificationAccess(ctx) })
                     }
+                }
+            }
+            if (!hasAccess) {
+                item {
+                    SettingsGroupSubtitle(
+                        developerConfirmedSubtitle = ctx.getString(R.string.hidden_notifications_permission_blocked),
+                    )
                 }
             }
             state.error?.let { message ->

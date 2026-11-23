@@ -16,10 +16,13 @@ import com.rikumi.colorosmod.xposed.XposedHelpers;
 
 public final class StatusBarExtrasHooks {
     private static final WeakHashMap<View, Integer> carriers = new WeakHashMap<>();
+    private static final WeakHashMap<View, Boolean> legacyCarriers = new WeakHashMap<>();
+    private static final ThreadLocal<Boolean> applyingCarrierVisibility = new ThreadLocal<>();
     private static final WeakHashMap<TextView, CharSequence> percents = new WeakHashMap<>();
     private static final Handler main = new Handler(Looper.getMainLooper());
 
     public static void hookCarrier(XC_LoadPackage.LoadPackageParam lp) {
+        if (android.os.Build.VERSION.SDK_INT <= 35) hookLegacyCarrier(lp);
         try {
             XposedHelpers.findAndHookDeclaredMethod(
                     "com.oplus.systemui.qs.OplusQuickStatusBarHeader", lp.classLoader,
@@ -60,12 +63,55 @@ public final class StatusBarExtrasHooks {
         } catch (Throwable t) { log("separate QS carrier hook failed: " + t); }
     }
 
+    private static void hookLegacyCarrier(XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            String widget = "com.oplus.systemui.qs.widget.OplusQSCarrierText";
+            XposedHelpers.findClass(widget, lp.classLoader);
+            XposedHelpers.findAndHookMethod(View.class, "setVisibility", int.class, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (Boolean.TRUE.equals(applyingCarrierVisibility.get())) return;
+                    synchronized (carriers) {
+                        if (!legacyCarriers.containsKey(p.thisObject)) return;
+                        // ConstraintSet and SIM updates must keep supplying the native state, even while hidden.
+                        carriers.put((View) p.thisObject, (Integer) p.args[0]);
+                    }
+                    if (readBoolCached(KEY_QS_CARRIER_ENABLED, false)) p.args[0] = View.GONE;
+                }
+            });
+            XposedHelpers.findAndHookDeclaredMethod(widget, lp.classLoader, "onAttachedToWindow", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) { trackLegacyCarrier((View) p.thisObject); }
+            });
+            XposedHelpers.findAndHookDeclaredMethod("com.oplus.systemui.qs.OplusQSFooterImpl", lp.classLoader,
+                    "onFinishInflate", new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            trackLegacyCarrier((View) XposedHelpers.getObjectField(p.thisObject, "mOplusQSCarrier"));
+                        }
+                    });
+        } catch (Throwable error) { log("legacy QS footer carrier hook failed: " + error); }
+    }
+
+    private static void trackLegacyCarrier(View view) {
+        if (view == null) return;
+        synchronized (carriers) { legacyCarriers.put(view, true); }
+        trackCarrier(view);
+    }
+
+    private static void setCarrierVisibility(View view, int visibility) {
+        Boolean previous = applyingCarrierVisibility.get();
+        applyingCarrierVisibility.set(true);
+        try { view.setVisibility(visibility); }
+        finally {
+            if (previous == null) applyingCarrierVisibility.remove();
+            else applyingCarrierVisibility.set(previous);
+        }
+    }
+
     private static void trackCarrier(View view) {
         if (view == null) return;
         synchronized (carriers) {
             if (!carriers.containsKey(view)) carriers.put(view, view.getVisibility());
         }
-        if (readBoolCached(KEY_QS_CARRIER_ENABLED, false)) view.setVisibility(View.GONE);
+        if (readBoolCached(KEY_QS_CARRIER_ENABLED, false)) setCarrierVisibility(view, View.GONE);
     }
 
     public static void hookPercent(XC_LoadPackage.LoadPackageParam lp) {
@@ -112,7 +158,7 @@ public final class StatusBarExtrasHooks {
         synchronized (carriers) {
             for (Map.Entry<View, Integer> entry : carriers.entrySet()) {
                 int visibility = hideCarrier ? View.GONE : entry.getValue();
-                if (entry.getKey().getVisibility() != visibility) entry.getKey().setVisibility(visibility);
+                if (entry.getKey().getVisibility() != visibility) setCarrierVisibility(entry.getKey(), visibility);
             }
         }
         synchronized (percents) {
@@ -126,7 +172,7 @@ public final class StatusBarExtrasHooks {
         ArrayList<Object[]> views = new ArrayList<>();
         synchronized (carriers) {
             for (Map.Entry<View, Integer> entry : carriers.entrySet())
-                views.add(new Object[]{entry.getKey(), entry.getValue()});
+                views.add(new Object[]{entry.getKey(), entry.getValue(), legacyCarriers.containsKey(entry.getKey())});
         }
         synchronized (percents) {
             for (Map.Entry<TextView, CharSequence> entry : percents.entrySet())
@@ -140,7 +186,10 @@ public final class StatusBarExtrasHooks {
         for (Object item : (java.util.List<?>) state) {
             Object[] entry = (Object[]) item;
             if (entry[1] instanceof Integer) {
-                synchronized (carriers) { carriers.put((View) entry[0], (Integer) entry[1]); }
+                synchronized (carriers) {
+                    carriers.put((View) entry[0], (Integer) entry[1]);
+                    if (entry.length > 2 && Boolean.TRUE.equals(entry[2])) legacyCarriers.put((View) entry[0], true);
+                }
             } else {
                 synchronized (percents) { percents.put((TextView) entry[0], (CharSequence) entry[1]); }
             }
@@ -151,7 +200,7 @@ public final class StatusBarExtrasHooks {
     public static void cleanupForHotReload() {
         main.removeCallbacksAndMessages(null);
         apply(true);
-        synchronized (carriers) { carriers.clear(); }
+        synchronized (carriers) { carriers.clear(); legacyCarriers.clear(); }
         synchronized (percents) { percents.clear(); }
     }
 }

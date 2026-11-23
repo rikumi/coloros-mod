@@ -219,9 +219,13 @@
     <string name="ui_font_manrope" translatable="false">"Manrope"</string>
     <string name="ui_font_rubik" translatable="false">"Rubik"</string>
     <string name="ui_font_lato" translatable="false">"Lato"</string>
+    <string name="ui_font_figtree" translatable="false">"Figtree"</string>
     <string name="ui_drawer_install_time_sort">抽屉按安装时间排序</string>
     <string name="ui_disabled_apps_continue">已了解风险，继续</string>
     <string name="ui_fingerprint_ring">指纹图标替换为普通环形</string>
     <string name="ui_folder_rows">修改文件夹行数</string>
     <string name="ui_folder_columns">修改文件夹列数</string>
+    <string name="ui_launcher_icon_pack_fallback">修复 ColorOS 15 桌面图标包适配缩放</string>
+    <string name="ui_launcher_icon_font_size">桌面图标字体大小</string>
+    <string name="ui_launcher_folder_corner_radius">桌面文件夹圆角大小</string>
 </resources>

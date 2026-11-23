@@ -43,20 +43,10 @@ final class MergedTileGridHooks {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             View panel = (View) XposedHelpers.getObjectField(p.thisObject, "mQSPanel");
                             if (panel == null) return;
-                            PanelClip clip = panelClips.get(panel);
-                            if (clip == null) {
-                                clip = new PanelClip(panel);
-                                panelClips.put(panel, clip);
-                            }
-                            Rect nativeBounds = (Rect) p.args[0];
-                            if (nativeBounds == null) clip.nativeBounds = null;
-                            else if (clip.nativeBounds == null) clip.nativeBounds = new Rect(nativeBounds);
-                            else clip.nativeBounds.set(nativeBounds);
-                            clip.updateListener(panel);
-                            // Keep the native expansion height intact; only enlarge its drawing clip.
-                            if (nativeBounds != null) p.args[0] = panelBounds(panel, clip);
+                            p.args[0] = updatePanelClip(panel, (Rect) p.args[0]);
                         }
                     });
+            hookLegacyPanelClip(pkg);
             XposedHelpers.findAndHookMethod(quickControllerClass, "onInit", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     if (quickControllerClass.isInstance(p.thisObject)) quickControllers.put(p.thisObject, true);
@@ -694,6 +684,45 @@ final class MergedTileGridHooks {
         } finally { restoringColumns.remove(); }
         hosts.clear(); pagedPages.clear(); columnHosts.clear(); quickControllers.clear(); fixedAnimators.clear(); animatorGeometry.clear(); lastFourColumns = null; lastRatio = null;
     }
+    private static Rect updatePanelClip(View panel, Rect nativeBounds) {
+        PanelClip clip = panelClips.get(panel);
+        if (clip == null) {
+            clip = new PanelClip(panel);
+            panelClips.put(panel, clip);
+        }
+        if (nativeBounds == null) clip.nativeBounds = null;
+        else if (clip.nativeBounds == null) clip.nativeBounds = new Rect(nativeBounds);
+        else clip.nativeBounds.set(nativeBounds);
+        clip.updateListener(panel);
+        return nativeBounds == null ? null : panelBounds(panel, clip);
+    }
+
+    private static void hookLegacyPanelClip(XC_LoadPackage.LoadPackageParam pkg) {
+        if (android.os.Build.VERSION.SDK_INT != 35) return;
+        try {
+            Class<?> controller = XposedHelpers.findClass("com.oplus.systemui.qs.OplusQSPanelContainerController", pkg.classLoader);
+            XC_MethodHook update = new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (p.hasThrowable()) return;
+                    View container = (View) XposedHelpers.getObjectField(p.thisObject, "mView");
+                    View panel = (View) XposedHelpers.getObjectField(container, "mQSPanel");
+                    if (panel == null) return;
+                    // updateQSBounds is a tiny setter and may be inlined into
+                    // this old controller. Read its original expansion bounds
+                    // after native layout, without changing expansion geometry.
+                    float expansion = XposedHelpers.getFloatField(p.thisObject, "mExpansion");
+                    Rect nativeBounds = expansion >= 1f ? null
+                            : (Rect) XposedHelpers.getObjectField(p.thisObject, "mQsBounds");
+                    Rect desired = updatePanelClip(panel, nativeBounds);
+                    Rect current = panel.getClipBounds();
+                    if (!java.util.Objects.equals(current, desired)) panel.setClipBounds(desired);
+                }
+            };
+            XposedHelpers.findAndHookDeclaredMethod(controller, "updateQsBounds$1", update);
+            XposedHelpers.findAndHookDeclaredMethod(controller, "setExpansion", float.class, update);
+        } catch (Throwable error) { log("legacy QS panel clipping hook unavailable: " + error); }
+    }
+
     private static Rect panelBounds(View panel, PanelClip clip) {
         clip.bounds.set(clip.nativeBounds);
         if (!readBool(KEY_QS_MERGED_TILE_CLIP_ANIMATION, false)) return clip.bounds;

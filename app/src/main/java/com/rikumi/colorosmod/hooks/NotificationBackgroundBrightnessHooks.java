@@ -12,12 +12,13 @@ import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Map;
 
-/** Notification-card brightness, with separate native ColorOS 16 and 17 rendering paths. */
+/** Notification-card brightness across the native legacy, shader and material rendering paths. */
 public final class NotificationBackgroundBrightnessHooks {
     private static final String BLUR = "com.oplusos.systemui.common.blurability.";
     private static WeakReference<Object> manager = new WeakReference<>(null);
     private static Class<?> shaderColor;
     private static boolean modern;
+    private static boolean legacy;
     private static boolean restoring;
     private static String lastSetting;
     public static final String ENABLED = "notification_bg_brightness_enabled";
@@ -31,9 +32,25 @@ public final class NotificationBackgroundBrightnessHooks {
     public static void hook(XC_LoadPackage.LoadPackageParam lp) {
         restoring = false;
         try {
-            shaderColor = XposedHelpers.findClass(BLUR + "MixColorWithShader", lp.classLoader);
+            modern = false;
             Class<?> managerClass = XposedHelpers.findClass(
                     "com.oplus.systemui.notification.blur.ViewBlurManager", lp.classLoader);
+            XposedBridge.hookAllConstructors(managerClass, new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    manager = new WeakReference<>(p.thisObject);
+                }
+            });
+            XposedBridge.hookAllMethods(managerClass, "requireBlurProxyForView", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    manager = new WeakReference<>(p.thisObject);
+                }
+            });
+            shaderColor = XposedHelpers.findClassIfExists(BLUR + "MixColorWithShader", lp.classLoader);
+            legacy = shaderColor == null;
+            if (legacy) {
+                LegacyNotificationBackgroundHooks.hook(lp);
+                return;
+            }
             modern = XposedHelpers.findClassIfExists(
                     "com.oplus.systemui.notification.blur.NotificationPlatFormBlurParamsManager", lp.classLoader) != null;
             if (modern) {
@@ -58,11 +75,7 @@ public final class NotificationBackgroundBrightnessHooks {
             });
             XposedBridge.hookAllMethods(proxyClass, "applyBlurConfig", new XC_MethodHook() {});
             XposedBridge.hookAllMethods(proxyClass, "setBlurType", new XC_MethodHook() {});
-            XposedBridge.hookAllConstructors(managerClass, new XC_MethodHook() {
-                @Override protected void afterHookedMethod(MethodHookParam p) {
-                    manager = new WeakReference<>(p.thisObject);
-                }
-            });
+
             // getMixConfig also discovers an existing manager after module hot reload.
             XposedBridge.hookAllMethods(managerClass, "getMixConfig", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
@@ -83,7 +96,7 @@ public final class NotificationBackgroundBrightnessHooks {
         } catch (Throwable error) { log("notification background brightness hook failed: " + error); }
     }
 
-    private static boolean enabled() {
+    static boolean enabled() {
         return !restoring && materialEnabled();
     }
 
@@ -107,7 +120,7 @@ public final class NotificationBackgroundBrightnessHooks {
             XposedHelpers.callMethod(state[0], "setMotionBlurMixConfig", state[1]);
     }
 
-    private static Object adjustMotion(Object config) {
+    static Object adjustMotion(Object config) {
         Object mix = XposedHelpers.callMethod(config, "getMixColor");
         Object replacementMix = XposedHelpers.newInstance(mix.getClass(),
                 XposedHelpers.getIntField(mix, "mode"),
@@ -133,7 +146,7 @@ public final class NotificationBackgroundBrightnessHooks {
         return result;
     }
 
-    private static void copyProperties(Object config, Object result) {
+    static void copyProperties(Object config, Object result) {
         XposedHelpers.callMethod(result, "setMirrorScale", XposedHelpers.callMethod(config, "getMirrorScale"));
         XposedHelpers.callMethod(result, "setAlphaWithBlurAmount", XposedHelpers.callMethod(config, "getAlphaWithBlurAmount"));
         XposedHelpers.callMethod(result, "setPlaceHolderColor", XposedHelpers.callMethod(config, "getPlaceHolderColor"));
@@ -153,7 +166,7 @@ public final class NotificationBackgroundBrightnessHooks {
     }
 
     static int brightnessPercent() {
-        return Math.max(50, Math.min(100, readIntCached(VALUE, DEFAULT)));
+        return Math.max(0, Math.min(100, readIntCached(VALUE, DEFAULT)));
     }
 
     static boolean forceWhiteHeadsUp() {
@@ -166,7 +179,7 @@ public final class NotificationBackgroundBrightnessHooks {
     }
 
     static int scaleColor(int color, int brightness) {
-        float factor = Math.max(50, Math.min(100, brightness)) / 100f;
+        float factor = Math.max(0, Math.min(100, brightness)) / 100f;
         return Color.argb(Color.alpha(color), Math.min(255, Math.round(Color.red(color) * factor)),
                 Math.min(255, Math.round(Color.green(color) * factor)),
                 Math.min(255, Math.round(Color.blue(color) * factor)));
@@ -184,6 +197,7 @@ public final class NotificationBackgroundBrightnessHooks {
     static void refreshMaterialConfigs() { refreshNow(); }
 
     private static void refreshNow() {
+        if (legacy) { LegacyNotificationBackgroundHooks.refresh(); return; }
         Object host = manager.get();
         if (modern) HeadsUpForegroundHooks.refresh(host);
         if (host == null) return;
@@ -207,11 +221,12 @@ public final class NotificationBackgroundBrightnessHooks {
         } catch (Throwable error) { log("notification background brightness refresh failed: " + error); }
     }
 
-    public static Object capture() { return new Object[]{manager.get(), MaterialBackgroundBrightnessHooks.capture()}; }
+    public static Object capture() { return new Object[]{manager.get(), MaterialBackgroundBrightnessHooks.capture(), LegacyNotificationBackgroundHooks.capture()}; }
     public static void restore(Object host) {
         restoring = false;
-        if (host instanceof Object[] state && state.length == 2) {
+        if (host instanceof Object[] state && state.length >= 2) {
             MaterialBackgroundBrightnessHooks.restore(state[1]);
+            if (state.length >= 3) LegacyNotificationBackgroundHooks.restore(state[2]);
             host = state[0];
         }
         manager = new WeakReference<>(host);
@@ -223,6 +238,7 @@ public final class NotificationBackgroundBrightnessHooks {
         MaterialBackgroundBrightnessHooks.cleanup();
         refreshNow();
         HeadsUpForegroundHooks.cleanup();
+        LegacyNotificationBackgroundHooks.cleanup();
         manager.clear();
     }
     private NotificationBackgroundBrightnessHooks() {}

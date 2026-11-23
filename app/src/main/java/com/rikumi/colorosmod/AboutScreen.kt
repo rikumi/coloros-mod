@@ -108,6 +108,7 @@ private val OPEN_SOURCE_COMPONENTS = listOf(
     OpenSourceComponent("LLVM libc++ / libc++abi", "https://github.com/llvm/llvm-project", "licenses/native-NOTICE", "licenses/llvm-libc++-NOTICE", "licenses/llvm-libc++abi-NOTICE"),
     OpenSourceComponent("Noto 3D", "https://github.com/googlefonts/noto-emoji", "licenses/noto-3d-OFL.txt"),
     OpenSourceComponent("Twemoji", "https://github.com/twitter/twemoji", "licenses/twemoji-NOTICE", "licenses/twemoji-LICENSE-GRAPHICS"),
+    OpenSourceComponent("Figtree", "https://github.com/erikdkennedy/figtree", "clock_fonts/figtree-OFL.txt"),
     OpenSourceComponent("Inter", "https://github.com/rsms/inter", "clock_fonts/inter-OFL.txt"),
     OpenSourceComponent("Lato", "https://github.com/latofonts/lato-source", "clock_fonts/lato-OFL.txt"),
     OpenSourceComponent("Manrope", "https://github.com/googlefonts/manrope", "clock_fonts/manrope-OFL.txt"),

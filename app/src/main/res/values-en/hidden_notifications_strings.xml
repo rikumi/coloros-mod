@@ -31,4 +31,5 @@
     <string name="hidden_notifications_fallback_xposed_updated">Module updated</string>
     <string name="hidden_notifications_channel">%1$s (%2$s)</string>
     <string name="hidden_notifications_unknown_channel">Unknown channel</string>
+    <string name="hidden_notifications_permission_blocked">If access is blocked, open App info-Permissions, allow access from the top-right menu, then try granting access again; the module does not collect or upload any notification data.</string>
 </resources>

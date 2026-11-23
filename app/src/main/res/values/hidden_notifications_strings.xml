@@ -31,4 +31,5 @@
     <string name="hidden_notifications_fallback_xposed_updated">模块更新完成</string>
     <string name="hidden_notifications_channel">%1$s（%2$s）</string>
     <string name="hidden_notifications_unknown_channel">未知通道</string>
+    <string name="hidden_notifications_permission_blocked">若被拦截，请在应用详情-权限管理-右上角允许后重新尝试授权；模块不会收集或上传任何通知数据。</string>
 </resources>

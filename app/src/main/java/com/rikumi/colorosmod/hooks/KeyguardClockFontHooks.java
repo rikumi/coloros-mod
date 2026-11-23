@@ -181,7 +181,7 @@ public final class KeyguardClockFontHooks {
         try {
             if (view.getTypeface() != original.applied) original.font = view.getTypeface();
             if (!active || !defaultTheme(original.host.get())) { restore(view, original); return; }
-            int family = Math.max(0, Math.min(4, readIntCached("keyguard_clock_font", 1)));
+            int family = Math.max(0, Math.min(5, readIntCached("keyguard_clock_font", 1)));
             int weight = Math.max(0, Math.min(9, readIntCached("keyguard_clock_weight", 3))) * 100;
             Typeface selected = resolve(view.getContext(), family, weight, original.font);
             if (view.getTypeface() != selected) view.setTypeface(selected);
@@ -205,12 +205,13 @@ public final class KeyguardClockFontHooks {
         if (family == 0) return Typeface.create(nativeFont, weight, false);
         if (family == 2) weight = Math.max(200, Math.min(800, weight));
         if (family == 3) weight = Math.max(300, weight);
+        if (family == 5) weight = Math.max(300, Math.min(900, weight));
         if (family == 4) weight = weight >= 600 ? 700 : weight >= 500 ? 500 : 400;
         int key = family * 1000 + weight;
         Typeface font = fonts.get(key);
         if (font != null) return font;
         if (moduleContext == null) moduleContext = context.createPackageContext(MODULE_PACKAGE, 0);
-        String file = family == 1 ? "Inter.ttf" : family == 2 ? "Manrope.ttf" : family == 3 ? "Rubik.ttf"
+        String file = family == 1 ? "Inter.ttf" : family == 2 ? "Manrope.ttf" : family == 3 ? "Rubik.ttf" : family == 5 ? "Figtree.ttf"
                 : weight >= 700 ? "Lato-Bold.ttf" : weight >= 500 ? "Lato-Medium.ttf" : "Lato-Regular.ttf";
         Typeface.Builder builder = new Typeface.Builder(moduleContext.getAssets(), "clock_fonts/" + file);
         if (family != 4) builder.setFontVariationSettings("'wght' " + weight + (family == 1 ? ", 'opsz' 32" : ""));
