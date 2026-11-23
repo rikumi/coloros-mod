@@ -21,8 +21,11 @@ final class SystemNotificationIconMasks {
 
     static Icon source(StatusBarNotification sbn) {
         var notification = sbn.getNotification();
-        return notification.extras != null && notification.extras.getBoolean("oplus_smallicon_use_app_icon", false)
-                ? notification.extras.getParcelable("oplus_small_icon", Icon.class) : notification.getSmallIcon();
+        Icon saved = notification.extras != null && notification.extras.getBoolean("oplus_smallicon_use_app_icon", false)
+                ? notification.extras.getParcelable("oplus_small_icon", Icon.class) : null;
+        // ColorOS 15 substitutes the RemoteViews image without saving oplus_small_icon.
+        // Its Notification still contains the application's original small icon.
+        return saved != null ? saved : notification.getSmallIcon();
     }
 
     static synchronized Icon resolve(Context context, StatusBarNotification sbn, Icon icon) {

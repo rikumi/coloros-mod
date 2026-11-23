@@ -550,6 +550,7 @@ public class XposedInit extends XposedModule {
             com.rikumi.colorosmod.hooks.AppNavigationHooks.onSettingsChanged();
             com.rikumi.colorosmod.hooks.LegacyNotificationLayoutHooks.onSettingsSnapshotPublished();
             QsHooks.onCornerRadiusSettingsChanged();
+            QsHooks.onBackgroundSettingsChanged();
             com.rikumi.colorosmod.hooks.SliderActiveCornersHooks.refresh();
             SignalHooks.onSettingsSnapshotPublished();
             StatusBarLyricHooks.onSettingsSnapshotPublished();

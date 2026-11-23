@@ -41,6 +41,7 @@ public final class QsHooks {
 
     public static void hookQsTopMargin(final XC_LoadPackage.LoadPackageParam lpparam,
                                         final int footerPx) {
+        LegacyQsStatusIconsHooks.hook(lpparam);
 
         try {
             XposedHelpers.findAndHookMethod(
@@ -70,23 +71,7 @@ public final class QsHooks {
             log("HOOK OK OplusQSFakeStatusController$qsPanelExpandFractionListener#onFractionChanged");
         } catch (Throwable t) {
             log("HOOK FAIL OplusQSFakeStatusController fraction listener :: " + Log.getStackTraceString(t));
-            // SystemUI 15 uses the header itself as the expansion listener host.
-            try {
-                XposedHelpers.findAndHookMethod(
-                        "com.oplus.systemui.qs.OplusQuickStatusBarHeader",
-                        lpparam.classLoader, "setExpansion", float.class,
-                        new XC_MethodHook() {
-                            @Override protected void beforeHookedMethod(MethodHookParam param) {
-                                applyLegacyQsStatusVisibility(param.thisObject, (Float) param.args[0]);
-                            }
-                            @Override protected void afterHookedMethod(MethodHookParam param) {
-                                applyLegacyQsStatusVisibility(param.thisObject, (Float) param.args[0]);
-                            }
-                        });
-                log("HOOK OK OplusQuickStatusBarHeader#setExpansion (legacy qs status cluster)");
-            } catch (Throwable legacyError) {
-                log("HOOK FAIL legacy QS status cluster :: " + Log.getStackTraceString(legacyError));
-            }
+
         }
         // 经典控制中心: 设置按钮/页脚日期 (仅 collapsed 时 updateResources$15 重置 padding 为 0 后再叠加 footerPx)
         try {
@@ -199,18 +184,6 @@ public final class QsHooks {
                     });
         } catch (Throwable t) {
             log("HOOK FAIL OplusQSSimpleHeader#onInit :: " + Log.getStackTraceString(t));
-        }
-    }
-
-    private static void applyLegacyQsStatusVisibility(Object header, float fraction) {
-        try {
-            Object statusIcons = XposedHelpers.getObjectField(header, "mStatusIconsView");
-            if (statusIcons instanceof View view) {
-                boolean hide = readBool(KEY_QS_TOPMARGIN_ENABLED, false) && fraction > 0f;
-                view.setVisibility(hide ? View.INVISIBLE : View.VISIBLE);
-            }
-        } catch (Throwable t) {
-            log("legacy QS status cluster apply failed: " + t);
         }
     }
 
@@ -335,6 +308,8 @@ public final class QsHooks {
                             @Override
                             protected void afterHookedMethod(MethodHookParam param) {
                                 try {
+                                    QsBackgroundSettingsHooks.track(param.thisObject);
+                                    if (!QsBackgroundSettingsHooks.active()) return;
                                     if (!readBool(KEY_QS_SCRIM_TRANSLUCENT_ENABLED, false)) return;
                                     Object cfg = param.getResult();
                                     if (cfg == null) return;
@@ -416,7 +391,9 @@ public final class QsHooks {
                                 if (drawable == null) return;
                                 // 壁纸模糊分支(WallpaperBlurDrawable)不承载平台模糊半径, 跳过。
                                 if (!drawable.getClass().getName().endsWith("AutoBlurDrawable")) return;
-                                Object proxy = XposedHelpers.callMethod(drawable, "getViewBlurProxy");
+                                Object proxy = android.os.Build.VERSION.SDK_INT == 35
+                                        ? XposedHelpers.callMethod(XposedHelpers.callMethod(scrimBehind, "getExt"), "getViewBlurProxy")
+                                        : XposedHelpers.callMethod(drawable, "getViewBlurProxy");
                                 if (proxy == null) return;
                                 Object config = XposedHelpers.callMethod(proxy, "getBlurConfig");
                                 if (config == null) return;
@@ -433,7 +410,7 @@ public final class QsHooks {
                             }
                         }
                     };
-            XposedHelpers.findAndHookMethod(exImpClass, "refreshBehindDrawable", updateRadius);
+            NotificationLayoutCompat.optionalHook(exImpClass, "refreshBehindDrawable", updateRadius);
             NotificationLayoutCompat.optionalHook(exImpClass, "updateBehindMixConfig", updateRadius);
             log("HOOK OK ScrimControllerExImp background writers (qs_blur_radius)");
         } catch (Throwable t) {
@@ -593,10 +570,13 @@ public final class QsHooks {
         java.util.List<Object[]> outlines = new java.util.ArrayList<>();
         for (java.util.Map.Entry<Class<?>, Object[]> entry : radiusOutlines.entrySet())
             outlines.add(new Object[]{entry.getKey(), entry.getValue()});
-        return new Object[]{new java.util.ArrayList<>(nameHosts.keySet()), sliders, outlines};
+        return new Object[]{new java.util.ArrayList<>(nameHosts.keySet()), sliders, outlines,
+                QsBackgroundSettingsHooks.hosts(), LegacyQsStatusIconsHooks.capture()};
     }
     public static void restoreHotReloadNames(Object state) {
-        if (state instanceof Object[] saved && saved.length == 3) {
+        if (state instanceof Object[] saved && saved.length >= 3) {
+            if (saved.length > 3) QsBackgroundSettingsHooks.restore(saved[3]);
+            if (saved.length > 4) LegacyQsStatusIconsHooks.restore(saved[4]);
             if (saved[1] instanceof Iterable<?> rows) for (Object row : rows) if (row instanceof Object[] pair)
                 { radiusSliders.put(pair[0], (Object[]) pair[1]);
                   if (pair[0] instanceof View view) watchRadiusSize(view); }
@@ -896,6 +876,8 @@ public final class QsHooks {
     }
 
     public static void cleanupCornerRadiusForHotReload() {
+        QsBackgroundSettingsHooks.cleanup();
+        LegacyQsStatusIconsHooks.cleanup();
         LegacyQsCornerRadiusHooks.cleanup();
         radiusHandler.removeCallbacksAndMessages(null);
         for (java.util.Map.Entry<View, View.OnLayoutChangeListener> entry : radiusSizeListeners.entrySet())
@@ -904,6 +886,11 @@ public final class QsHooks {
         radiusSliders.clear();
         radiusOutlines.clear();
         radiusApplied = false;
+    }
+
+    public static void onBackgroundSettingsChanged() {
+        QsBackgroundSettingsHooks.refresh();
+        LegacyQsStatusIconsHooks.refresh();
     }
 
     // 旧 16dp / 32dp 分别迁移到 25% / 50%；已有百分比优先。

@@ -356,17 +356,25 @@ final class MergedSplitShadeHooks {
         return set;
     }
 
+    private static View notificationHost(View root) {
+        View host = root.findViewById(id(root, "notification_stack_scroller"));
+        // ColorOS 15 places the stack directly in the shade; newer versions wrap it.
+        while (host != null && host.getParent() instanceof View parent && parent != root)
+            host = parent;
+        return host != null && host.getParent() == root ? host : null;
+    }
+
     private static void applyConstraints(Object controller) {
         View root = view(controller);
         if (!enabled(root.getResources())) return;
         int qs = id(root, "qs_frame");
-        int notifications = id(root, "shared_notification_container");
+        View notificationView = notificationHost(root);
+        int notifications = notificationView == null ? 0 : notificationView.getId();
         if (qs == 0 || notifications == 0 || root.findViewById(qs) == null
                 || root.findViewById(notifications) == null) return;
         Object original = constraints(root);
         nativeConstraints.put(controller, original);
         int qsMargin = Math.max(0, XposedHelpers.getIntField(controller, "panelMarginHorizontal"));
-        View notificationView = root.findViewById(notifications);
         int notificationMargin = notificationView.getLayoutParams() instanceof android.view.ViewGroup.MarginLayoutParams margins
                 ? Math.max(0, margins.getMarginStart()) : qsMargin;
         SplitLayout layout = new SplitLayout(original, qs, notifications, id(root, "split_shade_status_bar"),
@@ -456,7 +464,7 @@ final class MergedSplitShadeHooks {
         void applyStackConstraints(View shared) {
             if (shared == null) return;
             View stack = shared.findViewById(id(shared, "notification_stack_scroller"));
-            if (stack == null) return;
+            if (stack == null || stack == shared) return;
             if (originalStackConstraints == null) originalStackConstraints = constraints(shared);
             Object params = stack.getLayoutParams();
             if (XposedHelpers.getIntField(params, "leftToLeft") == 0

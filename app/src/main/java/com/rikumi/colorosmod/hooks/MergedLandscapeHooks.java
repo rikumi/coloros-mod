@@ -144,8 +144,9 @@ final class MergedLandscapeHooks {
         XposedHelpers.findAndHookMethod("com.android.systemui.shade.NotificationsQSContainerController", lp.classLoader,
                 "updateResources", new XC_MethodHook() {
                     @Override protected void beforeHookedMethod(MethodHookParam p) {
-                        View frame = (View) XposedHelpers.callMethod(p.thisObject, "getQsFrame");
-                        restoreFrameInset(frame);
+                        View host = (View) XposedHelpers.getObjectField(p.thisObject, "mView");
+                        View frame = host.findViewById(id(host, "qs_frame"));
+                        if (frame != null) restoreFrameInset(frame);
                     }
                 });
         XC_MethodHook layoutNodes = new XC_MethodHook() {
@@ -167,7 +168,16 @@ final class MergedLandscapeHooks {
         };
         XposedHelpers.findAndHookMethod(controller, "calcExpandMeasureHeightExceptQsPanel", layoutNodes);
         XposedHelpers.findAndHookMethod(controller, "calcExpansionHeight", float.class, layoutNodes);
-        XposedHelpers.findAndHookMethod(controller, "updatePosition$2", layoutNodes);
+        // R8 assigns different suffixes to the same zero-argument position writer.
+        boolean positionHooked = false;
+        for (java.lang.reflect.Method method : controller.getDeclaredMethods()) {
+            if ((method.getName().equals("updatePosition") || method.getName().startsWith("updatePosition$"))
+                    && method.getParameterCount() == 0 && method.getReturnType() == void.class) {
+                com.rikumi.colorosmod.xposed.XposedBridge.hookMethod(method, layoutNodes);
+                positionHooked = true;
+            }
+        }
+        if (!positionHooked) log("merged landscape position writer unavailable");
         XposedHelpers.findAndHookMethod(footerControllerClass, "setVisibility", int.class, new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 View footer = (View) XposedHelpers.callMethod(p.thisObject, "getView");
@@ -189,7 +199,8 @@ final class MergedLandscapeHooks {
     static void hook(XC_LoadPackage.LoadPackageParam lp) {
         try {
             containerClass = XposedHelpers.findClass("com.oplus.systemui.qs.OplusQSContainerImpl", lp.classLoader);
-            hookMediaHeader(lp);
+            try { hookMediaHeader(lp); }
+            catch (Throwable error) { log("merged landscape media header hook failed: " + error); }
             XposedHelpers.findAndHookMethod(containerClass, "onMeasure", int.class, int.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     ViewGroup root = (ViewGroup) p.thisObject;

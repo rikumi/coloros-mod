@@ -87,6 +87,14 @@ final class MonochromeIconTintHooks {
         catch (ReflectiveOperationException error) { log("monochrome icon color refresh failed: " + error); }
     }
 
+    static void refreshLegacyDrawable(View view, boolean force) {
+        if (android.os.Build.VERSION.SDK_INT != 35 || (!force && legacyMasks.containsKey(view))) return;
+        // StatusBarIconView#set skips updateDrawable when both descriptors reference the same Icon.
+        // Re-enter the native loader so enabling removes vendor rounding and disabling restores it.
+        try { XposedHelpers.callMethod(view, "updateDrawable", true); }
+        catch (Throwable error) { log("monochrome legacy drawable refresh failed: " + error); }
+    }
+
     private static boolean prepare(View view) {
         if (MonochromeNotificationHooks.enlargedIcon(view)) {
             nativeColorable.putIfAbsent(view, hasColorable && XposedHelpers.getBooleanField(view, "mIsIconColorable"));

@@ -85,6 +85,7 @@ public final class MonochromeNotificationHooks {
                             if (active && readBool(KEY, false) && state != null
                                     && state.replacement != null && p.args[1] == state.replacement) {
                                 XposedHelpers.callMethod(p.args[2], "setShowsConversation", false);
+                                if (!replaying) MonochromeIconTintHooks.refreshLegacyDrawable((View) p.args[2], false);
                             }
                             if (active && !replaying && readBool(KEY, false)) MissingNotificationCountHooks.refresh();
                             if (state != null && p.args[2] instanceof View target) {
@@ -203,12 +204,8 @@ public final class MonochromeNotificationHooks {
 
     static Icon notificationMask(Context host, StatusBarNotification sbn) {
         Notification notification = sbn.getNotification();
-        boolean substituted = notification.extras != null
-                && notification.extras.getBoolean("oplus_smallicon_use_app_icon", false);
         Icon traced = MessagesNotificationIconHooks.iconFor(sbn);
-        Icon icon = traced != null ? traced : substituted
-                ? notification.extras.getParcelable("oplus_small_icon", Icon.class)
-                : notification.getSmallIcon();
+        Icon icon = traced != null ? traced : SystemNotificationIconMasks.source(sbn);
         if (icon == null || icon.getType() == Icon.TYPE_ADAPTIVE_BITMAP
                 || icon.getType() == Icon.TYPE_URI_ADAPTIVE_BITMAP) return null;
         ApplicationInfo info = notification.extras == null ? null
@@ -300,6 +297,7 @@ public final class MonochromeNotificationHooks {
                     if (enabled) rememberCheck(state, entry, item.getKey());
                     Object icon = enabled && state.replacement != null ? state.replacement : state.original;
                     XposedHelpers.callMethod(manager, "setIcon", entry, icon, item.getKey());
+                    MonochromeIconTintHooks.refreshLegacyDrawable(item.getKey(), true);
                     if (enabled && state.replacement != null)
                         XposedHelpers.callMethod(item.getKey(), "setShowsConversation", false);
                 } catch (Throwable t) { log("monochrome notification refresh failed: " + t); }
