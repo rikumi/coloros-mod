@@ -70,6 +70,8 @@ class HiddenNotificationsService : NotificationListenerService() {
     private val work = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val operations = Mutex()
     private var refreshJob: Job? = null
+    private var systemHistoryJob: Job? = null
+    private var systemHistoryAttempted = false
     private val hiddenSystemKeys = mutableSetOf<String>()
     private var history: List<HiddenNotificationEntry>? = null
     private var systemHistory: List<PersistedHiddenNotification>? = null
@@ -83,6 +85,7 @@ class HiddenNotificationsService : NotificationListenerService() {
         private var instance: HiddenNotificationsService? = null
         private val mutableState = MutableStateFlow(HiddenNotificationsState())
         internal val state: StateFlow<HiddenNotificationsState> = mutableState.asStateFlow()
+        private val connection = HiddenNotificationConnection(CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate))
 
         internal fun component(context: Context) = ComponentName(context, HiddenNotificationsService::class.java)
 
@@ -96,13 +99,21 @@ class HiddenNotificationsService : NotificationListenerService() {
 
         internal fun refresh(context: Context) {
             mutableState.value = mutableState.value.copy(error = null)
+            if (!hasAccess(context)) {
+                connection.cancel()
+                return
+            }
             val service = instance
-            if (service != null) service.scheduleRefresh(refreshSystemHistory = true) else if (hasAccess(context)) {
-                try {
-                    requestRebind(component(context))
-                } catch (_: RuntimeException) {
-                    mutableState.value = mutableState.value.copy(error = R.string.hidden_notifications_connect_failed)
-                }
+            if (service != null) service.scheduleRefresh(refreshSystemHistory = true) else {
+                val app = context.applicationContext
+                connection.request(
+                    hasAccess = { hasAccess(app) },
+                    isConnected = { instance != null },
+                    rebind = { requestRebind(component(app)) },
+                    onFailure = {
+                        mutableState.value = mutableState.value.copy(error = R.string.hidden_notifications_connect_failed)
+                    },
+                )
             }
         }
 
@@ -127,6 +138,7 @@ class HiddenNotificationsService : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        connection.cancel()
         instance = this
         mutableState.value = HiddenNotificationsState(connected = true)
         scheduleRefresh()
@@ -135,6 +147,7 @@ class HiddenNotificationsService : NotificationListenerService() {
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
         disconnect()
+        refresh(applicationContext)
     }
 
     override fun onDestroy() {
@@ -179,16 +192,13 @@ class HiddenNotificationsService : NotificationListenerService() {
     }
 
     private fun scheduleRefresh(refreshSystemHistory: Boolean = false) {
-        if (refreshSystemHistory) {
-            systemHistory = null
-            systemChannels = null
-        }
+        refreshSystemHistoryInBackground(refreshSystemHistory)
         refreshJob?.cancel()
         refreshJob = work.launch {
             delay(120)
             operations.withLock {
                 try {
-                    readEntries(refreshSystemHistory = refreshSystemHistory)
+                    readEntries()
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
                     mutableState.value = mutableState.value.copy(error = R.string.hidden_notifications_read_failed)
@@ -197,9 +207,32 @@ class HiddenNotificationsService : NotificationListenerService() {
         }
     }
 
+    private fun refreshSystemHistoryInBackground(force: Boolean) {
+        if (systemHistoryJob?.isActive == true || (!force && systemHistoryAttempted)) return
+        systemHistoryAttempted = true
+        if (!hiddenNotificationRootCommandAvailable()) return
+        systemHistoryJob = work.launch {
+            // Optional privileged supplements must never delay the ordinary listener APIs,
+            // including when su exists but access is denied or its prompt is unanswered.
+            val (rules, channels) = withContext(Dispatchers.IO) {
+                val rules = runCatching { HiddenNotificationSnoozes.read(android.os.Process.myUid() / 100000) }
+                    .onFailure { AppLog.log("system hidden notification rules read failed: $it") }.getOrNull()
+                val channels = runCatching { HiddenNotificationChannels.read() }
+                    .onFailure { AppLog.log("notification channel read failed: $it") }.getOrNull()
+                rules to channels
+            }
+            operations.withLock {
+                if (instance !== this@HiddenNotificationsService) return@launch
+                if (rules != null) systemHistory = rules
+                if (channels != null) systemChannels = channels
+            }
+            // Queue the normal reader after this job completes; it will use cached supplements.
+            scheduleRefresh()
+        }
+    }
+
     private suspend fun readEntries(
         forgetKey: String? = null,
-        refreshSystemHistory: Boolean = false,
     ): List<HiddenNotificationEntry> {
         check(instance === this)
         val entries = withContext(Dispatchers.IO) {
@@ -255,11 +288,6 @@ class HiddenNotificationsService : NotificationListenerService() {
                 AppLog.log("hidden notification history read failed: $it")
                 emptyList()
             }
-            if (refreshSystemHistory || systemHistory == null) {
-                runCatching { HiddenNotificationSnoozes.read(android.os.Process.myUid() / 100000) }
-                    .onSuccess { systemHistory = it }
-                    .onFailure { AppLog.log("system hidden notification rules read failed: $it") }
-            }
             val remembered = previous.associateBy { it.key }
             val missing = systemHistory.orEmpty().map { rule ->
                 remembered[rule.key] ?: run {
@@ -269,11 +297,7 @@ class HiddenNotificationsService : NotificationListenerService() {
                         hidden = true, ongoing = false, postTime = 0, posted = false)
                 }
             }
-            // 普通监听器不能枚举其它应用的通道；历史通知从系统通道设置只读快照补充名称。
-            if (systemChannels == null) {
-                systemChannels = runCatching { HiddenNotificationChannels.read() }
-                    .onFailure { AppLog.log("notification channel read failed: $it") }.getOrDefault(emptyMap())
-            }
+            // 普通监听器通过 ranking 读取通道；历史名称可使用后台补充的系统快照。
             val merged = mergeHiddenNotificationEntries(all.values.toList(), previous + missing, forgetKey).map { item ->
                 val last = contents.lookup(item.key)
                 val content = if (last == null) item else item.copy(
@@ -315,6 +339,9 @@ class HiddenNotificationsService : NotificationListenerService() {
     private suspend fun changeHidden(key: String, hidden: Boolean) {
         val current = readEntries().firstOrNull { it.key == key } ?: error("Notification no longer available")
         if (current.hidden == hidden) return
+        // An older privileged snapshot must not undo the user's newer hide/restore operation.
+        systemHistoryJob?.cancel()
+        systemHistoryJob = null
         if (!hidden) hiddenSystemKeys.remove(key)
         if (!current.posted) {
             check(!hidden)

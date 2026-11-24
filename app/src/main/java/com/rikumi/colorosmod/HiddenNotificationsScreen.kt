@@ -55,15 +55,12 @@ import io.github.suqi8.coui.kmp.theme.COUITheme
 internal fun HiddenNotificationsScreen(ctx: Context, onBack: () -> Unit, showBack: Boolean = true) {
     val state by HiddenNotificationsService.state.collectAsState()
     var hasAccess by remember { mutableStateOf(HiddenNotificationsService.hasAccess(ctx)) }
-    var hasSavedHiddenNotifications by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val listScroll = rememberSettingsListScroll(listState)
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle, ctx) {
         fun refresh() {
             hasAccess = HiddenNotificationsService.hasAccess(ctx)
-            hasSavedHiddenNotifications = ctx.getSharedPreferences("hidden_notification_history", Context.MODE_PRIVATE)
-                .getString("entries", "[]").orEmpty().let { it.isNotBlank() && it != "[]" }
             HiddenNotificationsService.refresh(ctx)
         }
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) refresh() }
@@ -103,9 +100,11 @@ internal fun HiddenNotificationsScreen(ctx: Context, onBack: () -> Unit, showBac
             ) {
             if (!hasAccess || !state.connected) {
                 item {
-                    SettingsSmallTitle(ctx.getString(if (!state.connected &&
-                        (hasAccess || hasSavedHiddenNotifications || state.entries.any { it.hidden }))
-                        R.string.hidden_notifications_reader_missing else R.string.hidden_notifications_permission_hint))
+                    SettingsSmallTitle(ctx.getString(when {
+                        !hasAccess -> R.string.hidden_notifications_permission_hint
+                        state.error != null -> state.error!!
+                        else -> R.string.hidden_notifications_connecting
+                    }))
                 }
                 item {
                     SettingsCard(bottomGap = if (!hasAccess) 0.dp else SETTINGS_CARD_BOTTOM_GAP) {
@@ -121,7 +120,7 @@ internal fun HiddenNotificationsScreen(ctx: Context, onBack: () -> Unit, showBac
                     )
                 }
             }
-            state.error?.let { message ->
+            state.error?.takeUnless { hasAccess && !state.connected }?.let { message ->
                 item { SettingsSmallTitle(ctx.getString(message)) }
             }
             if (hasAccess && state.connected) {

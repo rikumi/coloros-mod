@@ -2,8 +2,13 @@ package com.rikumi.colorosmod
 
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import java.io.File
 
 internal data class PersistedHiddenNotification(val key: String, val packageName: String, val id: String)
+
+internal fun hiddenNotificationRootCommandAvailable(path: String? = System.getenv("PATH")): Boolean =
+    path.orEmpty().split(File.pathSeparatorChar).filter(String::isNotBlank)
+        .any { directory -> File(directory, "su").let { it.isFile && it.canExecute() } }
 
 /** 监听接口不返回重启后尚未重发的通知；系统仍保留它们的休眠键。 */
 internal object HiddenNotificationSnoozes {
