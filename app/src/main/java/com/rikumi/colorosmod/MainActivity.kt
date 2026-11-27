@@ -302,7 +302,8 @@ private val DESKTOP: List<SettingsItem> = listOf(
     SwitchItem(FolderGridSettings.COLUMNS_ENABLED, R.string.ui_folder_columns,
         sliderKey = FolderGridSettings.COLUMNS, sliderMin = 3, sliderMax = 4, sliderDefault = 3,
         sliderUnit = "", sliderFollowsSystem = true, masterEnableAllowed = false),
-    SwitchItem("launcher_folder_corner_radius_enabled", R.string.ui_launcher_folder_corner_radius, sliderKey = "launcher_folder_corner_radius_dp", sliderMin = 4, sliderMax = 36, sliderDefault = 12, sliderUnit = "dp"),
+    SwitchItem("launcher_folder_corner_radius_enabled", R.string.ui_launcher_folder_corner_radius, sliderKey = "launcher_folder_corner_radius_percent", sliderMin = 0, sliderMax = 50, sliderDefault = 16, sliderUnit = "%"),
+    SwitchItem("launcher_folder_disable_smooth_corners", R.string.ui_launcher_folder_disable_smooth_corners, masterEnableAllowed = false),
     SwitchItem("folder_bg_transparent_enabled", R.string.ui_folder_transparent),
     SwitchItem("folder_anim_duration_enabled", R.string.ui_folder_duration, sliderKey = "folder_anim_duration_ms", sliderMax = 500, sliderDefault = 300, sliderUnit = "ms", sliderMin = 100),
 )
@@ -474,6 +475,7 @@ private val PURIFICATION: List<SettingsItem> = listOf(
         developerConfirmedSubtitle = R.string.ui_about_device_card_hint),
     SwitchItem("about_device_hide_marketing_enabled", R.string.ui_about_device_hide_marketing),
     SwitchItem("settings_disabled_module_spacing", R.string.ui_settings_disabled_module_spacing),
+    SwitchItem(MonetBlack.KEY, R.string.ui_system_monet_oled_black, rootBacked = true, masterManaged = false),
     GroupTitleItem(R.string.installer_group),
     SwitchItem(InstallerSettings.RESTORE, R.string.installer_restore_legacy, rootBacked = true, masterManaged = false),
     SwitchItem("installer_disable_virus_scan", R.string.installer_disable_virus_scan),
@@ -1595,6 +1597,7 @@ internal fun Context.settingsPrefs(): SharedPreferences {
     SettingsProvider.migrateNotificationIconPrefs(this, de)
     SettingsProvider.migrateKeyguardClockSpacing(this, de)
     SettingsProvider.migrateLauncherIconFontSize(this, de)
+    SettingsProvider.migrateLauncherFolderCornerRadius(this, de)
     if (!de.contains("statusbar_lyric_mode")
             && (de.contains("statusbar_lyric_enabled") || de.contains("fluid_cloud_lyric_enabled"))) {
         val mode = when {

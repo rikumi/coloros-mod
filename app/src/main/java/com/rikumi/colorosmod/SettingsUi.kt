@@ -917,6 +917,10 @@ private fun SettingsSwitchRow(
     overrideValue: Boolean?,
     onItemChanged: () -> Unit,
 ) {
+    if (item.key == MonetBlack.KEY) {
+        MonetBlackPreference(ctx, onItemChanged)
+        return
+    }
     if (item.key == PlayStoreUpdatePolicy.KEY) {
         PlayStoreUpdateRow(ctx, onItemChanged,
             developerConfirmedSubtitle = item.developerConfirmedSubtitle?.let { ctx.getString(it) })

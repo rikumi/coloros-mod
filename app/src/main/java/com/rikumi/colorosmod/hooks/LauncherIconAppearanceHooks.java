@@ -18,13 +18,14 @@ final class LauncherIconAppearanceHooks {
     private static final String FONT_ENABLED = "launcher_icon_font_size_enabled";
     private static final String FONT_SIZE = "launcher_icon_font_size_sp_tenths";
     private static final String CORNER_ENABLED = "launcher_folder_corner_radius_enabled";
-    private static final String CORNER_SIZE = "launcher_folder_corner_radius_dp";
+    private static final String CORNER_SIZE = "launcher_folder_corner_radius_percent";
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final Map<TextView, Float> FONTS = new WeakHashMap<>();
     private static final Map<Object, Background> BACKGROUNDS = new WeakHashMap<>();
     private static final Set<View> ROOTS = Collections.newSetFromMap(new WeakHashMap<>());
     private static final ThreadLocal<Boolean> APPLYING = ThreadLocal.withInitial(() -> false);
     private static Class<?> bubbleClass, folderClass;
+    private static boolean hasRadiusSetter;
     private static volatile boolean active = true;
     private static List<Integer> lastSettings;
     private static boolean reported;
@@ -38,6 +39,7 @@ final class LauncherIconAppearanceHooks {
     };
 
     static void hook(XC_LoadPackage.LoadPackageParam lp) {
+        LauncherFolderCornerUnits.init(lp.classLoader);
         bubbleClass = XposedHelpers.findClass("com.android.launcher3.BubbleTextView", lp.classLoader);
         folderClass = XposedHelpers.findClass("com.android.launcher3.folder.FolderIcon", lp.classLoader);
         XposedBridge.hookAllConstructors(bubbleClass, new XC_MethodHook() {
@@ -69,6 +71,11 @@ final class LauncherIconAppearanceHooks {
         try {
             Class<?> preview = XposedHelpers.findClass(
                     "com.android.launcher3.folder.OplusPreviewBackground", lp.classLoader);
+            LauncherFolderCornerDebug.hook(lp.classLoader, preview, folderClass);
+            try {
+                XposedHelpers.findMethodExact(preview, "setRadius", float.class);
+                hasRadiusSetter = true;
+            } catch (NoSuchMethodError absent) { hasRadiusSetter = false; }
             for (java.lang.reflect.Method method : preview.getDeclaredMethods())
                 if (method.getName().equals("setup")) XposedBridge.deoptimize(method);
             // The ROM assigns mRadius directly here, before creating either the solid or blur drawable.
@@ -80,13 +87,13 @@ final class LauncherIconAppearanceHooks {
                     applyBackground(p.thisObject);
                 }
             });
-            XposedHelpers.findAndHookMethod(preview, "setRadius", float.class, new XC_MethodHook() {
+            if (hasRadiusSetter) XposedHelpers.findAndHookMethod(preview, "setRadius", float.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     if (!active || APPLYING.get() || owner(p.thisObject) == null) return;
                     Background state = BACKGROUNDS.computeIfAbsent(p.thisObject,
                             ignored -> new Background((Float) p.args[0]));
                     state.nativeRadius = (Float) p.args[0];
-                    if (readBoolCached(CORNER_ENABLED, false)) p.args[0] = cornerPx(owner(p.thisObject));
+                    if (readBoolCached(CORNER_ENABLED, false)) p.args[0] = cornerPx(p.thisObject);
                     state.appliedRadius = Float.NaN;
                 }
                 @Override protected void afterHookedMethod(MethodHookParam p) {
@@ -103,6 +110,20 @@ final class LauncherIconAppearanceHooks {
                             applyBackground(p.thisObject);
                     }
                 });
+            if (!hasRadiusSetter) XposedBridge.hookAllMethods(preview, "getBackgroundRect", new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (!active || APPLYING.get() || !readBoolCached(CORNER_ENABLED, false)) return;
+                    View view = owner(p.thisObject);
+                    if (view == null) return;
+                    // The 17 solid-draw path can assign its circular radius immediately
+                    // before reading these bounds. Preserve the selected radius there too.
+                    Background state = BACKGROUNDS.get(p.thisObject);
+                    float radius = cornerPx(p.thisObject);
+                    if (state != null && state.appliedRadius == radius)
+                        XposedHelpers.setFloatField(p.thisObject, "mRadius", radius);
+                    else applyBackground(p.thisObject);
+                }
+            });
         } catch (Throwable error) { log("launcher folder icon corners unavailable: " + error); }
     }
 
@@ -156,9 +177,15 @@ final class LauncherIconAppearanceHooks {
         return folderClass != null && folderClass.isInstance(view) ? (View) view : null;
     }
 
-    private static float cornerPx(View view) {
-        return Math.max(4, Math.min(36, readIntCached(CORNER_SIZE, 12)))
-                * view.getResources().getDisplayMetrics().density;
+    private static float cornerPx(Object bg) {
+        // These are the background's unscaled pixel bounds, excluding the folder label.
+        // Native drawing scales both bounds and radius during folder animations.
+        int side = Math.min(XposedHelpers.getIntField(bg, "mPreviewSizeX"),
+                XposedHelpers.getIntField(bg, "mPreviewSizeY"));
+        if (side <= 0) return XposedHelpers.getFloatField(bg, "mRadius");
+        float pixels = side * (Math.max(0, Math.min(50, readIntCached(CORNER_SIZE, 16))) / 100f);
+        // G2 uses a different corner parameter even when the source value is a percentage.
+        return LauncherFolderCornerDebug.enabled() ? pixels : LauncherFolderCornerUnits.nativeRadius(pixels);
     }
 
     private static void applyBackground(Object bg) {
@@ -171,29 +198,44 @@ final class LauncherIconAppearanceHooks {
         if (view == null) return;
         Background state = BACKGROUNDS.computeIfAbsent(bg,
                 ignored -> new Background(XposedHelpers.getFloatField(bg, "mRadius")));
-        float radius = readBoolCached(CORNER_ENABLED, false) ? cornerPx(view) : state.nativeRadius;
+        float radius = readBoolCached(CORNER_ENABLED, false) ? cornerPx(bg) : state.nativeRadius;
         Object drawable = XposedHelpers.getObjectField(bg, "mBgDrawable");
         Object bgView = XposedHelpers.getObjectField(bg, "mBgView");
-        if (Float.compare(state.appliedRadius, radius) == 0 && state.drawable.get() == drawable
-                && state.bgView.get() == bgView && XposedHelpers.getFloatField(bg, "mRadius") == radius) return;
+        Object blur = XposedHelpers.getObjectField(bg, "mBlurProp");
+        boolean debug = LauncherFolderCornerDebug.enabled();
+        // The comparison switch also works without a custom radius, using the ROM's G1 radius.
+        if (debug && !readBoolCached(CORNER_ENABLED, false))
+            radius = LauncherFolderCornerUnits.pixelRadius(radius);
+        LauncherFolderCornerDebug.track(drawable, bgView, radius);
+        Object item = hasRadiusSetter ? null : XposedHelpers.callMethod(view, "getHostViewInfo");
+        if (state.debug == debug && Float.compare(state.appliedRadius, radius) == 0 && state.drawable.get() == drawable
+                && state.bgView.get() == bgView && state.blur.get() == blur && state.item.get() == item
+                && XposedHelpers.getFloatField(bg, "mRadius") == radius) return;
         APPLYING.set(true);
         try {
-            XposedHelpers.callMethod(bg, "setRadius", radius);
+            if (hasRadiusSetter) XposedHelpers.callMethod(bg, "setRadius", radius);
+            else XposedHelpers.setFloatField(bg, "mRadius", radius);
             // Theme layers and the blur property also keep their own corner values.
             if (drawable instanceof GradientDrawable gradient) gradient.setCornerRadius(radius);
             else if (drawable != null) {
                 try { XposedHelpers.callMethod(drawable, "setRadius", radius); }
                 catch (NoSuchMethodError ignored) { /* LayerBlurDrawable handled by native setRadius. */ }
             }
-            Object blur = XposedHelpers.getObjectField(bg, "mBlurProp");
-            if (blur != null) XposedHelpers.callMethod(blur, "setBlurCornerRadius", radius, true);
+            if (blur != null) {
+                if (hasRadiusSetter) XposedHelpers.callMethod(blur, "setBlurCornerRadius", radius, true);
+                else if (item != null)
+                    XposedHelpers.callMethod(blur, "setBlurCornerRadius", radius, true, item, false);
+            }
             if (bgView instanceof View image) {
                 XposedHelpers.setFloatField(image, "mRadius", radius);
                 image.invalidate();
             }
             state.appliedRadius = radius;
+            state.debug = debug;
             state.drawable = new WeakReference<>(drawable);
             state.bgView = new WeakReference<>(bgView);
+            state.blur = new WeakReference<>(blur);
+            state.item = new WeakReference<>(item);
             if (drawable instanceof Drawable d) d.invalidateSelf();
             view.invalidate();
         } finally { APPLYING.set(false); }
@@ -210,7 +252,7 @@ final class LauncherIconAppearanceHooks {
     static void onSettingsSnapshotPublished(Map<String, Integer> settings) {
         List<Integer> values = Arrays.asList(settings.getOrDefault(FONT_ENABLED, 0),
                 settings.getOrDefault(FONT_SIZE, 110), settings.getOrDefault(CORNER_ENABLED, 0),
-                settings.getOrDefault(CORNER_SIZE, 12));
+                settings.getOrDefault(CORNER_SIZE, 16), settings.getOrDefault(LauncherFolderCornerDebug.KEY, 0));
         if (values.equals(lastSettings)) return;
         lastSettings = values;
         refresh();
@@ -234,13 +276,16 @@ final class LauncherIconAppearanceHooks {
         refresh();
     }
     static void cleanup() {
+        LauncherFolderCornerDebug.cleanup();
         active = false;
         MAIN.removeCallbacks(UPDATE);
         FONTS.clear(); BACKGROUNDS.clear(); ROOTS.clear(); lastSettings = null;
     }
     private static final class Background {
+        boolean debug;
         float nativeRadius, appliedRadius = Float.NaN;
         WeakReference<Object> drawable = new WeakReference<>(null), bgView = new WeakReference<>(null);
+        WeakReference<Object> blur = new WeakReference<>(null), item = new WeakReference<>(null);
         Background(float radius) { nativeRadius = radius; }
     }
     private static void report(Throwable error) {

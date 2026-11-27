@@ -212,4 +212,7 @@
     <string name="ui_launcher_icon_pack_fallback">Fix ColorOS 15 launcher icon pack scaling</string>
     <string name="ui_launcher_icon_font_size">Desktop icon font size</string>
     <string name="ui_launcher_folder_corner_radius">Desktop folder corner radius</string>
+    <string name="ui_launcher_folder_disable_smooth_corners">Disable smooth folder icon corners</string>
+    <string name="ui_system_monet_oled_black">System-wide Monet pure black palette</string>
+    <string name="ui_system_monet_oled_black_failed">Could not apply palette: %1$s</string>
 </resources>

@@ -41,6 +41,7 @@ public class SettingsProvider extends ContentProvider {
         migrateNotificationIconPrefs(ctx, preferences);
         migrateKeyguardClockSpacing(ctx, preferences);
         migrateLauncherIconFontSize(ctx, preferences);
+        migrateLauncherFolderCornerRadius(ctx, preferences);
         HiddenLauncherApps.migrate(ctx, preferences);
         return preferences;
     }
@@ -66,6 +67,26 @@ public class SettingsProvider extends ContentProvider {
             if (preferences.contains(key) || !preferences.contains(oldKey)) return;
             int value = Math.max(80, Math.min(160, preferences.getInt(oldKey, 11) * 10));
             if (preferences.edit().putInt(key, value).commit()) notifySettingsChanged(context);
+        }
+    }
+
+    public static void migrateLauncherFolderCornerRadius(Context context, SharedPreferences preferences) {
+        synchronized (preferences) {
+            String oldKey = "launcher_folder_corner_radius_dp";
+            String key = "launcher_folder_corner_radius_percent";
+            String migrated = "launcher_folder_corner_radius_migrated_v2";
+            if (preferences.getBoolean(migrated, false)) return;
+            SharedPreferences.Editor editor = preferences.edit().putBoolean(migrated, true);
+            if (preferences.contains(oldKey)) {
+                int oldValue = preferences.getInt(oldKey, 12);
+                int previous = (int) Math.max(0L, Math.min(50L, oldValue * 2L));
+                // Correct an unchanged result from the earlier migration, preserving custom percentages.
+                if (!preferences.contains(key) || preferences.getInt(key, 16) == previous) {
+                    int value = (int) Math.max(0L, Math.min(50L, Math.round(oldValue * (4d / 3d))));
+                    editor.putInt(key, value);
+                }
+            }
+            if (editor.commit()) notifySettingsChanged(context);
         }
     }
 

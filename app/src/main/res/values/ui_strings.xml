@@ -228,4 +228,7 @@
     <string name="ui_launcher_icon_pack_fallback">修复 ColorOS 15 桌面图标包适配缩放</string>
     <string name="ui_launcher_icon_font_size">桌面图标字体大小</string>
     <string name="ui_launcher_folder_corner_radius">桌面文件夹圆角大小</string>
+    <string name="ui_launcher_folder_disable_smooth_corners">取消文件夹图标平滑圆角</string>
+    <string name="ui_system_monet_oled_black">系统级 Monet 纯黑配色</string>
+    <string name="ui_system_monet_oled_black_failed">修改失败：%1$s</string>
 </resources>

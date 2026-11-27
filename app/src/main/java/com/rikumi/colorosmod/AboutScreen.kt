@@ -109,6 +109,7 @@ private val OPEN_SOURCE_COMPONENTS = listOf(
     OpenSourceComponent("Noto 3D", "https://github.com/googlefonts/noto-emoji", "licenses/noto-3d-OFL.txt"),
     OpenSourceComponent("Twemoji", "https://github.com/twitter/twemoji", "licenses/twemoji-NOTICE", "licenses/twemoji-LICENSE-GRAPHICS"),
     OpenSourceComponent("Figtree", "https://github.com/erikdkennedy/figtree", "clock_fonts/figtree-OFL.txt"),
+    OpenSourceComponent("ColorBlendr — Tuned OLED Black", "https://github.com/Mahmud0808/ColorBlendr-Themes", "monet/ColorBlendr-LICENSE"),
     OpenSourceComponent("Inter", "https://github.com/rsms/inter", "clock_fonts/inter-OFL.txt"),
     OpenSourceComponent("Lato", "https://github.com/latofonts/lato-source", "clock_fonts/lato-OFL.txt"),
     OpenSourceComponent("Manrope", "https://github.com/googlefonts/manrope", "clock_fonts/manrope-OFL.txt"),

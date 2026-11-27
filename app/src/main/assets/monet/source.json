@@ -1,0 +1,7 @@
+{
+  "theme": "https://github.com/Mahmud0808/ColorBlendr-Themes/blob/cbadfe21aac3987aeee11a03deaf50052d78cbb6/themes/tuned-oled-black-3ic34l.json",
+  "engine": "https://github.com/Mahmud0808/ColorBlendr/tree/a56fe76007c9b37d805b90222ba2416179b7f8a8",
+  "mcu": "0f07b68759989d4e065b806229daba6ad000695d",
+  "engineVersion": "legacy tokens (community schema 1)",
+  "generatedWith": "upstream engine and AndroidX ColorUtils 1.13.1"
+}
