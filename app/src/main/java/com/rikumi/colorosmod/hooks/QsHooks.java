@@ -174,6 +174,9 @@ public final class QsHooks {
                                 Object container = XposedHelpers.callMethod(
                                         param.thisObject, "getStatusIconsContainer");
                                 if (container instanceof android.view.View) {
+                                    if (android.os.Build.VERSION.SDK_INT >= 37
+                                            && (!readBool(KEY_QS_TOPMARGIN_ENABLED, false)
+                                                || QsHeaderVisibility.containsClock((View) container))) return;
                                     ((android.view.View) container)
                                             .setVisibility(android.view.View.INVISIBLE);
                                 }
@@ -209,6 +212,8 @@ public final class QsHooks {
         try {
             Object value = XposedHelpers.getObjectField(controller, fieldName);
             if (value instanceof android.view.View) {
+                if (android.os.Build.VERSION.SDK_INT >= 37
+                        && QsHeaderVisibility.containsClock(controller, (View) value)) return;
                 ((android.view.View) value).setVisibility(
                         hide ? android.view.View.INVISIBLE : android.view.View.VISIBLE);
             }
@@ -224,6 +229,10 @@ public final class QsHooks {
         if (hide) {
             hideSeparateStatusIconsView(controller);
         }
+        if (android.os.Build.VERSION.SDK_INT >= 37) {
+            QsCarrierRows.trackController(controller, readBoolCached(KEY_QS_CARRIER_ENABLED, false));
+            QsCarrierRows.refresh(readBoolCached(KEY_QS_CARRIER_ENABLED, false));
+        }
     }
 
     static void hideSeparateStatusIconsView(Object controller) {
@@ -231,6 +240,7 @@ public final class QsHooks {
             Object v = XposedHelpers.getObjectField(controller, "statusIconsView");
             if (!(v instanceof android.view.View)) return;
             android.view.View view = (android.view.View) v;
+            if (android.os.Build.VERSION.SDK_INT >= 37 && QsHeaderVisibility.containsClock(controller, view)) return;
             try {
                 Object am = XposedHelpers.getObjectField(controller, "qsPanelAnimatorManager");
                 if (am != null) {
@@ -628,6 +638,8 @@ public final class QsHooks {
     }
 
     public static void hookQsNormalCornerRadius(final XC_LoadPackage.LoadPackageParam lpparam) {
+        try { SeparateQsCardHooks.hook(lpparam); }
+        catch (Throwable error) { log("separate QS card hooks unavailable: " + error); }
         LegacyQsCornerRadiusHooks.hook(lpparam);
         QsSliderCornerCompat.hook(lpparam);
 
@@ -851,6 +863,7 @@ public final class QsHooks {
     }
 
     private static void refreshCornerRadiusOnMain() {
+        SeparateQsCardHooks.refresh();
         Integer radius = qsCornerRadiusPercent();
         if (radiusApplied && java.util.Objects.equals(appliedRadius, radius)) return;
         appliedRadius = radius;
@@ -889,6 +902,7 @@ public final class QsHooks {
     }
 
     public static void cleanupCornerRadiusForHotReload() {
+        SeparateQsCardHooks.cleanup();
         QsSliderCornerCompat.cleanup();
         QsBackgroundSettingsHooks.cleanup();
         LegacyQsStatusIconsHooks.cleanup();

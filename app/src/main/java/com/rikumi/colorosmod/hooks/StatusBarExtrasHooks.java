@@ -5,6 +5,7 @@ import static com.rikumi.colorosmod.XposedInit.*;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.TextView;
 import java.util.ArrayList;
 import java.util.Map;
@@ -22,6 +23,7 @@ public final class StatusBarExtrasHooks {
     private static final Handler main = new Handler(Looper.getMainLooper());
 
     public static void hookCarrier(XC_LoadPackage.LoadPackageParam lp) {
+        QsCarrierRows.hook(lp);
         if (android.os.Build.VERSION.SDK_INT <= 35) hookLegacyCarrier(lp);
         try {
             XposedHelpers.findAndHookDeclaredMethod(
@@ -35,29 +37,40 @@ public final class StatusBarExtrasHooks {
                             }
                         }
                     });
-            XposedHelpers.findAndHookDeclaredMethod(
-                    "com.oplus.systemui.qs.widget.OplusSecondCarrierText", lp.classLoader,
-                    "onAttachedToWindow", new XC_MethodHook() {
-                        @Override protected void afterHookedMethod(MethodHookParam p) {
-                            trackCarrier((View) p.thisObject);
-                        }
-                    });
-        } catch (Throwable t) { log("QS carrier hook failed: " + t); }
+        } catch (Throwable t) { log("QS header carrier hook failed: " + t); }
+        String[] labels = android.os.Build.VERSION.SDK_INT >= 37
+                ? new String[]{"OplusSecondCarrierText", "OplusQSCarrierText"}
+                : new String[]{"OplusSecondCarrierText"};
+        for (String label : labels) {
+            Class<?> type = XposedHelpers.findClassIfExists("com.oplus.systemui.qs.widget." + label, lp.classLoader);
+            if (type == null) continue;
+            XposedBridge.hookAllMethods(type, "onAttachedToWindow", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (!p.hasThrowable()) trackCarrier((View) p.thisObject);
+                }
+            });
+        }
         try {
             Class<?> controller = XposedHelpers.findClass(
                     "com.oplus.systemui.plugins.qs.seamless.SeparateQSFakeStatusController", lp.classLoader);
             XposedBridge.hookAllMethods(controller, "onInit", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
-                    // carrierContainer 实际是 clockContainer，不能整体隐藏。
+                    if (android.os.Build.VERSION.SDK_INT >= 37) QsHeaderVisibility.trackClockViews(p.thisObject);
+                    // 先获取运营商文字；共享信息行由两个隐藏开关共同控制。
                     try {
                         Object entrance = XposedHelpers.getObjectField(p.thisObject, "quickEntranceContainerViewController");
                         if (entrance != null) trackCarrier((View) XposedHelpers.callMethod(entrance, "getCarrierView"));
                     } catch (NoSuchMethodError | NoSuchFieldError ignored) { }
                     // 不同版本的入口组件不一定提供 carrier getter；其余运营商视图独立处理。
-                    for (String name : new String[]{"fakeCarrierContainer", "fakeKeyguardCarrierContainer"}) {
+                    String[] containers = android.os.Build.VERSION.SDK_INT >= 37
+                            ? new String[]{"carrierContainer", "fakeCarrierContainer", "fakeKeyguardCarrierContainer"}
+                            : new String[]{"fakeCarrierContainer", "fakeKeyguardCarrierContainer"};
+                    for (String name : containers) {
                         try { trackCarrier((View) XposedHelpers.getObjectField(p.thisObject, name)); }
                         catch (NoSuchFieldError ignored) { }
                     }
+                    if (android.os.Build.VERSION.SDK_INT >= 37)
+                        QsCarrierRows.trackController(p.thisObject, readBoolCached(KEY_QS_CARRIER_ENABLED, false));
                 }
             });
         } catch (Throwable t) { log("separate QS carrier hook failed: " + t); }
@@ -108,10 +121,20 @@ public final class StatusBarExtrasHooks {
 
     private static void trackCarrier(View view) {
         if (view == null) return;
+        if (android.os.Build.VERSION.SDK_INT >= 37) {
+            if (view instanceof ViewGroup group) {
+                QsCarrierRows.track(group, readBoolCached(KEY_QS_CARRIER_ENABLED, false));
+                for (int i = 0; i < group.getChildCount(); i++) trackCarrier(group.getChildAt(i));
+                return;
+            }
+            if (!QsCarrierTextTargets.isCarrierText(view)) return;
+        }
         synchronized (carriers) {
             if (!carriers.containsKey(view)) carriers.put(view, view.getVisibility());
         }
         if (readBoolCached(KEY_QS_CARRIER_ENABLED, false)) setCarrierVisibility(view, View.GONE);
+        if (android.os.Build.VERSION.SDK_INT >= 37)
+            QsCarrierRows.discoverParents(view, readBoolCached(KEY_QS_CARRIER_ENABLED, false));
     }
 
     public static void hookPercent(XC_LoadPackage.LoadPackageParam lp) {
@@ -157,7 +180,8 @@ public final class StatusBarExtrasHooks {
         boolean hidePercent = !restore && readBoolCached(KEY_HIDE_BATTERY_PERCENT_SIGN_ENABLED, false);
         synchronized (carriers) {
             for (Map.Entry<View, Integer> entry : carriers.entrySet()) {
-                int visibility = hideCarrier ? View.GONE : entry.getValue();
+                boolean label = android.os.Build.VERSION.SDK_INT < 37 || QsCarrierTextTargets.isCarrierText(entry.getKey());
+                int visibility = hideCarrier && label ? View.GONE : entry.getValue();
                 if (entry.getKey().getVisibility() != visibility) setCarrierVisibility(entry.getKey(), visibility);
             }
         }
@@ -166,6 +190,7 @@ public final class StatusBarExtrasHooks {
                 applyPercent(entry.getKey(), entry.getValue(), hidePercent);
             }
         }
+        QsCarrierRows.refresh(hideCarrier);
     }
 
     public static Object captureHotReloadHosts() {
@@ -178,6 +203,7 @@ public final class StatusBarExtrasHooks {
             for (Map.Entry<TextView, CharSequence> entry : percents.entrySet())
                 views.add(new Object[]{entry.getKey(), entry.getValue()});
         }
+        views.add(new Object[]{"carrier_rows", QsCarrierRows.capture()});
         return views;
     }
 
@@ -185,7 +211,21 @@ public final class StatusBarExtrasHooks {
         if (!(state instanceof java.util.List<?>)) return;
         for (Object item : (java.util.List<?>) state) {
             Object[] entry = (Object[]) item;
+            if ("carrier_rows".equals(entry[0])) {
+                QsCarrierRows.restore(entry[1], readBoolCached(KEY_QS_CARRIER_ENABLED, false));
+                continue;
+            }
             if (entry[1] instanceof Integer) {
+                if (android.os.Build.VERSION.SDK_INT >= 37) {
+                    // Earlier versions saved whole carrier rows, which may also contain the date.
+                    View view = (View) entry[0];
+                    setCarrierVisibility(view, (Integer) entry[1]);
+                    if (QsCarrierTextTargets.isCarrierText(view)) {
+                        synchronized (carriers) { carriers.put(view, (Integer) entry[1]); }
+                    }
+                    trackCarrier(view);
+                    continue;
+                }
                 synchronized (carriers) {
                     carriers.put((View) entry[0], (Integer) entry[1]);
                     if (entry.length > 2 && Boolean.TRUE.equals(entry[2])) legacyCarriers.put((View) entry[0], true);
@@ -200,6 +240,7 @@ public final class StatusBarExtrasHooks {
     public static void cleanupForHotReload() {
         main.removeCallbacksAndMessages(null);
         apply(true);
+        QsCarrierRows.cleanup();
         synchronized (carriers) { carriers.clear(); legacyCarriers.clear(); }
         synchronized (percents) { percents.clear(); }
     }

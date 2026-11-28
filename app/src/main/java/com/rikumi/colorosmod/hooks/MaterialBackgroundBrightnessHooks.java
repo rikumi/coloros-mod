@@ -306,7 +306,8 @@ final class MaterialBackgroundBrightnessHooks {
     private static boolean adjustableTileBackground(Drawable drawable) {
         // In hollow mode the neutral whole-card backdrop follows the active
         // parent state; only the separate icon circle is the active foreground.
-        return !isActiveTileState(drawable.getState()) || MergedRadiantHooks.iconOnlyBackground(drawable);
+        return !isActiveTileState(drawable.getState()) || MergedRadiantHooks.iconOnlyBackground(drawable)
+                || SeparateQsCardHooks.isCardBackground(drawable);
     }
 
     private static boolean tileMaterialEnabled() {

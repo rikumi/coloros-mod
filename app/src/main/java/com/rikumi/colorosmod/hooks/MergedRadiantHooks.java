@@ -29,6 +29,7 @@ import java.util.WeakHashMap;
 public final class MergedRadiantHooks {
     private static Class<?> highlightClass, normalClass, blurProvider, seekBarBlurManager, colorUtil, iconColorState, tileState, qsHelper;
     private static Class<?> volumeIconClass, colorfulUtil;
+    private static java.lang.reflect.Method themeAccentColor;
     private static int activeAttr, inactiveAttr, inoperableAttr, unavailableAttr;
     private static boolean restoring, settingTint;
     private static boolean activeBlurAvailable;
@@ -66,6 +67,7 @@ public final class MergedRadiantHooks {
                 activeBlurAvailable = true;
             } catch (Throwable t) { log("radiant active blur unavailable; using solid circle: " + t); }
             colorUtil = XposedHelpers.findClass("com.oplus.systemui.qs.base.util.QsColorUtil", pkg.classLoader);
+            hookThemeAccent(pkg.classLoader);
             qsHelper = XposedHelpers.findClass("com.oplus.systemui.qs.helper.QSFragmentHelper", pkg.classLoader);
             iconColorState = XposedHelpers.findClass("com.oplus.systemui.qs.base.res.model.TileIconColorState", pkg.classLoader);
             volumeIconClass = XposedHelpers.findClass("com.oplus.systemui.qs.base.seek.OplusQsVolumeIconView", pkg.classLoader);
@@ -272,6 +274,47 @@ public final class MergedRadiantHooks {
         int id = view.getResources().getIdentifier("status_bar_qs_brightness_slider_progress_color", "color", "com.android.systemui");
         return view.getContext().getColor(id);
     }
+    private static void hookThemeAccent(ClassLoader loader) {
+        if (android.os.Build.VERSION.SDK_INT < 37) return;
+        Class<?> pool = XposedHelpers.findClassIfExists("com.oplus.systemui.qs.base.res.BaseQSResPool", loader);
+        if (pool == null) return;
+        // The DEX also contains an instance StateFlow getter with the same name and
+        // parameters. Select the static int getter explicitly, including its return type.
+        for (java.lang.reflect.Method method : pool.getDeclaredMethods()) {
+            if (method.getName().equals("getDarkThemeAccentColor") && method.getParameterCount() == 0
+                    && method.getReturnType() == int.class
+                    && java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                method.setAccessible(true);
+                themeAccentColor = method;
+                break;
+            }
+        }
+        if (themeAccentColor != null) {
+            try {
+                XposedHelpers.findAndHookMethod(pool, "updateDarkThemeAccentColor", int.class,
+                        new XC_MethodHook() {
+                            @Override protected void afterHookedMethod(MethodHookParam p) {
+                                if (!p.hasThrowable()) refresh();
+                            }
+                        });
+            } catch (NoSuchMethodError unavailable) {
+                log("native QS accent update hook unavailable: " + unavailable);
+            }
+        }
+    }
+    private static int activeCircleColor(View tile) {
+        if (enabled(tile)) return activeWhite(tile);
+        if (android.os.Build.VERSION.SDK_INT >= 37) {
+            if (themeAccentColor != null) {
+                try { return (Integer) themeAccentColor.invoke(null); }
+                catch (ReflectiveOperationException ignored) { /* Resolve the live theme below. */ }
+            }
+            TypedValue accent = new TypedValue();
+            if (tile.getContext().getTheme().resolveAttribute(android.R.attr.colorAccent, accent, true))
+                return accent.resourceId != 0 ? tile.getContext().getColor(accent.resourceId) : accent.data;
+        }
+        return Color.WHITE;
+    }
     private static View.OnClickListener routedClick(View tile, Card card,
             View.OnClickListener primary, View.OnClickListener secondary) {
         return view -> {
@@ -377,7 +420,7 @@ public final class MergedRadiantHooks {
                 frame.addView(circle, Math.min(1, frame.getChildCount()), new FrameLayout.LayoutParams(1, 1));
             }
             int state = XposedHelpers.getIntField(tile, "mTileIconState");
-            card.shape.setColor(state == 2 ? (enabled(tile) ? activeWhite(tile) : Color.WHITE) : 0x1affffff);
+            card.shape.setColor(state == 2 ? activeCircleColor(tile) : 0x1affffff);
 
             int size = Math.max(1, Math.round(38f * unit));
             Drawable leafBackground = backgroundLeaf(tile);
